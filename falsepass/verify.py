@@ -52,14 +52,35 @@ def stored_command(output: Path) -> list[str] | None:
     return None
 
 
+def source_floor(source: Path) -> str | None:
+    """The lowest verifiers version the patched source accepts, from its pyproject.toml."""
+    import re
+
+    from falsepass.hub import declared_verifiers
+
+    pyproject = source / "pyproject.toml"
+    if not pyproject.is_file():
+        return None
+    requirement = declared_verifiers(tomllib.loads(pyproject.read_text()).get("project", {}).get("dependencies", []))
+    floor = re.search(r"(?:>=|==)\s*([\w.]+)", requirement)
+    return floor.group(1) if floor else None
+
+
 def patched(command: list[str], env: dict, source: Path) -> list[str]:
-    """The same command with the environment package taken from `source`."""
+    """The same command with the environment package taken from `source`. If the source
+    now needs a newer verifiers than the stored run used, that newer version is pinned:
+    a repository's main branch often moves ahead of the release that was audited."""
+    from falsepass.hub import newer
+
     release = f"{env['package']}=={env['version']}"
+    floor = source_floor(source)
     out, swapped = [], False
     for i, part in enumerate(command):
         if part == release and i and command[i - 1] == "--with":
             out.append(str(source))
             swapped = True
+        elif part.startswith("verifiers==") and floor and newer(floor, part.removeprefix("verifiers==")):
+            out.append(f"verifiers=={floor}")
         else:
             out.append(part)
     if not swapped:
@@ -76,6 +97,11 @@ def command_for(audit_dir: Path, script: str, source: Path) -> list[str]:
     stored = stored_command(output) if output.is_file() else None
     if stored:
         return patched(stored, env, source)
+    from falsepass.hub import newer
+
+    floor = source_floor(source)
+    if floor and env.get("verifiers") and newer(floor, env["verifiers"]):
+        env = {**env, "verifiers": floor}
     return [
         "uv", "run", "-q", "--isolated", "--no-project", "--python", env.get("python", "3.12"),
         *install_args(env, source), "python", str(audit_dir / script),

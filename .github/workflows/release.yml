@@ -1,0 +1,20 @@
+name: release
+
+# Publishes to PyPI when a GitHub release is published. Needs a trusted publisher for
+# this repository and the `pypi` environment configured on pypi.org; no token is stored.
+on:
+  release:
+    types: [published]
+
+jobs:
+  pypi:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - run: uv run pytest -q
+      - run: uv build
+      - uses: pypa/gh-action-pypi-publish@release/v1

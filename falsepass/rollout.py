@@ -145,7 +145,7 @@ def _cut(text: str, width: int = 110, tail: bool = False) -> str:
 def summary(payload: dict[str, Any]) -> str:
     rows = payload["rows"]
     scored = [r for r in rows if r["reward"] is not None]
-    mean = lambda values: sum(values) / len(values) if values else float("nan")
+    mean = lambda values: sum(values) / len(values) if values else float("nan")  # noqa: E731
     references = [r["reference_reward"] for r in rows if r["reference_reward"] is not None]
     lines = [
         f"# Rollout check: {payload['environment']}",

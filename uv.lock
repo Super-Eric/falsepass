@@ -5,8 +5,8 @@ resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and sys_platform != 'win32'",
     "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform == 'win32'",
-    "python_full_version < '3.12' and sys_platform == 'win32'",
     "python_full_version >= '3.12' and python_full_version < '3.14' and sys_platform != 'win32'",
+    "python_full_version < '3.12' and sys_platform == 'win32'",
     "python_full_version < '3.12' and sys_platform != 'win32'",
 ]
 
@@ -666,10 +666,13 @@ wheels = [
 
 [[package]]
 name = "falsepass"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
+mcp = [
+    { name = "mcp" },
+]
 rewardlint = [
     { name = "rewardlint" },
 ]
@@ -682,8 +685,11 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "rewardlint", marker = "extra == 'rewardlint'", specifier = ">=0.1.0" }]
-provides-extras = ["rewardlint"]
+requires-dist = [
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.2" },
+    { name = "rewardlint", marker = "extra == 'rewardlint'", specifier = ">=0.1.0" },
+]
+provides-extras = ["rewardlint", "mcp"]
 
 [package.metadata.requires-dev]
 dev = [

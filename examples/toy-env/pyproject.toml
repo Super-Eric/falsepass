@@ -1,0 +1,13 @@
+[project]
+name = "falsepass-toy-env"
+version = "0.1.0"
+description = "A tiny arithmetic environment with one planted grading defect, for trying falsepass."
+requires-python = ">=3.11"
+dependencies = ["verifiers>=0.3.1", "datasets>=3.0.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = ["falsepass_toy_env.py"]

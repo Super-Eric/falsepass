@@ -1,0 +1,38 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - run: uvx ruff check .
+      - run: uv run --python ${{ matrix.python }} pytest -q
+
+  action:
+    # The action on the bundled toy environment: its planted defect must fail the gate.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - id: gate
+        uses: ./
+        continue-on-error: true
+        with:
+          path: examples/toy-env
+          examples: "10"
+          fail-on: "ceiling>0.5"
+      - name: the planted defect was caught
+        env:
+          OUTCOME: ${{ steps.gate.outcome }}
+          RESULTS: ${{ steps.gate.outputs.results }}
+        run: |
+          test "$OUTCOME" = failure
+          python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert any(not r['passed'] and r['probe']=='P5' for r in d['results'])" "$RESULTS"

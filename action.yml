@@ -1,0 +1,69 @@
+name: falsepass
+description: Check an RL environment's reward code for false passes (bad answers paid) and false fails (good answers refused).
+author: Super-Eric
+branding:
+  icon: check-circle
+  color: orange
+
+inputs:
+  path:
+    description: Folder with the environment's pyproject.toml.
+    default: "."
+  examples:
+    description: Tasks to sample from the environment's dataset.
+    default: "25"
+  fail-on:
+    description: >-
+      Conditions that fail the step, separated by spaces or new lines. NAME>NUMBER with NAME one of
+      ceiling (highest reward a known-bad completion got), lazy (best average reward of a fixed
+      answer-free strategy), false_fail (share of correct answers refused) or errors. Empty: never fail.
+    default: "ceiling>0.1 errors>0"
+  search:
+    description: Mutation search budget (scorer calls per direction and example). 0 turns it off.
+    default: "0"
+  verifiers:
+    description: verifiers version to install. Default: inferred from the environment's requirement.
+    default: ""
+
+outputs:
+  results:
+    description: Path to probe-results.json.
+    value: ${{ steps.audit.outputs.results }}
+  summary:
+    description: Path to summary.md.
+    value: ${{ steps.audit.outputs.summary }}
+
+runs:
+  using: composite
+  steps:
+    - uses: astral-sh/setup-uv@v7
+    - id: audit
+      shell: bash
+      env:
+        FP_PATH: ${{ inputs.path }}
+        FP_EXAMPLES: ${{ inputs.examples }}
+        FP_FAIL_ON: ${{ inputs.fail-on }}
+        FP_SEARCH: ${{ inputs.search }}
+        FP_VERIFIERS: ${{ inputs.verifiers }}
+        FP_HOME: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        work="$RUNNER_TEMP/falsepass"
+        mkdir -p "$work"
+        source_dir="$(cd "$FP_PATH" && pwd)"
+        cd "$work"
+        fp() { uv run --quiet --no-dev --project "$FP_HOME" falsepass "$@"; }
+        rm -rf audits/env
+        fp init "$source_dir" --name env ${FP_VERIFIERS:+--verifiers "$FP_VERIFIERS"}
+        args=(-n "$FP_EXAMPLES")
+        [ "$FP_SEARCH" != "0" ] && args+=(--search "$FP_SEARCH")
+        for condition in $FP_FAIL_ON; do args+=(--fail-on "$condition"); done
+        echo "results=$work/audits/env/probe-results.json" >> "$GITHUB_OUTPUT"
+        echo "summary=$work/audits/env/summary.md" >> "$GITHUB_OUTPUT"
+        status=0
+        fp audit env "${args[@]}" || status=$?
+        if [ -f audits/env/summary.md ]; then
+          cat audits/env/summary.md >> "$GITHUB_STEP_SUMMARY"
+          printf '\n_Leads, not verdicts: reproduce with `falsepass repro` and read the reward code before changing it._\n' >> "$GITHUB_STEP_SUMMARY"
+        fi
+        exit $status

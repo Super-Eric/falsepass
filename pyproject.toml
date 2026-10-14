@@ -1,7 +1,16 @@
 [project]
 name = "falsepass"
-version = "0.1.0"
+version = "0.2.0"
 description = "Probe RL environment verifiers for false passes and false fails."
+readme = "README.md"
+keywords = ["reinforcement-learning", "reward-hacking", "verifiers", "rlvr", "evaluation", "llm"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Testing",
+]
 requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
@@ -9,6 +18,14 @@ dependencies = []
 
 [project.optional-dependencies]
 rewardlint = ["rewardlint>=0.1.0"]
+mcp = [
+    "mcp>=1.2",
+]
+
+[project.urls]
+Homepage = "https://github.com/Super-Eric/falsepass"
+Issues = "https://github.com/Super-Eric/falsepass/issues"
+Changelog = "https://github.com/Super-Eric/falsepass/blob/main/CHANGELOG.md"
 
 [project.scripts]
 falsepass = "falsepass.cli:main"
@@ -23,5 +40,16 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["falsepass"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"examples/toy-env/pyproject.toml" = "falsepass/_demo/pyproject.toml"
+"examples/toy-env/falsepass_toy_env.py" = "falsepass/_demo/falsepass_toy_env.py"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 200
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "W"]

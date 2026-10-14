@@ -79,6 +79,10 @@ def run(
     from falsepass import static
 
     source = audit_dir / "src"
+    if not source.is_dir():  # a local environment (`falsepass init <folder>`): scan the folder itself
+        import tomllib
+
+        source = Path(tomllib.loads((audit_dir / "env.toml").read_text())["env"].get("source") or source)
     hints = [h.to_dict() for h in static.scan(source)] if source.is_dir() else []
     payload = {
         "static": static.cross_check(hints, [r.to_dict() for r in results]),

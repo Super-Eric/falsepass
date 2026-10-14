@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import io
 import re
+import tomllib
 import urllib.request
 import zipfile
+from pathlib import Path
 
 HUB = "https://hub.primeintellect.ai"
 DEFAULT_VERIFIERS = "0.3.1"
@@ -28,7 +30,59 @@ def verifiers_pin(specifier: str) -> str:
     bound = re.search(r">=\s*([\w.]+)", specifier)
     if exact:
         return exact.group(1)
-    return bound.group(1) if bound and ".dev" in bound.group(1) else DEFAULT_VERIFIERS
+    if bound and (".dev" in bound.group(1) or newer(bound.group(1), DEFAULT_VERIFIERS)):
+        return bound.group(1)  # a floor above the default is the oldest version that installs
+    return DEFAULT_VERIFIERS
+
+
+def newer(version: str, than: str) -> bool:
+    try:
+        return _version_key(version) > _version_key(than)
+    except TypeError:  # a pre-release tag compared with a number
+        return False
+
+
+def declared_verifiers(dependencies: list[str]) -> str:
+    """The verifiers requirement among `dependencies`, e.g. `verifiers>=0.4.0`, or ''."""
+    return next((d.strip() for d in dependencies if re.match(r"verifiers\s*(\[|[<>=!~;]|$)", d.strip())), "")
+
+
+def describe_local(path: Path) -> dict:
+    """What `falsepass init` needs for an environment in a local folder (its pyproject.toml).
+
+    For authors auditing their own environment before publishing it: the folder is
+    installed as it is on every run, so edits are picked up without a new release."""
+    path = path.resolve()
+    project = tomllib.loads((path / "pyproject.toml").read_text()).get("project", {})
+    package = project.get("name") or path.name
+    requirement = declared_verifiers(project.get("dependencies", []))
+    return {
+        "id": f"local/{package}",
+        "package": package,
+        "version": project.get("version", "0"),
+        "module": local_module(path, package),
+        "index": "",
+        "verifiers": verifiers_pin(re.sub(r"^verifiers\s*(\[[^\]]*\])?", "", requirement)),
+        "declared": requirement,
+        "source": str(path),
+    }
+
+
+def local_module(path: Path, package: str) -> str:
+    """The importable module of a local environment: the package name with underscores if
+    such a module exists, otherwise the first module that defines `load_environment`."""
+    name = package.replace("-", "_")
+    for root in (path, path / "src"):
+        if (root / f"{name}.py").is_file() or (root / name / "__init__.py").is_file():
+            return name
+    for file in sorted(path.rglob("*.py")):
+        parts = file.relative_to(path).parts
+        if any(p.startswith(".") or p in ("tests", "build", "dist") for p in parts):
+            continue
+        if re.search(r"^def load_environment\(", file.read_text(errors="replace"), re.M):
+            stem = parts[:-1] if file.name == "__init__.py" else (*parts[:-1], file.stem)
+            return ".".join(p for p in stem if p != "src")
+    return name
 
 
 def describe(env_id: str, version: str | None = None) -> dict:

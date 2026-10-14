@@ -79,6 +79,38 @@ def gate(results: list[dict[str, Any]], conditions: list[str]) -> list[str]:
     return met
 
 
+def digest(payload: dict[str, Any], example_chars: int = 400) -> dict[str, Any]:
+    """A compact, machine-readable view of a probe run for scripts and coding agents: the
+    headline numbers, every probe variant that failed (with one failing completion), and
+    the static hints. Each item is a lead to reproduce and read, not a verdict."""
+    groups: dict[tuple[str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
+    for r in payload["results"]:
+        groups[(r["probe"], r["name"], r["variant"], r["expected"])].append(r)
+    failing = []
+    for (probe, name, variant, expected), rows in groups.items():
+        bad = [r for r in rows if not r["passed"]]
+        if not bad:
+            continue
+        first = bad[0]
+        completion = first.get("completion")
+        failing.append({
+            "probe": probe, "name": name, "variant": variant, "expected": expected,
+            "runs": len(rows), "failed": len(bad),
+            "scores": [r["score"] for r in bad[:5]],
+            "detail": first.get("detail"), "example": first.get("example"),
+            "completion": completion[:example_chars] if isinstance(completion, str) else completion,
+            "answer_free": bool(first.get("answer_free")),
+        })  # fmt: skip
+    return {
+        "environment": payload["meta"]["environment"],
+        "meta": payload["meta"],
+        "headline": headline(payload["results"]),
+        "failing": failing,
+        "static_hints": payload.get("static", []),
+        "note": "Leads, not findings: rerun with `falsepass repro`, read the reward code, then judge defect vs design.",
+    }
+
+
 def _fmt(value: float | None) -> str:
     return "—" if value is None else f"{value:.3f}".rstrip("0").rstrip(".")
 

@@ -8,6 +8,8 @@ versions, so each audit runs in its own throw-away virtualenv. The pins live in
 from __future__ import annotations
 
 import argparse
+import json
+import shlex
 import subprocess
 import sys
 import tomllib
@@ -30,12 +32,32 @@ def install_args(env: dict, source: str | Path | None = None) -> list[str]:
     return args
 
 
+def self_install_args() -> list[str]:
+    """How the throw-away virtualenv gets this same copy of falsepass: the checkout it runs
+    from, else the URL it was installed from (a git commit, a local wheel), else the
+    release with this version number."""
+    root = Path(__file__).resolve().parent.parent
+    if (root / "pyproject.toml").is_file() and (root / "falsepass" / "__init__.py").is_file():
+        return ["--with-editable", str(root)]
+    from importlib import metadata
+
+    try:
+        dist = metadata.distribution("falsepass")
+    except metadata.PackageNotFoundError:
+        return ["--with", "falsepass"]
+    direct = json.loads(dist.read_text("direct_url.json") or "{}")
+    if direct.get("url"):
+        vcs = direct.get("vcs_info")
+        url = f"{vcs['vcs']}+{direct['url']}@{vcs['commit_id']}" if vcs else direct["url"]
+        return ["--with", f"falsepass @ {url}"]
+    return ["--with", f"falsepass=={dist.version}"]
+
+
 def uv_command(audit_dir: Path, extra: list[str], module: str = "falsepass.runner", source: str | Path | None = None) -> list[str]:
     env = tomllib.loads((audit_dir / "env.toml").read_text())["env"]
-    root = Path(__file__).resolve().parent.parent
     command = [
         "uv", "run", "--isolated", "--no-project", "--python", env.get("python", "3.12"),
-        "--with-editable", str(root), "--with", "rewardlint", *install_args(env, source),
+        *self_install_args(), "--with", "rewardlint", *install_args(env, source),
     ]  # fmt: skip
     return [*command, "python", "-m", module, str(audit_dir), "--package", env["package"], *extra]
 
@@ -82,16 +104,25 @@ ADAPTER = Env()
 def scaffold(args) -> int:
     from falsepass import hub
 
-    info = hub.describe(args.env_id, args.version)
+    local = Path(args.env_id)
+    if (local / "pyproject.toml").is_file():
+        info = hub.describe_local(local)
+    elif local.exists() or args.env_id.count("/") != 1:
+        print(f"falsepass: {args.env_id} is neither a Hub slug (owner/environment) nor a folder with a pyproject.toml",
+              file=sys.stderr)
+        return 1
+    else:
+        info = hub.describe(args.env_id, args.version)
     if args.verifiers:
         info["verifiers"] = args.verifiers
-    name = args.name or args.env_id.split("/")[-1].lower().replace("_", "-")
+    name = args.name or info["id"].split("/")[-1].lower().replace("_", "-")
     audit_dir = Path("audits") / name
     if audit_dir.exists():
         print(f"falsepass: {audit_dir} already exists", file=sys.stderr)
         return 1
     audit_dir.mkdir(parents=True)
-    lines = [f'{key} = "{info[key]}"' for key in ("id", "package", "version", "module", "index", "verifiers")]
+    keys = ("id", "package", "version", "module", "index", "verifiers", "source")
+    lines = [f"{key} = {json.dumps(info[key])}" for key in keys if info.get(key) or key == "index"]
     (audit_dir / "env.toml").write_text("[env]\n" + "\n".join(lines) + f"\n# declared by the package: {info['declared']}\n")
     for source, content in info.get("sources", {}).items():  # the wheel's source, for the static pre-scan
         target = audit_dir / "src" / source
@@ -103,12 +134,40 @@ def scaffold(args) -> int:
         print(f"created {audit_dir}/env.toml and adapter.py — fill in render() and wrong_answer(), then:")
     else:
         print(f"created {audit_dir}/env.toml — no adapter needed for single-turn environments with reference answers:")
+    if info.get("source"):
+        print(f"  (installed from {info['source']} on every run, so edits are picked up)")
     print(f"  falsepass audit {name}")
     return 0
 
 
+def demo_source() -> Path:
+    """The toy environment: bundled in the wheel as `falsepass/_demo`, in a checkout under examples/."""
+    packaged = Path(__file__).resolve().parent / "_demo"
+    return packaged if packaged.is_dir() else Path(__file__).resolve().parent.parent / "examples" / "toy-env"
+
+
+def demo(target: Path) -> int:
+    import shutil
+
+    if not target.exists():
+        shutil.copytree(demo_source(), target, ignore=shutil.ignore_patterns("__pycache__", "*.egg-info"))
+    audit_dir = Path("audits") / "falsepass-toy-env"
+    if not (audit_dir / "env.toml").is_file():
+        code = main(["init", str(target)])
+        if code:
+            return code
+    print(f"auditing the toy environment in {target} (its grader pays `answer in reply`: expect several probes to fail, all from that one line)", flush=True)
+    return subprocess.call(uv_command(audit_dir, ["-n", "10"]))
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="falsepass")
+    from falsepass import __version__
+
+    parser = argparse.ArgumentParser(
+        prog="falsepass", description="Probe RL environment verifiers for false passes and false fails.",
+        epilog="Results are leads to reproduce and read, not verdicts. Docs: https://github.com/Super-Eric/falsepass",
+    )  # fmt: skip
+    parser.add_argument("--version", action="version", version=f"falsepass {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
     audit = sub.add_parser("audit", help="probe one environment in an isolated virtualenv")
     audit.add_argument("env", help="name of a folder under audits/, or a path to one")
@@ -122,8 +181,8 @@ def main(argv: list[str] | None = None) -> int:
     prop.add_argument("env")
     prop.add_argument("--print-command", action="store_true", help="show the uv command and exit")
     prop.add_argument("--source", type=Path, help="install the environment from this local folder instead of its release")
-    init = sub.add_parser("init", help="set up audits/<name>/ for a Hub environment")
-    init.add_argument("env_id", help="Hub slug, e.g. owner/environment")
+    init = sub.add_parser("init", help="set up audits/<name>/ for a Hub environment or a local environment folder")
+    init.add_argument("env_id", help="Hub slug (owner/environment) or a local folder with a pyproject.toml")
     init.add_argument("--name", help="folder name under audits/ (default: the environment name)")
     init.add_argument("--version", help="environment version (default: latest on the Hub)")
     init.add_argument("--verifiers", help="verifiers version to pin (default: inferred from the wheel)")
@@ -155,8 +214,15 @@ def main(argv: list[str] | None = None) -> int:
     fix.add_argument("--source", type=Path, required=True, help="the patched environment package (a folder with pyproject.toml)")
     fix.add_argument("--script", default="repro.py", help="repro script in the audit folder (default: repro.py)")
     fix.add_argument("--print-command", action="store_true", help="show the uv command and exit")
+    res = sub.add_parser("results", help="print the last probe run of an environment (summary, or --json for scripts and agents)")
+    res.add_argument("env")
+    res.add_argument("--json", action="store_true", help="headline numbers, failing probes and hints as JSON")
+    trial = sub.add_parser("demo", help="audit a bundled toy environment with one planted defect (about a minute)")
+    trial.add_argument("--dir", type=Path, default=Path("falsepass-demo"), help="where to write the toy environment")
+    sub.add_parser("mcp", help="serve falsepass as MCP tools over stdio (needs the `mcp` extra)")
     scan = sub.add_parser("scan", help="static pre-scan of reward source (no environment install needed)")
     scan.add_argument("path", type=Path, help="a Python file or a source directory")
+    scan.add_argument("--json", action="store_true", help="print the hints as JSON")
     args, extra = parser.parse_known_args(argv)
 
     if args.command in ("repro", "draft"):
@@ -174,6 +240,25 @@ def main(argv: list[str] | None = None) -> int:
             print(f"wrote {draft.draft(audit_dir)} — candidates only, review before reporting")
         return 0
 
+    if args.command == "results":
+        from falsepass import report
+
+        audit_dir = Path(args.env) if (Path(args.env) / "probe-results.json").is_file() else Path("audits") / args.env
+        if not (audit_dir / "probe-results.json").is_file():
+            print(f"falsepass: no probe-results.json in {audit_dir}; run `falsepass audit {args.env}` first", file=sys.stderr)
+            return 1
+        payload = json.loads((audit_dir / "probe-results.json").read_text())
+        print(json.dumps(report.digest(payload), indent=1) if args.json else report.summary(payload))
+        return 0
+
+    if args.command == "demo":
+        return demo(args.dir)
+
+    if args.command == "mcp":
+        from falsepass import mcp_server
+
+        return mcp_server.main()
+
     if args.command == "overview":
         from falsepass import draft
 
@@ -184,8 +269,6 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "discover":
-        import json
-
         from falsepass import hub
 
         found = hub.discover(args.days, args.min_releases, args.limit, args.min_stars)
@@ -207,6 +290,9 @@ def main(argv: list[str] | None = None) -> int:
         from falsepass import static
 
         hints = static.scan(args.path)
+        if args.json:
+            print(json.dumps([h.to_dict() for h in hints], indent=1))
+            return 0
         for h in hints:
             print(f"{h.file}:{h.line}: {h.rule} [{h.where}] {static.RULES[h.rule][1]}\n    {h.evidence}")
         print(f"{len(hints)} hint(s). Hints are reasons to look; run `falsepass audit` to confirm them.")
@@ -228,7 +314,7 @@ def main(argv: list[str] | None = None) -> int:
         audit_dir = Path(args.env) if (Path(args.env) / "env.toml").is_file() else Path("audits") / args.env
         source = args.source.resolve()
         if args.print_command:
-            print(" ".join(verify.command_for(audit_dir, args.script, source)))
+            print(shlex.join(verify.command_for(audit_dir, args.script, source)))
             return 0
         found, stderr, code = verify.run(audit_dir, source, args.script)
         if code != 0:
@@ -246,8 +332,9 @@ def main(argv: list[str] | None = None) -> int:
     source = args.source.resolve() if args.source else None
     command = uv_command(audit_dir, extra, module, source)
     if args.print_command:
-        print(" ".join(command))
+        print(shlex.join(command))
         return 0
+    sys.stdout.flush()
     return subprocess.call(command)
 
 
