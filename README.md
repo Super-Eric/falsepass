@@ -201,3 +201,7 @@ tests/            its tests
 docs/SEVERITY.md  the rating scale
 audits/<env>/     created by `falsepass init`; ignored by git
 ```
+
+## Licence
+
+Apache-2.0, see `LICENSE`.

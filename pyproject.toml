@@ -3,6 +3,8 @@ name = "falsepass"
 version = "0.1.0"
 description = "Probe RL environment verifiers for false passes and false fails."
 requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 dependencies = []
 
 [project.optional-dependencies]
