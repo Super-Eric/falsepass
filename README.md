@@ -1,0 +1,203 @@
+# falsepass
+
+Probe RL environment verifiers for **false passes** (a known-bad completion is
+rewarded) and **false fails** (a known-good completion is not).
+
+An RL environment is a task dataset plus a verifier that turns a model's output into
+reward. `falsepass` treats that verifier as the system under test: it calls the
+environment's own reward code on completions whose correctness is known in advance and
+reports every disagreement. No model, no rollouts, no GPU.
+
+It targets environments built on Prime Intellect's
+[verifiers](https://github.com/PrimeIntellect-ai/verifiers) library and published on the
+Environments Hub, across all three verifiers API generations (legacy rubrics,
+0.1.15.dev, v1 tasksets).
+
+```bash
+uv run falsepass init owner/environment          # looks up package, version and verifiers pin on the Hub
+uv run falsepass audit environment               # no adapter needed for Q&A tasks: the answer format is inferred
+uv run falsepass audit environment --search 120  # add mutation search (scorer calls per direction and example)
+uv run falsepass audit environment --fail-on 'ceiling>0.1' --fail-on 'errors>0'   # CI gate, exit 1 when met
+uv run falsepass scan path/to/source             # static pre-scan only, nothing is installed or run
+uv run falsepass discover --days 90 --limit 160  # recently maintained Hub environments and what each needs
+uv run falsepass repro environment               # stand-alone script that re-scores the exact failing completions
+uv run falsepass rollout environment -n 20       # what a local model's own replies earn (Ollama)
+uv run falsepass propose environment -n 5        # a local model writes wrong answers and climbs on the reward
+uv run falsepass draft environment               # REPORT.draft.md: candidate findings for manual review
+uv run falsepass overview -o RESULTS.md          # one table over every audit on disk
+uv run falsepass container environment           # container tasks: the key, and mutations of it, written as the output file (Docker)
+uv run falsepass upstream environment            # find the source repository on GitHub and compare it with the audit
+uv run falsepass verify-fix environment --source ../patched/pkg   # rerun the stored repro on a patch: which lines change
+uv run pytest                                    # the kit's own tests
+```
+
+Each audit runs in a throw-away virtualenv pinned by `audits/<env>/env.toml`, because
+Hub environments are built for mutually incompatible `verifiers` versions. Output:
+`audits/<env>/probe-results.json` and `summary.md`.
+
+## Checks
+
+| ID | Check | A correct verifier… |
+|---|---|---|
+| P1 | reference answer, in the requested format | gives full reward |
+| P2 | the same answer with harmless variation | gives full reward |
+| P3 | empty / whitespace-only | gives nothing |
+| P4 | the prompt echoed back | gives nothing |
+| P5 | every candidate answer at once | gives nothing |
+| P6 | wrong answer in perfect format | gives nothing |
+| P7 | confident wrong answer | gives nothing |
+| P8 | wrong answer plus a note to the grader (LLM-judge envs) | gives nothing |
+| P9 | right answer buried in filler, then retracted | gives nothing |
+| P10 | malformed output | gives nothing and does not raise |
+| P11 | the same completion ten times | gives the same score |
+| P12 | dataset: empty or duplicate prompts, conflicting labels | finds none |
+| P13 | `NaN`, `Infinity`, an integer answer plus 0.9 (JSON answers: floats set to NaN, integers plus 0.9 or Infinity) | gives nothing and does not raise |
+| P14 | the correct answer, with the answer tag or `\boxed{}` also named in prose before or after it | gives full reward |
+| P15 | the answer denied, or named next to a wrong value, inside the answer slot (`\boxed{R \text{ is wrong}}`, `\boxed{W = R}`) | gives nothing |
+| T7 | the correct answer after one no-op tool call | gives full reward (a judgement call where the harness offers no tools) |
+| C0–C2 | container tasks: the key written as the output file (C0), with NaN / Infinity / fractional counts (C1), emptied, truncated or replaced by an input file (C2) | pays C0 in full and no mutation in full |
+| T4 | multi-turn: replay an episode after an unrelated one | gives the same reward and transcript |
+| T5 | multi-turn: a policy that never answers | is cut off and not rewarded |
+| T6 | tool use: six policies built from the tool schemas alone (no tool call, every tool once with empty arguments, the finishing tool at once, …) | are not rewarded and raise nothing |
+| X*, T1–T3 | environment-specific probes defined in an adapter | — |
+| S1 | search: mutate known-bad completions, never adding the answer, toward higher reward | finds nothing above zero |
+| S2 | search: mutate the correct completion without changing the answer, toward lower reward | finds nothing below full |
+| S3 | search: completions that mention the answer without committing to it | finds nothing above zero |
+
+**Search** (`--search N`) is a seeded beam search over chains of small named mutations.
+A hit is reported as a minimised recipe, e.g. `nothing + pad_think`. S2 hits are
+brittleness candidates and need a human eye: whether `"B"` in quotes should count as
+`B` is a judgement call.
+
+**Static pre-scan** runs with every audit on `audits/<env>/src` and on its own with
+`falsepass scan`. Narrow AST rules, each derived from a defect found in a real audit;
+every hint is printed with the verdict of the probe that tests it
+(`confirmed: P6 failed 25/25`, `not confirmed`, `not checked`).
+
+**Adapter inference.** Without an `adapter.py`, the answer format is found by scoring
+the reference answer in each candidate format (from the parser and the prompt text) and
+keeping the one the environment's own reward code pays best. Wrong answers come from the
+label set, a shifted number, or another row. This covers environments with reference
+answers, single- or multi-turn; tool-use and sandbox environments, and games whose rows
+carry no answer, need `falsepass init --manual` or a hand-written script. A tag that the
+prompt uses to enclose its input (`<conversation>…</conversation>`) is not taken for an
+answer format, and when every format scores the same the plain answer is used. As a
+control, automatic mode compares the reference with an empty completion and marks the
+whole result **inconclusive** when the reward does not separate them.
+
+**Multi-turn.** Multi-turn environments are scored by running their own rollout loop
+with a scripted stand-in for the model (`V0RolloutScorer`), so follow-up prompts, stop
+conditions and per-episode state are exercised. Search mutates every turn of a script.
+A script entry can also carry tool calls (`{"tool_calls": [{"name": …, "arguments": {…}}]}`),
+which the environment executes with its real tools. Automatic mode also accepts tool-use
+environments whose tools run in-process: there is no answer format to infer, so it plays
+the six T6 policies and T5 and says in the summary that no control was possible.
+Policies that have to read the task to find a hole are still hand work
+(`falsepass.model.Policy`: a function from the conversation so far to the next reply).
+
+**Rollout check.** `falsepass rollout <env>` sends a sample of tasks to a model behind
+an OpenAI-compatible endpoint — a local Ollama server by default, so nothing is billed —
+and scores the model's own replies with the same scorer the probes use. It flags rows
+for reading (paid without the reference in the reply; reference in the reply but not
+paid in full; paid more than the reference; cut off at the token cap) and never calls a
+flag a finding. For tool-use environments the model is driven through verifiers' own
+client, so it receives the tool schemas and its tool calls are executed. `--endpoint`,
+`--model` and `--tag` run a second model next to the first.
+
+**Model-written wrong answers.** `falsepass propose <env>` asks the model for a reply
+that is on the subject and wrong, scores it, and has it rewritten a few times with the
+grader's score as feedback. For closed answers the reference must not occur in the
+reply (checked in code); for open-ended ones the wrongness is the model's own opinion,
+so every row is something to read, not a finding.
+
+**Discovery.** `falsepass discover` lists Hub environments updated recently with more
+than one published version, and reads each wheel to say what it needs (sandbox, tools,
+LLM judge, API key, reference answers). It needs the `prime` CLI for the listing.
+
+Three headline numbers per environment: the **false-pass ceiling** (highest reward any
+known-bad completion received), the **lazy-policy reward** (best average reward of one
+fixed wrong strategy across examples) and the **false-fail rate** (share of known-good
+completions denied full reward). `summary.md` also shows which reward term paid on
+known-bad completions.
+
+## From a probe run to a report
+
+A probe run produces **leads, not findings**. To turn one into a finding:
+
+1. `falsepass repro <env>` writes a script that depends only on verifiers and the
+   environment package and re-scores the exact completions (kept in `completions.json`).
+   Run it twice from a clean virtualenv; the output must be identical.
+2. Read the reward code and find the line that causes it. Decide whether it is a defect
+   or a design choice: a grader that is exploitable on purpose is an observation.
+3. `falsepass draft <env>` writes `REPORT.draft.md` with each failing probe group as a
+   candidate, the confirmed static hints attached, and the places marked where a person
+   has to judge. Rate what holds with `docs/SEVERITY.md`.
+4. Have someone who did not write the report check every number against the stored output.
+
+## From a report to a fix upstream
+
+`falsepass upstream <env>` searches GitHub for the environment's source (package name in a
+`pyproject.toml`, then its most distinctive class and function names), compares every
+audited file with the repository's default branch, line endings ignored, and prints what
+a contributor needs: default branch, licence, last push, open pull requests, how many
+recent merges came from outside. `falsepass verify-fix <env> --source <patched folder>`
+reruns the stored repro with the patched package and prints the lines that changed; a fix
+is ready when only the finding's lines move.
+
+## Adding an environment
+
+`falsepass init owner/environment` writes `audits/<name>/env.toml` (package, version,
+module, index, verifiers pin — all read from the Hub wheel) and unpacks the wheel's source
+into `audits/<name>/src` for the static scan. For Q&A environments that is all.
+Otherwise add `--manual` and fill in the generated `adapter.py`: how to load examples, how
+to write an answer the way the prompt asks, and what a wrong answer looks like.
+
+## Use from a coding agent
+
+Every command is non-interactive, writes its results as files (`probe-results.json` is
+machine-readable, `summary.md` is for people) and returns a non-zero exit code when a
+`--fail-on` condition is met, so a coding agent or a CI job can run it like any other
+CLI. An agent should treat the output the way a person would: as leads to reproduce and
+read, not as a verdict on the environment.
+
+## Track record
+
+Used on 35 public Hub environments between 2026-10-12 and 2026-10-14: 104 findings after
+review (9 Critical, 32 High, 21 Medium, 42 Low on `docs/SEVERITY.md`), each with a
+stand-alone repro run twice. Most environments were found and first probed in automatic
+mode; every finding was then confirmed by reading the code and checked by a second
+reviewer. Individual environments are not named here: maintainers are told first, and
+fixes go to them as pull requests.
+
+## Limits
+
+- Leads need a person. The tool finds where a grader pays the wrong thing; deciding
+  whether that is a defect, and how bad, is manual.
+- Search is shallow: fixed text mutations, a few hundred scorer calls. It does not train
+  a model against the reward.
+- Container tasks have no automatic mode, and environments on hosted sandboxes or with a
+  paid LLM judge are not covered without credentials.
+- Only verifiers-based environments are supported.
+
+## Related tools
+
+- [rewardlint](https://github.com/junglezke/rewardlint) — adversarial corpus for single
+  reward functions. `falsepass` runs it through an environment's reward code when the
+  reference can be substituted, and prints its verdict in `summary.md`.
+- ratctl — static and LLM-assisted scanner of environment source for sandbox exploit
+  patterns.
+- [VerifierLab](https://github.com/fraware/verifierlab) — attack campaigns against a
+  wrapped grader under a declared budget, with a ground-truth oracle.
+- [vlabs-integrity](https://github.com/verifiablelabs/vlabs-integrity) — mutation-kill and
+  isomorphic-relabelling audit for coding rewards with a trusted reference.
+- [harden-v0](https://github.com/few-sh/harden-v0) — LLM hacker–fixer loop that hardens
+  Harbor-format agent benchmark verifiers.
+
+## Layout
+
+```
+falsepass/        the probe kit
+tests/            its tests
+docs/SEVERITY.md  the rating scale
+audits/<env>/     created by `falsepass init`; ignored by git
+```
