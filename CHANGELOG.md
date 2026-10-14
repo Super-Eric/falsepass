@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- README: badges, a recording of `falsepass demo`, a real example, and the demo's
+  output (`examples/toy-env/summary.md`). Chinese README.
+
 ## 0.2.0 — 2026-10-14
 
 - Local environments: `falsepass init ./folder` audits an environment from its

@@ -16,3 +16,4 @@ To *use* falsepass on an environment, read `skills/falsepass/SKILL.md` instead.
   (`.github/workflows/ci.yml`): its planted defect must keep failing the gate.
 - Probe output is a lead, not a verdict. Keep that wording in anything user-facing.
 - `README.md` and `README.zh-CN.md` cover the same sections; change both together.
+- `docs/demo.gif` is made from `docs/demo-recording.sh`: `asciinema rec -c 'bash docs/demo-recording.sh' --cols 118 --rows 30 --idle-time-limit 2 docs/demo.cast`, then `agg --font-size 14 --theme monokai --last-frame-duration 6 docs/demo.cast docs/demo.gif`. Re-record it and `examples/toy-env/summary.md` when the demo output changes.

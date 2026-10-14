@@ -2,8 +2,20 @@
 
 English | [中文](README.zh-CN.md)
 
+[![CI](https://github.com/Super-Eric/falsepass/actions/workflows/ci.yml/badge.svg)](https://github.com/Super-Eric/falsepass/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Version](https://img.shields.io/github/v/tag/Super-Eric/falsepass?label=version)](CHANGELOG.md)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
+
 Probe RL environment verifiers for **false passes** (a known-bad completion is
 rewarded) and **false fails** (a known-good completion is not).
+
+In one public environment, echoing the question back earned full reward on every task:
+each question listed all of its candidate answers, and the grader only checked that the
+right one appeared somewhere in the reply, so a policy could collect full reward by
+listing everything. falsepass finds this kind of hole before training does.
+
+![falsepass demo: a planted grading defect found from two sides](docs/demo.gif)
 
 An RL environment is a task dataset plus a verifier that turns a model's output into
 reward. `falsepass` treats that verifier as the system under test: it calls the
@@ -40,6 +52,22 @@ falsepass results my-environment --json   # headline numbers and failing probes,
 when the reference appears anywhere in the answer, and the summary shows that one line
 from several sides: the static scan points at it, and the probes that list several
 answers (P5), retract the answer (P9) or deny it inside the answer slot (P15) are paid.
+A condensed excerpt of the real output (full file: `examples/toy-env/summary.md`):
+
+```
+- False-pass ceiling: 1 of 1 (highest reward given to a known-bad completion; via P5 shotgun/all_in_one_slot)
+- Lazy-policy reward: 0 (best average reward of one fixed strategy that never uses the reference answer; via P3 empty/empty)
+- False-fail rate: 0.108 (93 known-good completions)
+
+| Probe              | Variant                | Expect | Runs | Failed | Score min / mean / max |
+| P5 shotgun         | all_in_one_slot        | zero   | 10   | 10     | 1 / 1 / 1              |
+| P9 oversized       | correct_then_retracted | zero   | 10   | 10     | 1 / 1 / 1              |
+| P15 hedged_in_slot | denied                 | zero   | 10   | 10     | 1 / 1 / 1              |
+
+Static hint: falsepass_toy_env.py:26 reference_substring_match
+    return 1.0 if answer in reply else 0.0
+    confirmed: P9 failed 10/20, P5 failed 10/30
+```
 
 ## For environment authors: check before you publish
 
@@ -231,12 +259,10 @@ to write an answer the way the prompt asks, and what a wrong answer looks like.
 
 ## Track record
 
-Used on 35 public Hub environments between 2026-10-12 and 2026-10-14: 104 findings after
-review (9 Critical, 32 High, 21 Medium, 42 Low on `docs/SEVERITY.md`), each with a
-stand-alone repro run twice. Most environments were found and first probed in automatic
-mode; every finding was then confirmed by reading the code and checked by a second
-reviewer. Individual environments are not named here: maintainers are told first, and
-fixes go to them as pull requests.
+Used on a few dozen public Hub environments in October 2026. Every finding kept was
+reproduced twice from a clean virtualenv and confirmed by reading the reward code;
+fixes are being sent to the maintainers as pull requests. Individual environments and
+counts are not published here until those fixes are in.
 
 ## Limits
 

@@ -2,7 +2,16 @@
 
 [English](README.md) | 中文
 
+[![CI](https://github.com/Super-Eric/falsepass/actions/workflows/ci.yml/badge.svg)](https://github.com/Super-Eric/falsepass/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Version](https://img.shields.io/github/v/tag/Super-Eric/falsepass?label=version)](CHANGELOG.md)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
+
 检查强化学习（RL）环境的判分器（verifier）有没有两类错误：**假通过**（明知是错的回答拿到了奖励）和**假失败**（明知是对的回答没拿到满分）。
+
+举个真实的例子：在一个公开的环境里，把题目原样抄回去，每道题都能拿满分。原因是每道题都列出了全部候选答案，而判分器只检查正确答案有没有出现在回复里的某个位置。所以只要把所有答案都写上，就能拿满分。falsepass 能在训练之前发现这类漏洞。
+
+![falsepass 演示：从两个方向发现一个埋好的判分漏洞](docs/demo.gif)
 
 一个 RL 环境由任务数据集和判分器组成，判分器把模型的输出换算成奖励。`falsepass` 把判分器本身当作被测对象：用环境自己的奖励代码，去给一批事先已知对错的回答打分，然后报告每一处判分和事实不符的地方。不需要模型，不需要真的跑训练，也不需要 GPU。
 
@@ -28,7 +37,24 @@ falsepass audit my-environment            # 开始检查；结果在 audits/my-e
 falsepass results my-environment --json   # 核心指标和没通过的测试，给脚本和 AI 代理读
 ```
 
-`demo` 会把小环境写到 `./falsepass-demo` 再审计。这个环境的判分只看"标准答案有没有出现在回答里的某个位置"，结果摘要会从几个方向指出这一行代码：静态扫描直接定位到它；"一次列出多个答案"（P5）、"给出答案后又收回"（P9）、"在答案框里否定答案"（P15）这几类回答都拿到了奖励。
+`demo` 会把小环境写到 `./falsepass-demo` 再审计。这个环境的判分只看"标准答案有没有出现在回答里的某个位置"，结果摘要会从几个方向指出这一行代码：静态扫描直接定位到它；"一次列出多个答案"（P5）、"给出答案后又收回"（P9）、"在答案框里否定答案"（P15）这几类回答都拿到了奖励。下面是真实输出的精简节选（完整文件：`examples/toy-env/summary.md`）：
+
+```
+- False-pass ceiling: 1 of 1 (highest reward given to a known-bad completion; via P5 shotgun/all_in_one_slot)
+- Lazy-policy reward: 0 (best average reward of one fixed strategy that never uses the reference answer; via P3 empty/empty)
+- False-fail rate: 0.108 (93 known-good completions)
+
+| Probe              | Variant                | Expect | Runs | Failed | Score min / mean / max |
+| P5 shotgun         | all_in_one_slot        | zero   | 10   | 10     | 1 / 1 / 1              |
+| P9 oversized       | correct_then_retracted | zero   | 10   | 10     | 1 / 1 / 1              |
+| P15 hedged_in_slot | denied                 | zero   | 10   | 10     | 1 / 1 / 1              |
+
+Static hint: falsepass_toy_env.py:26 reference_substring_match
+    return 1.0 if answer in reply else 0.0
+    confirmed: P9 failed 10/20, P5 failed 10/30
+```
+
+意思是：错误回答拿到的最高分是满分（1 分里拿了 1 分）；"一次列出所有答案"、"给出答案又收回"、"在答案框里否定答案"三类回答，10 次全部拿了满分；静态扫描指出的第 26 行，被这些测试结果证实了。
 
 ## 给环境作者：发布前先检查
 
@@ -146,7 +172,7 @@ falsepass mcp                             # MCP 服务，走 stdio（需要 `fal
 
 ## 实际使用记录
 
-2026-10-12 到 2026-10-14 期间用于 35 个公开的 Hub 环境，复查后确认 104 个问题（按 `docs/SEVERITY.md` 定级：9 个 Critical、32 个 High、21 个 Medium、42 个 Low），每个问题都有独立的复现脚本，并运行过两次。多数环境是先由自动模式发现和初步测试的；之后每个问题都经过读代码确认，再由第二个人复查。这里不点名具体环境：先通知维护者，修复以 PR 的形式提交给他们。
+2026 年 10 月用于几十个公开的 Hub 环境。保留下来的每个问题，都在干净的虚拟环境里复现过两次，并通过读奖励代码确认；修复正在以 PR 的形式陆续提交给维护者。在这些修复合并之前，这里不公布具体环境和问题数量。
 
 ## 局限
 
