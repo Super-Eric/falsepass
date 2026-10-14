@@ -15,3 +15,4 @@ To *use* falsepass on an environment, read `skills/falsepass/SKILL.md` instead.
 - `examples/toy-env/` is bundled into the wheel as `falsepass/_demo` and checked by CI
   (`.github/workflows/ci.yml`): its planted defect must keep failing the gate.
 - Probe output is a lead, not a verdict. Keep that wording in anything user-facing.
+- `README.md` and `README.zh-CN.md` cover the same sections; change both together.

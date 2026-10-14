@@ -1,5 +1,7 @@
 # falsepass
 
+English | [中文](README.zh-CN.md)
+
 Probe RL environment verifiers for **false passes** (a known-bad completion is
 rewarded) and **false fails** (a known-good completion is not).
 
