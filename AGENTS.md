@@ -12,6 +12,10 @@ To *use* falsepass on an environment, read `skills/falsepass/SKILL.md` instead.
   passing a correct one (`tests/test_probes.py` has the pattern).
 - A new static rule goes in `falsepass/static.py` with the probe that confirms it.
   Rules must be narrow: a hint that fires on correct code costs every user time.
+- Frameworks: verifiers (`scorers.py`, `auto.py`), Inspect AI (`inspect_support.py`) and HUD
+  (`hud_support.py`). Each scores a completion with the framework's own grading path;
+  `AutoAdapter` picks the loader from `framework` in env.toml. Their tests need the
+  framework installed (`uv run --with inspect-ai pytest tests/test_inspect.py`, same for hud).
 - `examples/toy-env/` is bundled into the wheel as `falsepass/_demo` and checked by CI
   (`.github/workflows/ci.yml`): its planted defect must keep failing the gate.
 - Probe output is a lead, not a verdict. Keep that wording in anything user-facing.

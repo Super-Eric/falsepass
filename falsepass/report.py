@@ -132,9 +132,10 @@ def _adapter_lines(adapter: Any) -> list[str]:
     if not isinstance(adapter, dict):
         return []
     table = ", ".join(f"{name} {_fmt(value)}" for name, value in adapter["reference_reward_by_format"].items())
+    chosen = (f"Answer format `{adapter['format']}` chosen because the reference scored best in it "
+              f"({adapter['examples_tried']} examples; {table})") if adapter["examples_tried"] else f"Answer format: {adapter['format']}"
     lines = [
-        f"- **Adapter:** inferred. Answer format `{adapter['format']}` chosen because the reference "
-        f"scored best in it ({adapter['examples_tried']} examples; {table}). Answers: {adapter['answers']}. "
+        f"- **Adapter:** inferred. {chosen}. Answers: {adapter['answers']}. "
         f"{adapter.get('turns', 'single-turn').capitalize()}."
     ]
     if adapter.get("validity", "ok") != "ok":

@@ -666,7 +666,7 @@ wheels = [
 
 [[package]]
 name = "falsepass"
-version = "0.2.0"
+version = "0.3.0"
 source = { editable = "." }
 
 [package.optional-dependencies]
@@ -686,7 +686,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.2,<2" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.2,<3" },
     { name = "rewardlint", marker = "extra == 'rewardlint'", specifier = ">=0.1.0" },
 ]
 provides-extras = ["rewardlint", "mcp"]

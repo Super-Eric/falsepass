@@ -67,6 +67,8 @@ def candidate_formats(prompt_text: str, parser: Any = None) -> dict[str, Format]
             add(f"<{tag}>[brackets]", lambda a, tag=tag: f"<{tag}>[{a}]</{tag}>")
     if "```" in prompt_text:
         add("fenced", lambda a: f"```\n{a}\n```")
+    if "ANSWER:" in prompt_text:  # Inspect's templates ask for "ANSWER: $ANSWER"
+        add("ANSWER:", lambda a: f"ANSWER: {a}")
     # Nothing below was asked for by the prompt: the plain answer goes first, so that it wins a tie.
     found["bare"] = lambda a: a
     add("boxed", lambda a: f"\\boxed{{{a}}}")
@@ -97,7 +99,11 @@ class ContainerTask(TypeError):
 class AutoAdapter(Adapter):
     def __init__(self, env: dict[str, Any]) -> None:
         self.name = env["id"]
-        self.module = env.get("module") or env["package"]
+        self.framework = env.get("framework", "verifiers")
+        self.task_spec = env.get("task", "")
+        self.answers = env.get("answers")
+        self.answer_free = False  # no reference answers (HUD without an answers file): answer-free probes only
+        self.module = env.get("module") or env.get("package") or self.task_spec
         self.load_args = env.get("load_args", {})
         self.multi_turn = False
         self.tool_mode = False  # a tool-use environment: played with policies, no answer format to infer
@@ -109,6 +115,10 @@ class AutoAdapter(Adapter):
 
     # --- loading -------------------------------------------------------------------
     def load(self, n: int, seed: int) -> tuple[Scorer, list[Example]]:
+        if self.framework == "inspect":
+            return self._load_inspect(n, seed)
+        if self.framework == "hud":
+            return self._load_hud(n, seed)
         try:
             scorer, self.pool, self.hint = self._load_v1()
         except ContainerTask as needs_box:
@@ -120,7 +130,11 @@ class AutoAdapter(Adapter):
                 raise RuntimeError(
                     f"could not load {self.module!r} as a v1 taskset ({v1_error}) or a v0 environment ({v0_error})"
                 ) from v0_error
-        if not self.tool_mode:
+        self._classify_pool()
+        return scorer, random.Random(seed).sample(self.pool, min(n, len(self.pool)))
+
+    def _classify_pool(self) -> None:
+        if not (self.tool_mode or self.answer_free):
             self.pool = [e for e in self.pool if e.answer.strip()]
         if not self.pool:
             raise RuntimeError("no reference answers found: this environment needs a hand-written adapter")
@@ -129,7 +143,31 @@ class AutoAdapter(Adapter):
         self.open_ended = lengths[len(lengths) // 2] > 60 or sum("\n" in e.answer for e in self.pool) > len(self.pool) / 2
         self.labels = sorted({e.answer for e in self.pool})
         self.closed = len(self.labels) <= CLOSED_SET_MAX and len(self.pool) > 2 * len(self.labels)
-        return scorer, random.Random(seed).sample(self.pool, min(n, len(self.pool)))
+
+    def _load_hud(self, n: int, seed: int) -> tuple[Scorer, list[Example]]:
+        """A HUD task template: its own grader scores the reply (hud_support.py)."""
+        from falsepass import hud_support
+
+        scorer, self.pool = hud_support.load(self.task_spec, MAX_ROWS, self.answers)
+        self.answer_free = not any(e.answer.strip() for e in self.pool)
+        self._classify_pool()
+        sampled = random.Random(seed).sample(self.pool, min(n, len(self.pool)))
+        self.hint = (sampled[0].prompt, None)
+        self.loader = {"kind": "hud", "task": self.task_spec, "answers": self.answers}
+        return scorer, sampled
+
+    def _load_inspect(self, n: int, seed: int) -> tuple[Scorer, list[Example]]:
+        """An Inspect AI task: its solver chain and scorers grade the completion (inspect_support.py)."""
+        from falsepass import inspect_support
+
+        scorer, self.pool = inspect_support.load(self.task_spec, self.load_args, MAX_ROWS)
+        self._classify_pool()
+        sampled = random.Random(seed).sample(self.pool, min(n, len(self.pool)))
+        for example in sampled:  # what the model would see: the task's templates applied
+            example.prompt = scorer.rendered_prompt(example)
+        self.hint = (sampled[0].prompt, None)
+        self.loader = {"kind": "inspect", "task": self.task_spec, "load_args": self.load_args}
+        return scorer, sampled
 
     def _load_v0(self) -> tuple[Scorer, list[Example], tuple[str, Any]]:
         import verifiers as vf
@@ -209,6 +247,15 @@ class AutoAdapter(Adapter):
     # --- format inference ------------------------------------------------------------
     async def prepare(self, scorer: Scorer, examples: list[Example], k: int = 5) -> None:
         """Score the reference in every candidate format and keep the best-paid one."""
+        if self.answer_free:
+            self.inferred = {
+                "validity": "no control: the tasks carry no reference answer (HUD keeps it inside the grader), so only "
+                            "answer-free probes ran (P3, P4, A1, P10, P11) and the maximum reward is assumed to be 1.0. "
+                            "Give reference answers with `falsepass init ... --answers file.json` to run every probe",
+                "format": "plain reply", "reference_reward_by_format": {}, "examples_tried": 0, "answers": "not available",
+                "turns": "single answer, graded by the task template", "note": "",
+            }  # fmt: skip
+            return
         if self.tool_mode:
             self.inferred = {
                 "validity": "no control: the reference cannot be replayed without a policy that solves the task, so the "
@@ -319,6 +366,10 @@ class AutoAdapter(Adapter):
     def with_reference(self, example: Example, reference: str) -> Example | None:
         if not is_number(example.answer):
             return None
+        if self.framework == "inspect":
+            from falsepass import inspect_support
+
+            return inspect_support.with_reference(example, reference)
         raw = example.raw
         if hasattr(raw, "data"):  # v1 task
             data = raw.data.model_copy(update={"answer": reference})

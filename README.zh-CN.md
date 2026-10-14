@@ -15,7 +15,13 @@
 
 一个 RL 环境由任务数据集和判分器组成，判分器把模型的输出换算成奖励。`falsepass` 把判分器本身当作被测对象：用环境自己的奖励代码，去给一批事先已知对错的回答打分，然后报告每一处判分和事实不符的地方。不需要模型，不需要真的跑训练，也不需要 GPU。
 
-适用于基于 Prime Intellect 的 [verifiers](https://github.com/PrimeIntellect-ai/verifiers) 库开发的环境，不管是已经发布在 Environments Hub 上，还是还在本地文件夹里。verifiers 的三代接口（旧版 rubric、0.1.15.dev、v1 taskset）都支持。
+支持三个框架，已发布的或还在本地文件夹里的都可以：
+
+| 框架 | falsepass 实际运行的是 | `falsepass init …` |
+|---|---|---|
+| [verifiers](https://github.com/PrimeIntellect-ai/verifiers)（Prime Intellect 的 Environments Hub），三代接口都支持 | 环境自己的 rubric 或 taskset | `owner/environment`，或 `./文件夹` |
+| [Inspect AI](https://inspect.aisi.org.uk) | 任务自己的 solver 链（用按脚本回答的替身代替模型），再用它自己的 scorer 打分 | `path/to/task.py`、`./项目`，或 `inspect_evals/gsm8k` |
+| [HUD](https://docs.hud.ai) | 任务模板自己的判分代码，调用方式和 HUD 服务器一样 | `path/to/环境文件夹`（加 `--answers refs.json` 可跑全部测试） |
 
 ## 安装
 
@@ -55,6 +61,19 @@ Static hint: falsepass_toy_env.py:26 reference_substring_match
 ```
 
 意思是：错误回答拿到的最高分是满分（1 分里拿了 1 分）；"一次列出所有答案"、"给出答案又收回"、"在答案框里否定答案"三类回答，10 次全部拿了满分；静态扫描指出的第 26 行，被这些测试结果证实了。
+
+## Inspect AI 和 HUD
+
+```bash
+falsepass init inspect_evals/gsm8k                     # inspect_evals 里的任务（版本从 PyPI 固定）
+falsepass init my_eval.py --task hard_split            # 任务文件；有多个任务时用 --task 选一个
+falsepass init ./my-hud-env                            # HUD 环境文件夹（env.py + tasks.py）
+falsepass init ./my-hud-env --answers refs.json        # 提供标准答案：跑全部测试
+```
+
+Inspect：替身只代替调用 `generate()` 的那一步；提示模板、系统消息、答案解析（`multiple_choice()`）都是任务自己的代码。如果 solver 或 scorer 自己去调用模型（自我批评、`model_graded_qa`），每一行都会被标记出来，而不是给出一个不可信的分数。需要沙箱的任务暂不支持。
+
+HUD：任务模板把标准答案藏在判分代码里，所以不加 `--answers` 时只跑不需要标准答案的测试：空回答、原样抄回题目，以及一次列出 0 到 1000 所有整数、所有字母、yes/no 之类的词或题目里所有词的回答（A1）。如果这些回答能拿分，判分实际上就是在做子串匹配。`examples/inspect-toy/` 和 `examples/hud-toy/` 各埋了一个漏洞，可以拿来试。
 
 ## 给环境作者：发布前先检查
 
@@ -127,6 +146,7 @@ falsepass mcp                             # MCP 服务，走 stdio（需要 `fal
 | P13 | `NaN`、`Infinity`、整数答案加 0.9（JSON 答案：小数改成 NaN，整数加 0.9 或改成 Infinity） | 不给分，也不报错 |
 | P14 | 正确答案，但在正文里答案前后又提到了答案标签或 `\boxed{}` | 给满分 |
 | P15 | 在答案框里否定答案，或把答案和错误值并列（`\boxed{R \text{ is wrong}}`、`\boxed{W = R}`） | 不给分 |
+| A1 | 不需要标准答案：一次列出 0–1000 所有整数、所有字母、yes/no 之类的词，或题目里所有的词 | 不给分 |
 | T7 | 先调用一次无实际作用的工具，再给出正确答案 | 给满分（如果环境本身不提供工具，这一项需要人来判断） |
 | C0–C2 | 容器类任务：把标准答案直接写成输出文件（C0），数字改成 NaN / Infinity / 小数计数（C1），清空、截断或换成输入文件（C2） | C0 给满分，所有变体都不给满分 |
 | T4 | 多轮：先跑一个无关的对话，再重放同一个对话 | 奖励和对话记录都相同 |
@@ -179,7 +199,7 @@ falsepass mcp                             # MCP 服务，走 stdio（需要 `fal
 - 线索需要人来判断。工具能找出判分器在哪里给错了分，但这算不算漏洞、有多严重，要靠人来决定。
 - 搜索比较浅：只有固定的文本变异，判分器调用几百次。不会针对奖励去训练模型。
 - 容器类任务没有自动模式；托管沙箱上的环境，以及用付费大模型当评委的环境，没有相应凭据就无法覆盖。
-- 只支持基于 verifiers 的环境。
+- 支持的框架：verifiers、Inspect AI（不含需要沙箱的任务）和 HUD（按回答判分的任务模板；按代理在工作区里做了什么来判分的任务，仍需手写策略）。
 
 ## 相关工具
 
@@ -195,6 +215,7 @@ falsepass mcp                             # MCP 服务，走 stdio（需要 `fal
 falsepass/           测试工具本身（falsepass/mcp_server.py：MCP 工具）
 tests/               工具自身的测试
 examples/toy-env/    demo 用的小环境，带一个故意埋的漏洞
+examples/inspect-toy/、examples/hud-toy/   Inspect AI 和 HUD 版的同类小例子
 skills/falsepass/    给 AI 代理的 skill：审计流程
 action.yml           GitHub Action
 docs/SEVERITY.md     定级标准；docs/OUTPUT.md：输出文件说明（均为英文）

@@ -23,8 +23,19 @@ def install_args(env: dict, source: str | Path | None = None) -> list[str]:
     package (a folder with a pyproject.toml) and `verifiers_source` for verifiers itself.
     `source` given here (a patched copy, an upstream checkout) overrides the file's."""
     source = source or env.get("source")
-    args = ["--with", str(env["verifiers_source"]) if env.get("verifiers_source") else f"verifiers=={env['verifiers']}"]
-    args += ["--with", str(source) if source else f"{env['package']}=={env['version']}"]
+    if env.get("framework") == "hud":
+        args = ["--with", f"hud=={env['hud']}" if env.get("hud") else "hud"]
+        if source:
+            args += ["--with", str(source)]
+    elif env.get("framework") == "inspect":
+        args = ["--with", f"inspect-ai=={env['inspect_ai']}" if env.get("inspect_ai") else "inspect-ai"]
+        if source:
+            args += ["--with", str(source)]
+        elif env.get("package"):
+            args += ["--with", f"{env['package']}=={env['version']}" if env.get("version") else env["package"]]
+    else:
+        args = ["--with", str(env["verifiers_source"]) if env.get("verifiers_source") else f"verifiers=={env['verifiers']}"]
+        args += ["--with", str(source) if source else f"{env['package']}=={env['version']}"]
     for requirement in env.get("extra", []):
         args += ["--with", requirement]
     if env.get("index"):
@@ -59,7 +70,8 @@ def uv_command(audit_dir: Path, extra: list[str], module: str = "falsepass.runne
         "uv", "run", "--isolated", "--no-project", "--python", env.get("python", "3.12"),
         *self_install_args(), "--with", "rewardlint", *install_args(env, source),
     ]  # fmt: skip
-    return [*command, "python", "-m", module, str(audit_dir), "--package", env["package"], *extra]
+    package = ["--package", env["package"]] if env.get("package") else []
+    return [*command, "python", "-m", module, str(audit_dir), *package, *extra]
 
 
 ADAPTER_TEMPLATE = '''"""falsepass adapter for {id}."""
@@ -104,38 +116,59 @@ ADAPTER = Env()
 def scaffold(args) -> int:
     from falsepass import hub
 
+    from falsepass import hud_support, inspect_support
+
     local = Path(args.env_id)
-    if (local / "pyproject.toml").is_file():
+    if local.exists() and (args.framework == "hud" or (args.framework is None and hud_support.uses_hud(local))):
+        info = hud_support.describe(local, args.answers)
+    elif local.is_file() and local.suffix == ".py" and inspect_support.uses_inspect(local):
+        info = inspect_support.describe_file(local, args.task)
+    elif (local / "pyproject.toml").is_file() and (args.framework == "inspect" or inspect_support.uses_inspect(local)):
+        info = inspect_support.describe_folder(local, args.task)
+    elif (local / "pyproject.toml").is_file():
         info = hub.describe_local(local)
+    elif not local.exists() and (args.framework == "inspect" or args.env_id.startswith("inspect_evals/")):
+        info = inspect_support.describe_registry(args.env_id)
     elif local.exists() or args.env_id.count("/") != 1:
-        print(f"falsepass: {args.env_id} is neither a Hub slug (owner/environment) nor a folder with a pyproject.toml",
-              file=sys.stderr)
+        print(f"falsepass: {args.env_id} is neither a Hub slug (owner/environment), an Inspect task (a .py file, or "
+              "a registry name with --framework inspect) nor a folder with a pyproject.toml", file=sys.stderr)
         return 1
     else:
         info = hub.describe(args.env_id, args.version)
     if args.verifiers:
         info["verifiers"] = args.verifiers
+    if args.extra:
+        info["extra"] = [*info.get("extra", []), *args.extra]
     name = args.name or info["id"].split("/")[-1].lower().replace("_", "-")
     audit_dir = Path("audits") / name
     if audit_dir.exists():
         print(f"falsepass: {audit_dir} already exists", file=sys.stderr)
         return 1
     audit_dir.mkdir(parents=True)
-    keys = ("id", "package", "version", "module", "index", "verifiers", "source")
-    lines = [f"{key} = {json.dumps(info[key])}" for key in keys if info.get(key) or key == "index"]
-    (audit_dir / "env.toml").write_text("[env]\n" + "\n".join(lines) + f"\n# declared by the package: {info['declared']}\n")
+    keys = ("id", "framework", "task", "package", "version", "module", "index", "verifiers", "inspect_ai", "hud", "source", "answers", "extra")
+    required = ("index",) if info.get("framework", "verifiers") == "verifiers" else ()
+    lines = [f"{key} = {json.dumps(info[key])}" for key in keys if info.get(key) or key in required]
+    declared = f"# declared by the package: {info['declared']}\n" if info.get("declared") else ""
+    (audit_dir / "env.toml").write_text("[env]\n" + "\n".join(lines) + "\n" + declared)
     for source, content in info.get("sources", {}).items():  # the wheel's source, for the static pre-scan
         target = audit_dir / "src" / source
         if target.resolve().is_relative_to((audit_dir / "src").resolve()):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content)
     if args.manual:
-        (audit_dir / "adapter.py").write_text(ADAPTER_TEMPLATE.format(id=info["id"], package=info["module"]))
+        (audit_dir / "adapter.py").write_text(ADAPTER_TEMPLATE.format(id=info["id"], package=info.get("module") or info.get("task", "")))
         print(f"created {audit_dir}/env.toml and adapter.py — fill in render() and wrong_answer(), then:")
+    elif info.get("framework") == "hud":
+        how = "with the reference answers given" if info.get("answers") else "answer-free probes only; add --answers for all"
+        print(f"created {audit_dir}/env.toml — each reply is graded by its task template ({how}):")
+    elif info.get("framework") == "inspect":
+        print(f"created {audit_dir}/env.toml — each reply goes through the task's own solver chain and scorers:")
     else:
         print(f"created {audit_dir}/env.toml — no adapter needed for single-turn environments with reference answers:")
     if info.get("source"):
         print(f"  (installed from {info['source']} on every run, so edits are picked up)")
+    if info.get("others"):
+        print(f"  (task {info['task']}; the others can be audited with --task and --name: {', '.join(info['others'])})")
     print(f"  falsepass audit {name}")
     return 0
 
@@ -182,11 +215,17 @@ def main(argv: list[str] | None = None) -> int:
     prop.add_argument("--print-command", action="store_true", help="show the uv command and exit")
     prop.add_argument("--source", type=Path, help="install the environment from this local folder instead of its release")
     init = sub.add_parser("init", help="set up audits/<name>/ for a Hub environment or a local environment folder")
-    init.add_argument("env_id", help="Hub slug (owner/environment) or a local folder with a pyproject.toml")
+    init.add_argument("env_id", help="Hub slug (owner/environment), a local folder with a pyproject.toml, an Inspect task file, "
+                                     "an Inspect registry name such as inspect_evals/gsm8k, or a HUD environment folder")
     init.add_argument("--name", help="folder name under audits/ (default: the environment name)")
     init.add_argument("--version", help="environment version (default: latest on the Hub)")
     init.add_argument("--verifiers", help="verifiers version to pin (default: inferred from the wheel)")
     init.add_argument("--manual", action="store_true", help="also write an adapter.py skeleton to fill in")
+    init.add_argument("--framework", choices=["verifiers", "inspect", "hud"], help="force the framework (default: detected)")
+    init.add_argument("--answers", help="HUD: a JSON file with reference answers (slug -> answer, or a list in task order)")
+    init.add_argument("--task", help="Inspect: which @task to audit when a file or project defines several")
+    init.add_argument("--with", dest="extra", action="append", default=[], metavar="REQ",
+                      help="extra requirement to install for the audit, e.g. 'inspect-evals[math]' (repeatable)")
     disc = sub.add_parser("discover", help="list actively maintained Hub environments and what each needs")
     disc.add_argument("--days", type=int, default=90, help="updated within this many days")
     disc.add_argument("--min-releases", type=int, default=2, help="published versions required to count as maintained")

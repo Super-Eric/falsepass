@@ -37,6 +37,8 @@ RULES: dict[str, tuple[tuple[str, ...], str]] = {
     "truncated_count": (("P13", "C1"), "a submitted number goes through `int()` before the comparison: 8.9 counts as 8, and Infinity raises OverflowError"),
     "first_tag_match": (("P14",), "the answer is the first match of a tag pattern, so a tag named in prose before the answer block decides what is graded"),
     "assistant_messages_by_turn": (("T7",), "assistant messages are indexed by user turn; a message that only calls a tool shifts every later turn"),
+    "hud_contains_grader": (("P5", "P9"), "HUD's `contains()` / `contains_any()` / `contains_all()` graders are substring tests, so a reply that lists several answers, or names the right one and rejects it, passes"),
+    "inspect_includes_scorer": (("P5", "P9"), "Inspect's `includes()` scorer passes when the target appears anywhere in the output, so a reply that lists several answers, or names the right one and rejects it, passes"),
 }
 
 WANT_WORD = re.compile(r"want|expect|answer|gold|truth|target|reference|key", re.IGNORECASE)
@@ -306,6 +308,42 @@ def _scan_dependencies(path: Path, source: str) -> list[Hint]:
     return hints
 
 
+SUBSTRING_GRADERS = {  # framework grader helpers that are substring tests: (module, function names, rule)
+    "inspect_ai.scorer": ({"includes"}, "inspect_includes_scorer"),
+    "hud.graders": ({"contains", "contains_any", "contains_all"}, "hud_contains_grader"),
+}
+
+
+def _scan_inspect(tree: ast.AST, shown: str, source: str) -> list[Hint]:
+    """Tasks graded with a framework's built-in substring grader (Inspect `includes()`, HUD `contains()`)."""
+    imported: dict[str, str] = {}  # local name -> rule
+    for node in (n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module in SUBSTRING_GRADERS):
+        functions, rule = SUBSTRING_GRADERS[node.module]
+        imported.update({a.asname or a.name: rule for a in node.names if a.name in functions})
+    aliases = {a.asname: a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names if a.asname}
+    hints = []
+    # A HUD template receives the reply from a yield (`answer = yield prompt`): `x in answer` there is a substring test.
+    for func in (n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef)):
+        replies = {t.id for n in ast.walk(func) if isinstance(n, ast.Assign) and isinstance(n.value, ast.Yield)
+                   for t in n.targets if isinstance(t, ast.Name)}  # fmt: skip
+        for compare in (n for n in ast.walk(func) if isinstance(n, ast.Compare) and replies):
+            if len(compare.ops) == 1 and isinstance(compare.ops[0], ast.In) and not isinstance(compare.left, ast.Constant):
+                if _names(compare.comparators[0]) & replies:
+                    hints.append(Hint("reference_substring_match", shown, compare.lineno, func.name,
+                                      source.splitlines()[compare.lineno - 1].strip()[:140]))  # fmt: skip
+    for call in (n for n in ast.walk(tree) if isinstance(n, ast.Call)):
+        func = call.func
+        rule = imported.get(func.id) if isinstance(func, ast.Name) else None
+        if rule is None and isinstance(func, ast.Attribute):
+            owner = ast.unparse(func.value)
+            owner = aliases.get(owner, owner)
+            rule = next((r for module, (functions, r) in SUBSTRING_GRADERS.items()
+                         if func.attr in functions and (owner == module or owner.endswith(module.split(".")[-1]))), None)  # fmt: skip
+        if rule:
+            hints.append(Hint(rule, shown, call.lineno, "grader", source.splitlines()[call.lineno - 1].strip()[:140]))
+    return hints
+
+
 def scan_file(path: Path, root: Path | None = None) -> list[Hint]:
     source = path.read_text(errors="replace")
     shown = str(path.relative_to(root)) if root else str(path)
@@ -320,7 +358,8 @@ def scan_file(path: Path, root: Path | None = None) -> list[Hint]:
     if path.name.startswith("verify"):  # stand-alone grader script: module-level code is reward code
         module_level = ast.Module(body=[n for n in tree.body if not isinstance(n, (ast.FunctionDef, ast.ClassDef))], type_ignores=[])
         scanner.scan_body(module_level, "<module>", set())
-    return scanner.hints + [Hint(h.rule, shown, h.line, h.where, h.evidence) for h in _scan_dependencies(path, source)]
+    return (scanner.hints + [Hint(h.rule, shown, h.line, h.where, h.evidence) for h in _scan_dependencies(path, source)]
+            + _scan_inspect(tree, shown, source))
 
 
 def scan(root: Path) -> list[Hint]:

@@ -35,6 +35,13 @@ def verifiers_pin(specifier: str) -> str:
     return DEFAULT_VERIFIERS
 
 
+def pypi_version(package: str) -> str:
+    """The latest release of `package` on PyPI, to pin an audit to."""
+    import json
+
+    return json.loads(_get(f"https://pypi.org/pypi/{package}/json"))["info"]["version"]
+
+
 def newer(version: str, than: str) -> bool:
     try:
         return _version_key(version) > _version_key(than)

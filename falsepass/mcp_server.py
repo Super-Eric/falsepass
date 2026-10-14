@@ -18,8 +18,9 @@ from pathlib import Path
 from typing import Any
 
 INSTRUCTIONS = """\
-falsepass checks the reward code of verifiers-based RL environments (Prime Intellect
-Environments Hub, or a local folder): it scores completions whose correctness is known
+falsepass checks the reward code of RL environments and eval tasks (verifiers / Prime
+Intellect Environments Hub, Inspect AI, HUD; published or in a local folder): it scores
+completions whose correctness is known
 (the reference, an empty reply, a wrong answer in perfect format, an answer that is then
 denied, ...) with the environment's own grader and reports every disagreement.
 
@@ -51,9 +52,12 @@ def _json_or_raw(result: dict[str, Any]) -> Any:
 
 
 def build():
-    from mcp.server.fastmcp import FastMCP
+    try:  # mcp 2.x
+        from mcp.server.mcpserver import MCPServer as Server
+    except ImportError:  # mcp 1.x
+        from mcp.server.fastmcp import FastMCP as Server
 
-    server = FastMCP("falsepass", instructions=INSTRUCTIONS)
+    server = Server("falsepass", instructions=INSTRUCTIONS)
 
     @server.tool()
     def falsepass_scan(path: str, workdir: str = ".") -> Any:
@@ -64,8 +68,9 @@ def build():
 
     @server.tool()
     def falsepass_init(target: str, name: str | None = None, workdir: str = ".") -> dict[str, Any]:
-        """Set up audits/<name>/ for an environment. `target` is a Hub slug (owner/environment)
-        or a local folder with a pyproject.toml (for authors auditing before they publish)."""
+        """Set up audits/<name>/ for an environment. `target` is a Hub slug (owner/environment),
+        a local folder with a pyproject.toml (verifiers or Inspect project), an Inspect task file,
+        an Inspect registry name (inspect_evals/gsm8k), or a HUD environment folder."""
         return _run(["init", target, *(["--name", name] if name else [])], workdir, timeout=300)
 
     @server.tool()
@@ -111,7 +116,7 @@ def main() -> int:
     try:
         server = build()
     except ImportError as missing:
-        print(f"falsepass: the MCP server needs the `mcp` 1.x package: pip install 'falsepass[mcp]' ({missing})", file=sys.stderr)
+        print(f"falsepass: the MCP server needs the `mcp` package: pip install 'falsepass[mcp]' ({missing})", file=sys.stderr)
         return 1
     server.run()
     return 0

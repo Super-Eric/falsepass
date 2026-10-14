@@ -1,6 +1,6 @@
 ---
 name: falsepass
-description: Audit the reward code of a verifiers-based RL environment (Prime Intellect Environments Hub or a local folder) for false passes and false fails with the falsepass CLI, confirm each lead, and write it up fairly. Use when asked to check, audit or harden an environment's grader, verifier or reward function.
+description: Audit the reward code of an RL environment or eval task (verifiers / Prime Intellect Environments Hub, Inspect AI, HUD; published or local) for false passes and false fails with the falsepass CLI, confirm each lead, and write it up fairly. Use when asked to check, audit or harden an environment's grader, verifier or reward function.
 ---
 
 # Audit an RL environment's grader with falsepass
@@ -16,7 +16,8 @@ Requires `uv` on the PATH. If `falsepass` is not installed, prefix every command
 
 ```bash
 falsepass scan path/to/source --json      # optional first look, nothing installed
-falsepass init owner/environment          # Hub environment (or: falsepass init ./folder)
+falsepass init owner/environment          # Hub environment; or ./folder, an Inspect task file,
+                                          # inspect_evals/<task>, or a HUD environment folder
 falsepass audit environment               # 25 tasks; add --search 120 for mutation search
 falsepass results environment --json      # headline numbers and failing probes
 ```
@@ -36,6 +37,8 @@ cannot script. Say so; `falsepass init --manual` writes an adapter skeleton to f
 - `false_fail_rate`: correct answers refused. Read the variant names: rejecting
   `\boxed{6.}` or lower-case letters can be deliberate strictness.
 - `static_hints` with `verdict: confirmed` point at the line that likely causes a failure.
+- HUD tasks without `--answers`: only answer-free probes ran (P3, P4, A1, P10, P11). A1
+  paying means a reply that lists everything earns reward; P1/P5/P9 need reference answers.
 
 ## 3. Confirm before you claim
 

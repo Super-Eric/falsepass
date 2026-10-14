@@ -503,7 +503,46 @@ async def t6_tool_policies(adapter: Adapter, scorer: Scorer, ex: Example) -> lis
     return results
 
 
+def answer_free_sprays(prompt: str) -> dict[str, str]:
+    """Replies built without the answer that still contain most answers a short task can have."""
+    words = list(dict.fromkeys(re.findall(r"[A-Za-z][\w'-]*|\d+(?:\.\d+)?", prompt)))
+    return {
+        "integers_0_to_1000": " ".join(str(i) for i in range(1001)),
+        "letters_a_to_z": " ".join(chr(c) for c in range(ord("A"), ord("Z") + 1)),
+        "yes_no_words": "yes no maybe true false correct incorrect unknown none",
+        "prompt_words": " ".join(words[:400]),
+    }
+
+
+async def a1_answer_free_spray(adapter: Adapter, scorer: Scorer, ex: Example) -> list[ProbeResult]:
+    """With no reference to work from: replies that list everything must not be paid."""
+    return [
+        await check("A1", "answer_free_spray", variant, Expect.ZERO, adapter.render(done, ex), adapter, scorer, ex, answer_free=True)
+        for variant, done in answer_free_sprays(ex.prompt).items()
+    ]
+
+
+async def a2_determinism(adapter: Adapter, scorer: Scorer, ex: Example) -> list[ProbeResult]:
+    """P11 without a reference: the echoed prompt and a spray, scored repeatedly."""
+    results = []
+    for variant, done in {"prompt": ex.prompt, "integers": answer_free_sprays(ex.prompt)["integers_0_to_1000"]}.items():
+        scores = [(await scorer.score(ex, done)).reward for _ in range(DETERMINISM_REPEATS)]
+        distinct = sorted({repr(s) for s in scores})
+        results.append(
+            ProbeResult(
+                "P11", "determinism", variant, ex.key, Expect.STABLE, scores[0], len(distinct) == 1,
+                f"{DETERMINISM_REPEATS} runs, identical" if len(distinct) == 1
+                else f"{len(distinct)} distinct scores in {DETERMINISM_REPEATS} runs: {distinct}",
+                preview(done),
+            )  # fmt: skip
+        )
+    return results
+
+
 TOOL_MODE = [t5_turn_limit, t6_tool_policies]  # all that applies when the answer is given through tool calls
+# No reference answer (HUD templates keep it inside the grader): only what needs none.
+ANSWER_FREE = [p3_empty, p4_echo, a1_answer_free_spray]
+ANSWER_FREE_FEW = [p10_exception_path, a2_determinism]
 
 PER_EXAMPLE = [
     p1_ground_truth, p2_equivalent_forms, p3_empty, p4_echo, p5_shotgun,

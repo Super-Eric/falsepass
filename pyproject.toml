@@ -1,6 +1,6 @@
 [project]
 name = "falsepass"
-version = "0.2.0"
+version = "0.3.0"
 description = "Probe RL environment verifiers for false passes and false fails."
 readme = "README.md"
 keywords = ["reinforcement-learning", "reward-hacking", "verifiers", "rlvr", "evaluation", "llm"]
@@ -18,7 +18,7 @@ dependencies = []
 
 [project.optional-dependencies]
 rewardlint = ["rewardlint>=0.1.0"]
-mcp = ["mcp>=1.2,<2"]  # 2.x renamed FastMCP; the server is written against 1.x
+mcp = ["mcp>=1.2,<3"]  # 1.x (FastMCP) and 2.x (MCPServer) both work
 
 [project.urls]
 Homepage = "https://github.com/Super-Eric/falsepass"

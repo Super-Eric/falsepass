@@ -22,10 +22,13 @@ reward. `falsepass` treats that verifier as the system under test: it calls the
 environment's own reward code on completions whose correctness is known in advance and
 reports every disagreement. No model, no rollouts, no GPU.
 
-It targets environments built on Prime Intellect's
-[verifiers](https://github.com/PrimeIntellect-ai/verifiers) library, published on the
-Environments Hub or still in a local folder, across all three verifiers API generations
-(legacy rubrics, 0.1.15.dev, v1 tasksets).
+It works with three frameworks, published or still in a local folder:
+
+| Framework | What falsepass runs | `falsepass init …` |
+|---|---|---|
+| [verifiers](https://github.com/PrimeIntellect-ai/verifiers) (Prime Intellect Environments Hub), all three API generations | the environment's rubric or taskset | `owner/environment`, or `./folder` |
+| [Inspect AI](https://inspect.aisi.org.uk) | the task's solver chain with a scripted model, then its scorers | `path/to/task.py`, `./project`, or `inspect_evals/gsm8k` |
+| [HUD](https://docs.hud.ai) | the task template's grader, driven like HUD's server | `path/to/env-folder` (add `--answers refs.json` for every probe) |
 
 ## Install
 
@@ -68,6 +71,26 @@ Static hint: falsepass_toy_env.py:26 reference_substring_match
     return 1.0 if answer in reply else 0.0
     confirmed: P9 failed 10/20, P5 failed 10/30
 ```
+
+## Inspect AI and HUD
+
+```bash
+falsepass init inspect_evals/gsm8k                     # a task from inspect_evals (pinned from PyPI)
+falsepass init my_eval.py --task hard_split            # a task file; --task picks one of several
+falsepass init ./my-hud-env                            # a HUD environment folder (env.py + tasks.py)
+falsepass init ./my-hud-env --answers refs.json        # with reference answers: every probe runs
+```
+
+Inspect: the scripted model replaces only the call to `generate()`; prompt templates,
+system messages and answer parsing (`multiple_choice()`) are the task's own code. A
+solver or scorer that calls a model itself (self-critique, `model_graded_qa`) is flagged
+on every row instead of being scored. Tasks that need a sandbox are not supported.
+
+HUD: a task template keeps its expected answer inside the grader, so without
+`--answers` only answer-free probes run: an empty reply, the prompt echoed back, and
+replies that list every integer from 0 to 1000, every letter, yes/no words or the
+prompt's words (A1). A grader that pays those is a substring test in practice.
+`examples/inspect-toy/` and `examples/hud-toy/` each have one planted defect to try.
 
 ## For environment authors: check before you publish
 
@@ -157,6 +180,7 @@ the commands with `uv run`; `uv run pytest` runs the kit's own tests.
 | P13 | `NaN`, `Infinity`, an integer answer plus 0.9 (JSON answers: floats set to NaN, integers plus 0.9 or Infinity) | gives nothing and does not raise |
 | P14 | the correct answer, with the answer tag or `\boxed{}` also named in prose before or after it | gives full reward |
 | P15 | the answer denied, or named next to a wrong value, inside the answer slot (`\boxed{R \text{ is wrong}}`, `\boxed{W = R}`) | gives nothing |
+| A1 | no reference needed: every integer 0–1000, every letter, yes/no words, or the prompt's words in one reply | gives nothing |
 | T7 | the correct answer after one no-op tool call | gives full reward (a judgement call where the harness offers no tools) |
 | C0–C2 | container tasks: the key written as the output file (C0), with NaN / Infinity / fractional counts (C1), emptied, truncated or replaced by an input file (C2) | pays C0 in full and no mutation in full |
 | T4 | multi-turn: replay an episode after an unrelated one | gives the same reward and transcript |
@@ -272,7 +296,8 @@ counts are not published here until those fixes are in.
   a model against the reward.
 - Container tasks have no automatic mode, and environments on hosted sandboxes or with a
   paid LLM judge are not covered without credentials.
-- Only verifiers-based environments are supported.
+- Supported frameworks: verifiers, Inspect AI (no sandboxed tasks) and HUD (answer-graded
+  templates; tasks graded on what an agent did in a workspace need hand-written policies).
 
 ## Related tools
 
@@ -294,6 +319,7 @@ counts are not published here until those fixes are in.
 falsepass/           the probe kit (falsepass/mcp_server.py: the MCP tools)
 tests/               its tests
 examples/toy-env/    the demo environment, with its planted defect
+examples/inspect-toy/, examples/hud-toy/   the same idea for Inspect AI and HUD
 skills/falsepass/    agent skill: the audit procedure
 action.yml           the GitHub Action
 docs/SEVERITY.md     the rating scale; docs/OUTPUT.md: the output files

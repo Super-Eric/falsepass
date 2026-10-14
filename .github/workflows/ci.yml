@@ -16,6 +16,10 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - run: uvx ruff check .
       - run: uv run --python ${{ matrix.python }} pytest -q
+      - run: uv run --python ${{ matrix.python }} --with "mcp>=1.2,<2" pytest -q tests/test_mcp.py
+      - run: uv run --python ${{ matrix.python }} --with "mcp>=2,<3" pytest -q tests/test_mcp.py
+      - run: uv run --python ${{ matrix.python }} --with inspect-ai pytest -q tests/test_inspect.py
+      - run: uv run --python ${{ matrix.python }} --with hud pytest -q tests/test_hud.py
 
   action:
     # The action on the bundled toy environment: its planted defect must fail the gate.

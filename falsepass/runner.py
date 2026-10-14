@@ -63,15 +63,19 @@ def run(
             loop.run_until_complete(adapter.prepare(scorer, examples))
         if getattr(adapter, "tool_mode", False):
             run_probes(probes.TOOL_MODE, examples)
+        elif getattr(adapter, "answer_free", False):
+            run_probes(probes.ANSWER_FREE, examples)
+            run_probes(probes.ANSWER_FREE_FEW, examples[:few])
         else:
             run_probes(probes.PER_EXAMPLE + list(adapter.per_example_probes), examples)
             run_probes(probes.FEW_EXAMPLES + list(adapter.extra_probes), examples[:few])
-        if search_calls and not getattr(adapter, "tool_mode", False):
+        if search_calls and not getattr(adapter, "tool_mode", False) and not getattr(adapter, "answer_free", False):
             from falsepass import search
 
             run_probes([search.make_probe(search_calls, seed)], examples[:search_examples])
         results.extend(hygiene.check_dataset(adapter.hygiene_examples(100)) if adapter.hygiene_examples(1) else [])
-        lint = None if getattr(adapter, "tool_mode", False) else rewardlint_bridge.run(adapter, scorer, examples[0], loop)
+        no_reference = getattr(adapter, "tool_mode", False) or getattr(adapter, "answer_free", False)
+        lint = None if no_reference else rewardlint_bridge.run(adapter, scorer, examples[0], loop)
     finally:
         loop.run_until_complete(scorer.close())
         loop.close()
@@ -82,8 +86,12 @@ def run(
     if not source.is_dir():  # a local environment (`falsepass init <folder>`): scan the folder itself
         import tomllib
 
-        source = Path(tomllib.loads((audit_dir / "env.toml").read_text())["env"].get("source") or source)
-    hints = [h.to_dict() for h in static.scan(source)] if source.is_dir() else []
+        env = tomllib.loads((audit_dir / "env.toml").read_text())["env"]
+        task_file = env.get("task", "").partition("@")[0]
+        if env.get("framework") == "hud" and task_file:  # the environment and its tasks share a folder
+            task_file = str(Path(task_file).parent if task_file.endswith(".py") else task_file)
+        source = Path(env.get("source") or (task_file if task_file.endswith(".py") or env.get("framework") == "hud" else "") or source)
+    hints = [h.to_dict() for h in static.scan(source)] if source.exists() else []
     payload = {
         "static": static.cross_check(hints, [r.to_dict() for r in results]),
         "meta": {
@@ -92,7 +100,8 @@ def run(
             "examples": len(examples),
             "seed": seed,
             "python": platform.python_version(),
-            "versions": {p: _version(p) for p in ["verifiers", "rewardlint", *(packages or [])]},
+            "versions": {p: v for p in ["verifiers", "inspect-ai", "hud", "rewardlint", *(packages or [])]
+                         if (v := _version(p)) != "not installed" or p not in ("verifiers", "inspect-ai", "hud")},
             "falsepass": falsepass.__version__,
             "max_reward": adapter.max_reward,
             "bad_tolerance": adapter.bad_tolerance,
@@ -130,6 +139,9 @@ def main(argv: list[str] | None = None) -> int:
         help="exit 1 when met; NAME is ceiling, lazy, false_fail or errors (repeatable)",
     )  # fmt: skip
     args = parser.parse_args(argv)
+    # Absolute paths: a HUD environment is loaded from its own folder (its hooks use relative paths).
+    args.audit_dir = args.audit_dir.resolve()
+    args.out = args.out.resolve() if args.out else None
     payload = run(args.audit_dir, args.n, args.seed, args.few, args.package, args.search, args.search_examples, args.out)
     print(report.summary(payload))
     met = report.gate(payload["results"], args.fail_on)

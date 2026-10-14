@@ -1,7 +1,21 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-10-14
 
+- **Inspect AI** tasks: `falsepass init path/to/task.py`, a project folder that depends on
+  inspect-ai, or a registry name (`falsepass init inspect_evals/gsm8k`). Each reply runs
+  through the task's own solver chain with a scripted model (so templates and
+  `multiple_choice()` parsing are the task's code), then through its scorers.
+- **HUD** environments: `falsepass init path/to/env-folder`. Each reply is graded by the
+  task template, driven the way HUD's server drives it. HUD tasks carry no reference
+  answer, so by default only answer-free probes run (new probe A1: replies that list every
+  small integer, every letter, yes/no words or the prompt's words); `--answers file.json`
+  supplies references and enables every probe.
+- Static rules for framework substring graders (Inspect `includes()`, HUD `contains*()`)
+  and for `x in answer` after `answer = yield` in a HUD template.
+- `falsepass repro` writes stand-alone scripts for Inspect and HUD audits too.
+- MCP: works with the `mcp` package 1.x and 2.x (both tested in CI).
+- Examples: `examples/inspect-toy/`, `examples/hud-toy/` (each with a planted defect).
 - README: badges, a recording of `falsepass demo`, a real example, and the demo's
   output (`examples/toy-env/summary.md`). Chinese README.
 
