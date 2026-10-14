@@ -110,8 +110,8 @@ def build():
 def main() -> int:
     try:
         server = build()
-    except ImportError:
-        print("falsepass: the MCP server needs the `mcp` package: pip install 'falsepass[mcp]'", file=sys.stderr)
+    except ImportError as missing:
+        print(f"falsepass: the MCP server needs the `mcp` 1.x package: pip install 'falsepass[mcp]' ({missing})", file=sys.stderr)
         return 1
     server.run()
     return 0
