@@ -66,9 +66,9 @@ need a login or an API key at load time cannot be audited in CI without that sec
 ## For coding agents
 
 - **MCP server.** `falsepass mcp` serves the commands as tools (`falsepass_scan`,
-  `_init`, `_audit`, `_results`, `_repro`, `_discover`) over stdio. Any MCP client (Claude Code, Cursor, Codex, …) starts it with the same command, e.g.:
-  `claude mcp add falsepass -- uvx --from "falsepass[mcp] @ git+https://github.com/Super-Eric/falsepass" falsepass mcp`.
-  Other MCP clients take the same command.
+  `_init`, `_audit`, `_results`, `_repro`, `_discover`) over stdio. Any MCP client starts
+  it with `uvx --from "falsepass[mcp] @ git+https://github.com/Super-Eric/falsepass" falsepass mcp`;
+  in Claude Code, for example: `claude mcp add falsepass -- uvx --from "falsepass[mcp] @ git+https://github.com/Super-Eric/falsepass" falsepass mcp`.
 - **Skill.** `skills/falsepass/SKILL.md` is a ready-made audit procedure in the Agent
   Skills format: how to run an audit, how to tell a defect from a design choice, and how
   to write it up for a maintainer. Copy the folder into the agent's skills directory

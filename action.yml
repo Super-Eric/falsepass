@@ -22,7 +22,7 @@ inputs:
     description: Mutation search budget (scorer calls per direction and example). 0 turns it off.
     default: "0"
   verifiers:
-    description: verifiers version to install. Default: inferred from the environment's requirement.
+    description: "verifiers version to install (default: inferred from the environment's requirement)."
     default: ""
 
 outputs:
