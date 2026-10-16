@@ -11,6 +11,10 @@
   reference, so any reward is a false pass; the row also says when the episode ran on
   after the environment announced its end. The run is kept as an episode, so `repro`
   replays it.
+- Faster audits: single-turn rewards are scored on up to 8 tasks at once (`--jobs N`,
+  `--jobs 1` for one at a time). Results, their order and `completions.json` are the
+  same as before. Only scorers that build their own state per call run concurrently;
+  multi-turn rollouts, tool-mode policies and Inspect / HUD tasks stay one at a time.
 
 ## 0.5.0 — 2026-10-16
 

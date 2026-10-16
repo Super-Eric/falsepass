@@ -67,6 +67,8 @@ async def _guarded(coro, errors: list[str]) -> bool:
 class V0RubricScorer:
     """Legacy `vf.Environment` with a `Rubric`: `await env.rubric.score_rollout(state)`."""
 
+    concurrent_safe = True  # each call scores a fresh state (the rollout subclass is multi-turn and runs alone)
+
     def __init__(self, env: Any) -> None:
         self.env = env
 
@@ -270,6 +272,8 @@ class DevTasksetScorer:
     """0.1.15.dev-style taskset: `@vf.reward async def f(self, task, state)` methods.
     `rewards` maps method name to weight."""
 
+    concurrent_safe = True
+
     def __init__(self, taskset: Any, rewards: dict[str, float]) -> None:
         self.taskset, self.rewards = taskset, rewards
 
@@ -315,18 +319,26 @@ def reward_weights(task: Any) -> dict[str, float]:
 
 class V1TaskScorer:
     """Current `verifiers.v1`: build a `Trace` by hand and call `task.score(trace, runtime)`.
-    Rewards that execute code get a real local subprocess runtime."""
+    Rewards that execute code get a real local subprocess runtime, shared by all calls
+    (verifiers writes uv scripts to content-addressed paths so concurrent rollouts can share one)."""
+
+    concurrent_safe = True
 
     def __init__(self, task: Any = None) -> None:
         self._runtime: Any = None
+        self._starting: asyncio.Lock | None = None
         self.weights = reward_weights(task) if task is not None else {}
 
     async def runtime(self) -> Any:
         if self._runtime is None:
-            from verifiers.v1.runtimes.subprocess import SubprocessConfig, SubprocessRuntime
+            self._starting = self._starting or asyncio.Lock()
+            async with self._starting:  # concurrent first calls start one runtime, not several
+                if self._runtime is None:
+                    from verifiers.v1.runtimes.subprocess import SubprocessConfig, SubprocessRuntime
 
-            self._runtime = SubprocessRuntime(SubprocessConfig())
-            await self._runtime.start()
+                    runtime = SubprocessRuntime(SubprocessConfig())
+                    await runtime.start()
+                    self._runtime = runtime
         return self._runtime
 
     def build_trace(self, example: Example, messages: list[dict[str, Any]]) -> Any:

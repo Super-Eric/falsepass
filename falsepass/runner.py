@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import os
 import platform
 import sys
 from datetime import date
@@ -16,6 +17,21 @@ import falsepass
 from falsepass import hygiene, probes, report, rewardlint_bridge
 from falsepass.adapter import Adapter
 from falsepass.model import ProbeResult
+
+DEFAULT_JOBS = min(8, os.cpu_count() or 1)
+
+
+def concurrent_ok(adapter: Adapter, scorer: Any) -> bool:
+    """Examples may be scored concurrently only for single-turn scoring through a scorer
+    that says it is safe (each call builds its own state). Multi-turn rollouts, tool-mode
+    policies and frameworks that run a whole task loop stay one at a time: their
+    environments may keep state between episodes, and that is what some probes look for."""
+    return (
+        bool(getattr(scorer, "concurrent_safe", False))
+        and not getattr(scorer, "multi_turn", False)
+        and not getattr(adapter, "multi_turn", False)
+        and not getattr(adapter, "tool_mode", False)
+    )
 
 
 def load_adapter(audit_dir: Path) -> Adapter:
@@ -41,10 +57,12 @@ def _version(package: str) -> str:
 
 def run(
     audit_dir: Path, n: int = 25, seed: int = 0, few: int = 3, packages: list[str] | None = None,
-    search_calls: int = 0, search_examples: int = 3, out: Path | None = None,
+    search_calls: int = 0, search_examples: int = 3, out: Path | None = None, jobs: int = DEFAULT_JOBS,
 ) -> dict[str, Any]:  # fmt: skip
     """Probe one environment. Results go to `out` (default: the audit folder itself; pass
-    another folder for a trial run that must not replace the stored results)."""
+    another folder for a trial run that must not replace the stored results). `jobs` is
+    how many examples are scored at once where that is safe (see `concurrent_ok`); the
+    results are the same as with `jobs=1`, in the same order."""
     out = out or audit_dir
     out.mkdir(parents=True, exist_ok=True)
     adapter = load_adapter(audit_dir)
@@ -53,11 +71,37 @@ def run(
     loop = asyncio.new_event_loop()
     results: list[ProbeResult] = []
 
-    def run_probes(probe_list, subset, label: str = "probes") -> None:
-        for i, example in enumerate(subset, 1):
+    parallel = jobs > 1 and concurrent_ok(adapter, scorer)
+
+    def run_probes(probe_list, subset, label: str = "probes", together: bool = False) -> None:
+        """Each example's probes run in order. With `together`, up to `jobs` examples run
+        at once; results are still collected in example order."""
+        done = 0
+
+        async def one(example) -> list[ProbeResult]:
+            nonlocal done
+            out_: list[ProbeResult] = []
             for probe in probe_list:
-                results.extend(loop.run_until_complete(probe(adapter, scorer, example)))
-            print(f"falsepass: {label}: example {i} of {len(subset)} done", file=sys.stderr, flush=True)  # progress for job.log
+                out_.extend(await probe(adapter, scorer, example))
+            done += 1
+            print(f"falsepass: {label}: example {done} of {len(subset)} done", file=sys.stderr, flush=True)  # progress for job.log
+            return out_
+
+        if not (together and parallel):
+            for example in subset:
+                results.extend(loop.run_until_complete(one(example)))
+            return
+        gate = asyncio.Semaphore(jobs)
+
+        async def gated(example) -> list[ProbeResult]:
+            async with gate:
+                return await one(example)
+
+        async def everything() -> list[list[ProbeResult]]:
+            return await asyncio.gather(*(gated(example) for example in subset))
+
+        for part in loop.run_until_complete(everything()):
+            results.extend(part)
 
     try:
         if hasattr(adapter, "prepare"):
@@ -65,10 +109,10 @@ def run(
         if getattr(adapter, "tool_mode", False):
             run_probes(probes.TOOL_MODE, examples)
         elif getattr(adapter, "answer_free", False):
-            run_probes(probes.ANSWER_FREE, examples)
+            run_probes(probes.ANSWER_FREE, examples, together=True)
             run_probes(probes.ANSWER_FREE_FEW, examples[:few], "slower probes")
         else:
-            run_probes(probes.PER_EXAMPLE + list(adapter.per_example_probes), examples)
+            run_probes(probes.PER_EXAMPLE + list(adapter.per_example_probes), examples, together=True)
             run_probes(probes.FEW_EXAMPLES + list(adapter.extra_probes), examples[:few], "slower probes")
         if search_calls and not getattr(adapter, "tool_mode", False) and not getattr(adapter, "answer_free", False):
             from falsepass import search
@@ -116,9 +160,9 @@ def run(
         "results": [r.to_dict() for r in results],
         "rewardlint": lint,
     }
-    used = {r.completion_id for r in results if r.completion_id}
+    used = dict.fromkeys(r.completion_id for r in results if r.completion_id)  # in result order, whatever ran first
     (out / "completions.json").write_text(
-        json.dumps({k: v for k, v in probes.STORE.items() if k in used}, ensure_ascii=True)
+        json.dumps({k: probes.STORE[k] for k in used if k in probes.STORE}, ensure_ascii=True)
     )
     (out / "probe-results.json").write_text(json.dumps(payload, indent=1, ensure_ascii=True))
     (out / "summary.md").write_text(report.summary(payload))
@@ -138,6 +182,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="mutation search: scorer calls per direction and example (0 = off; try 120)")
     parser.add_argument("--search-examples", type=int, default=3, help="examples to search on")
     parser.add_argument("--out", type=Path, help="write results here instead of the audit folder")
+    parser.add_argument("--jobs", type=int, default=DEFAULT_JOBS,
+                        help=f"examples scored at once where safe (single-turn scoring); 1 = one at a time (default {DEFAULT_JOBS})")
     parser.add_argument(
         "--fail-on", action="append", default=[], metavar="NAME>NUMBER",
         help="exit 1 when met; NAME is ceiling, lazy, false_fail or errors (repeatable)",
@@ -146,7 +192,8 @@ def main(argv: list[str] | None = None) -> int:
     # Absolute paths: a HUD environment is loaded from its own folder (its hooks use relative paths).
     args.audit_dir = args.audit_dir.resolve()
     args.out = args.out.resolve() if args.out else None
-    payload = run(args.audit_dir, args.n, args.seed, args.few, args.package, args.search, args.search_examples, args.out)
+    payload = run(args.audit_dir, args.n, args.seed, args.few, args.package, args.search, args.search_examples, args.out,
+                  max(1, args.jobs))
     print(report.summary(payload))
     met = report.gate(payload["results"], args.fail_on)
     for condition in met:
