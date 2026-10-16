@@ -198,6 +198,7 @@ the commands with `uv run`; `uv run pytest` runs the kit's own tests.
 | C0–C2 | container tasks: the key written as the output file (C0), with NaN / Infinity / fractional counts (C1), emptied, truncated or replaced by an input file (C2) | pays C0 in full and no mutation in full |
 | T4 | multi-turn: replay an episode after an unrelated one | gives the same reward and transcript |
 | T5 | multi-turn: a policy that never answers | is cut off and not rewarded |
+| T8 | multi-turn: answer wrong, then repeat whatever the environment gives away ("The word was …") | gives nothing; the summary also says if the episode ran on after the environment announced its end |
 | T6 | tool use: six policies built from the tool schemas alone (no tool call, every tool once with empty arguments, the finishing tool at once, …) | are not rewarded and raise nothing |
 | X*, T1–T3 | environment-specific probes defined in an adapter | — |
 | S1 | search: mutate known-bad completions, never adding the answer, toward higher reward | finds nothing above zero |

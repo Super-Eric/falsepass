@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- New probe T8 for multi-turn environments: answer wrong, then repeat what the
+  environment gives away after the attempt ("The word was …"). It never uses the
+  reference, so any reward is a false pass; the row also says when the episode ran on
+  after the environment announced its end. The run is kept as an episode, so `repro`
+  replays it.
+
 ## 0.5.0 — 2026-10-16
 
 From a second run as a new agent, this time on a word game, a customer-service

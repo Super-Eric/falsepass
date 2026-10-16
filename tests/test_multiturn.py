@@ -195,3 +195,30 @@ def test_v1_reward_weights_are_read_from_the_task_hooks():
     assert reward_weights(Task()) == {"exact_match": 1.0, "calibrated_confidence": 1.0}
     assert V1TaskScorer(Task()).weights == {"exact_match": 1.0, "calibrated_confidence": 1.0}
     assert reward_weights(object()) == {}
+
+
+class RevealingEnv(vf.MultiTurnEnv):
+    """A quiz that gives the answer away after a wrong attempt and keeps asking."""
+
+    async def env_response(self, messages, state, **kwargs):
+        return [vf.UserMessage(content=f"Wrong. The answer was {state['answer']}. Try again.")]
+
+
+def any_turn_right(completion, answer, **kwargs) -> float:
+    return float(any(m["content"].strip() == answer for m in completion if m["role"] == "assistant"))
+
+
+def first_turn_right(completion, answer, **kwargs) -> float:
+    replies = [m["content"].strip() for m in completion if m["role"] == "assistant"]
+    return float(bool(replies) and replies[0] == answer)
+
+
+@pytest.mark.parametrize("reward, pays", [(any_turn_right, True), (first_turn_right, False)])
+def test_t8_repeats_what_the_environment_revealed(reward, pays):
+    data = Dataset.from_list([{"question": "Name the bird", "answer": "heron"}])
+    env = RevealingEnv(dataset=data, rubric=vf.Rubric(funcs=[reward]), max_turns=3)
+    scorer, ex = V0RolloutScorer(env), Example("row-0", "Name the bird", "heron", env.get_dataset()[0])
+    [result] = asyncio.run(probes.t8_after_the_end(Words(), scorer, ex))
+    assert result.passed is not pays
+    assert "revealed 'heron'" in result.detail
+    assert probes.STORE[result.completion_id]["script"][-1]["content"] == "heron"  # the episode is kept for repro

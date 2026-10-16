@@ -449,6 +449,51 @@ async def t5_turn_limit(adapter: Adapter, scorer: Scorer, ex: Example) -> list[P
                         detail, preview(script), score.metrics, score.errors, True)]  # fmt: skip
 
 
+# What an environment says when it gives the answer away, and when it says the episode is over.
+REVEALED = re.compile(r"(?:answer|word|solution|number|target|correct (?:answer|word))\s+(?:was|is)\s*:?\s*\**[\"'`]?([^\s\"'`*.,!?;]+)", re.I)
+TERMINAL = re.compile(r"game over|you (?:win|won|lose|lost)\b|the (?:correct )?(?:answer|word|solution) (?:was|is)\b|episode (?:is )?(?:over|done|finished)|out of (?:guesses|turns|attempts)", re.I)
+
+
+async def t8_after_the_end(adapter: Adapter, scorer: Scorer, ex: Example) -> list[ProbeResult]:
+    """A multi-turn episode must not pay for what comes after it ends. The policy answers
+    wrong; when the environment gives the answer away (on a loss, say), it repeats it on
+    the next turn. It never uses the reference, so any reward it earns is a false pass."""
+    if not getattr(scorer, "multi_turn", False):
+        return []
+    wrong = adapter.render(adapter.wrong_answer(ex), ex)
+    wrong_text = wrong if isinstance(wrong, str) else ""
+    seen: dict[str, Any] = {"revealed": None, "end_turn": None}
+
+    def act(messages: list[dict[str, Any]]) -> str:
+        heard = [str(m.get("content") or "") for m in messages if m.get("role") == "user"]
+        turn = sum(1 for m in messages if m.get("role") == "assistant")
+        if turn and heard:
+            if seen["end_turn"] is None and TERMINAL.search(heard[-1]):
+                seen["end_turn"] = turn
+            found = REVEALED.search(heard[-1])
+            if found and seen["revealed"] is None:
+                seen["revealed"] = found.group(1)
+        if seen["revealed"]:
+            done = adapter.render(seen["revealed"], ex)
+            return done if isinstance(done, str) else seen["revealed"]
+        return wrong_text or "I am not sure."
+
+    policy = Policy("repeats_revealed_answer", act)
+    score = await scorer.score(ex, policy)
+    turns = score.info.get("turns")
+    passed = judge(Expect.ZERO, score.reward, adapter)
+    notes = []
+    if seen["revealed"]:
+        notes.append(f"the environment revealed {seen['revealed']!r} and the policy repeated it")
+    if seen["end_turn"] is not None and turns is not None and turns > seen["end_turn"] + 1:
+        notes.append(f"the episode went on for {turns - seen['end_turn']} more model turns after the environment "
+                     f"announced its end (turn {seen['end_turn']})")  # fmt: skip
+    detail = f"reward {score.reward}" + (f"; {'; '.join(notes)}" if notes else "; nothing was revealed")
+    return [ProbeResult("T8", "after_the_end", "repeats_revealed_answer", ex.key, Expect.ZERO, score.reward, passed,
+                        detail if not passed or notes else "", preview(str(seen["revealed"] or wrong_text)),
+                        score.metrics, score.errors, True, remember_episode(policy, score.info))]  # fmt: skip
+
+
 # --- T6: tool-use environments, played by policies that know nothing about the task ------
 
 FINISH_TOOL = re.compile(r"submit|finish|final|answer|done|complete|end", re.I)
@@ -575,4 +620,4 @@ PER_EXAMPLE = [
     p13_special_numbers, p14_format_mentions, p15_hedged_in_slot, a1_answer_free_spray,
 ]  # fmt: skip
 # Slower or input-independent probes run on a handful of examples only.
-FEW_EXAMPLES = [p10_exception_path, p11_determinism, t4_state_reset, t5_turn_limit, t7_tool_call_first]
+FEW_EXAMPLES = [p10_exception_path, p11_determinism, t4_state_reset, t5_turn_limit, t7_tool_call_first, t8_after_the_end]
