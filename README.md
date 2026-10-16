@@ -152,6 +152,7 @@ broken on the strength of a probe table.
 falsepass init owner/environment          # set up audits/<name>/ for a Hub environment, or pass a local folder
 falsepass audit environment               # no adapter needed for Q&A tasks: the answer format is inferred
 falsepass audit environment --search 120  # add mutation search (scorer calls per direction and example)
+falsepass audit environment --jobs 1      # score one task at a time (default: up to 8 at once where that is safe)
 falsepass audit environment --fail-on 'ceiling>0.1' --fail-on 'errors>0'   # CI gate, exit 1 when met
 falsepass results environment [--json]    # the last run: summary.md, or a compact JSON digest
 falsepass results environment --completion ID   # one completion in full (IDs are in the JSON digest)

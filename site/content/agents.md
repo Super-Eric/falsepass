@@ -82,6 +82,7 @@ environment.
 ```bash
 falsepass init owner/environment          # or ./folder, task.py, inspect_evals/<task>, a HUD folder
 falsepass audit environment --fail-on 'ceiling>0.1'   # exit 1 when the condition is met
+falsepass audit environment --jobs 1      # one task at a time (default: up to 8 at once where safe)
 falsepass results environment --json      # compact digest, small enough for a context window
 falsepass scan path/to/source --json      # static pre-scan only
 ```

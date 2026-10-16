@@ -42,6 +42,9 @@ class Toy(Adapter):
     def wrong_answer(self, example):
         return str(int(example.answer) + 7)
 
+    def with_reference(self, example, reference):
+        return Example(example.key, example.prompt, reference)
+
 ADAPTER = Toy()
 '''
 
@@ -54,9 +57,9 @@ def audit(tmp_path: Path, name: str, safe: bool) -> Path:
     return folder
 
 
-def outputs(folder: Path) -> tuple[list, str]:
+def outputs(folder: Path) -> tuple[list, dict | None, str]:
     payload = json.loads((folder / "probe-results.json").read_text())
-    return payload["results"], (folder / "completions.json").read_text()
+    return payload["results"], payload["rewardlint"], (folder / "completions.json").read_text()
 
 
 @pytest.mark.parametrize("safe", [True, False])
@@ -69,7 +72,8 @@ def test_jobs_change_speed_not_results(tmp_path: Path, safe: bool):
     started = time.perf_counter()
     runner.run(folder, n=12, few=1, out=many, jobs=8)
     together = time.perf_counter() - started
-    assert outputs(one) == outputs(many)  # same results, same order, same stored completions
+    assert outputs(one) == outputs(many)  # same results, order, rewardlint run and stored completions
+    assert outputs(many)[1]["headline"]  # the rewardlint corpus did run (scored ahead when safe)
     most = int((folder / "most-in-flight.txt").read_text())
     if safe:
         assert together < alone * 0.6 and most > 1

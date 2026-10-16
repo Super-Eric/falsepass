@@ -21,17 +21,23 @@ from falsepass.model import Example
 from falsepass.scorers import Scorer
 
 
-def run(adapter: Adapter, scorer: Scorer, example: Example, loop: asyncio.AbstractEventLoop) -> dict[str, Any] | None:
+def run(
+    adapter: Adapter, scorer: Scorer, example: Example, loop: asyncio.AbstractEventLoop, jobs: int = 1
+) -> dict[str, Any] | None:
+    """With `jobs` > 1 (only for a scorer that is safe to call concurrently) the corpus is
+    scored ahead, `jobs` calls at a time; rewardlint then reads the stored scores, so the
+    results are the same as one call at a time."""
     try:
         import rewardlint
     except ImportError:
         return None
     if adapter.with_reference(example, "42") is None:
         return None
+    ahead = _score_ahead(adapter, scorer, example, loop, jobs) if jobs > 1 else {}
 
     def reward(completion: str, reference: str) -> float:
         swapped = adapter.with_reference(example, reference)
-        score = loop.run_until_complete(scorer.score(swapped, completion))
+        score = ahead.get((completion, reference)) or loop.run_until_complete(scorer.score(swapped, completion))
         if score.reward is None:
             raise RuntimeError(score.errors[0] if score.errors else "scoring failed")
         return score.reward / adapter.max_reward
@@ -54,3 +60,28 @@ def run(adapter: Adapter, scorer: Scorer, example: Example, loop: asyncio.Abstra
         ],
         "errors": [{"case": o.case.id, "error": o.error} for o in audit.errors],
     }
+
+
+def _score_ahead(adapter: Adapter, scorer: Scorer, example: Example, loop: asyncio.AbstractEventLoop, jobs: int) -> dict:
+    try:
+        from rewardlint import corpus
+
+        cases = [*corpus.load(include_contested=False), *corpus.contested()]
+        pairs = list(dict.fromkeys((c.completion, c.reference) for c in cases))
+    except Exception:  # another rewardlint layout: score one at a time instead
+        return {}
+    out: dict = {}
+    gate = asyncio.Semaphore(jobs)
+
+    async def one(completion: str, reference: str) -> None:
+        async with gate:
+            try:
+                out[(completion, reference)] = await scorer.score(adapter.with_reference(example, reference), completion)
+            except Exception:  # left to the call rewardlint makes, which records the error
+                pass
+
+    async def everything() -> None:
+        await asyncio.gather(*(one(*pair) for pair in pairs if isinstance(pair[0], str) and isinstance(pair[1], str)))
+
+    loop.run_until_complete(everything())
+    return out

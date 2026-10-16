@@ -110,10 +110,10 @@ def run(
             run_probes(probes.TOOL_MODE, examples)
         elif getattr(adapter, "answer_free", False):
             run_probes(probes.ANSWER_FREE, examples, together=True)
-            run_probes(probes.ANSWER_FREE_FEW, examples[:few], "slower probes")
+            run_probes(probes.ANSWER_FREE_FEW, examples[:few], "slower probes", together=True)
         else:
             run_probes(probes.PER_EXAMPLE + list(adapter.per_example_probes), examples, together=True)
-            run_probes(probes.FEW_EXAMPLES + list(adapter.extra_probes), examples[:few], "slower probes")
+            run_probes(probes.FEW_EXAMPLES + list(adapter.extra_probes), examples[:few], "slower probes", together=True)
         if search_calls and not getattr(adapter, "tool_mode", False) and not getattr(adapter, "answer_free", False):
             from falsepass import search
 
@@ -123,7 +123,7 @@ def run(
             hygiene_results = [r for r in hygiene_results if r.variant != "empty_answer"]
         results.extend(hygiene_results)
         no_reference = getattr(adapter, "tool_mode", False) or getattr(adapter, "answer_free", False)
-        lint = None if no_reference else rewardlint_bridge.run(adapter, scorer, examples[0], loop)
+        lint = None if no_reference else rewardlint_bridge.run(adapter, scorer, examples[0], loop, jobs if parallel else 1)
     finally:
         loop.run_until_complete(scorer.close())
         loop.close()
