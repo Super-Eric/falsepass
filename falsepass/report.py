@@ -109,12 +109,21 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
             "completion_id": first.get("completion_id") or None,
             "answer_free": bool(first.get("answer_free")),
         })  # fmt: skip
+    # False passes first (a known-bad completion paid), the most consistent ones on top; then false fails.
+    failing.sort(key=lambda f: (f["expected"] != "zero", -f["failed"] / f["runs"]))
+    meta = payload["meta"]
+    adapter = meta.get("adapter")
     return {
-        "environment": payload["meta"]["environment"],
-        "meta": payload["meta"],
+        "environment": meta["environment"],
+        "meta": {  # the rest of the run's metadata is in probe-results.json
+            **{k: meta[k] for k in ("date", "falsepass", "versions", "examples", "max_reward") if k in meta},
+            "adapter": {k: adapter[k] for k in ("format", "answers", "turns", "validity", "note") if adapter.get(k)}
+            if isinstance(adapter, dict) else adapter,
+        },
         "headline": headline(payload["results"]),
         "failing": failing,
-        "static_hints": payload.get("static", []),
+        "static_hints": [{k: h[k] for k in ("rule", "file", "line", "evidence", "meaning", "verdict") if k in h}
+                         for h in payload.get("static", [])],  # fmt: skip
         "note": "Leads, not findings: rerun with `falsepass repro`, read the reward code, then judge defect vs design.",
     }
 

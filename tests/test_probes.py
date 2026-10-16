@@ -498,3 +498,19 @@ def test_hedges_inside_the_slot_are_caught():
     failed = {r.variant for r in run(probes.p15_hedged_in_slot, right_hand_side) if not r.passed}
     assert failed == {"false_equation", "denied", "denied_latex", "not_answer", "either_or", "either_or_latex"}
     assert all(r.passed for r in run(probes.p15_hedged_in_slot, strict))
+
+
+def test_static_scan_flags_math_verify_on_the_whole_slot(tmp_path):
+    from falsepass import static
+
+    (tmp_path / "verify.py").write_text(
+        "from math_verify import parse, verify as check\n"
+        "import math_verify as mv\n\n"
+        "def score(prediction, gold):\n"
+        "    a = check(parse('\\\\boxed{' + gold + '}'), parse('\\\\boxed{' + prediction + '}'))\n"
+        "    return a or mv.verify(parse(gold), parse(prediction))\n"
+    )
+    hints = [h for h in static.scan(tmp_path) if h.rule == "math_verify_whole_slot"]
+    assert [h.line for h in hints] == [5, 6]
+    (tmp_path / "verify.py").write_text("def verify(a, b):\n    return a == b\n\nverify(1, 1)\n")  # not math_verify
+    assert not [h for h in static.scan(tmp_path) if h.rule == "math_verify_whole_slot"]

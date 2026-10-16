@@ -288,10 +288,26 @@ def build():
     return server
 
 
+def _relaunch_with_mcp() -> None:
+    """`uvx falsepass mcp` (how MCP directories start a PyPI server) has no `mcp` package:
+    start the same release again with the `mcp` extra, through uvx. Returns only if that
+    is not possible."""
+    import shutil
+
+    from falsepass import __version__
+
+    uvx = shutil.which("uvx")
+    if uvx is None or os.environ.get("FALSEPASS_MCP_RELAUNCHED"):
+        return
+    os.environ["FALSEPASS_MCP_RELAUNCHED"] = "1"
+    os.execv(uvx, [uvx, "--quiet", "--from", f"falsepass[mcp]=={__version__}", "falsepass", "mcp"])
+
+
 def main() -> int:
     try:
         server = build()
     except ImportError as missing:
+        _relaunch_with_mcp()
         print(f"falsepass: the MCP server needs the `mcp` package: pip install 'falsepass[mcp]' ({missing})", file=sys.stderr)
         return 1
     server.run()

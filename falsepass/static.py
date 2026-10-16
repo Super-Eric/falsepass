@@ -38,6 +38,7 @@ RULES: dict[str, tuple[tuple[str, ...], str]] = {
     "first_tag_match": (("P14",), "the answer is the first match of a tag pattern, so a tag named in prose before the answer block decides what is graded"),
     "assistant_messages_by_turn": (("T7",), "assistant messages are indexed by user turn; a message that only calls a tool shifts every later turn"),
     "hud_contains_grader": (("P5", "P9"), "HUD's `contains()` / `contains_any()` / `contains_all()` graders are substring tests, so a reply that lists several answers, or names the right one and rejects it, passes"),
+    "math_verify_whole_slot": (("P15",), "the answer slot goes to math_verify's `parse()` whole, which pulls one value out of whatever is there: `\\boxed{107 = 100}` is compared by its right-hand side and `\\boxed{100 \\text{ is wrong}}` as 100, so a denial or a false equation inside the slot is paid"),
     "inspect_includes_scorer": (("P5", "P9"), "Inspect's `includes()` scorer passes when the target appears anywhere in the output, so a reply that lists several answers, or names the right one and rejects it, passes"),
 }
 
@@ -314,6 +315,21 @@ SUBSTRING_GRADERS = {  # framework grader helpers that are substring tests: (mod
 }
 
 
+def _scan_math_verify(tree: ast.AST, shown: str, source: str) -> list[Hint]:
+    """`verify(gold, parse(slot))` with math_verify: parse() reads a value out of anything in the slot."""
+    names = {a.asname or a.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module == "math_verify"
+             for a in n.names if a.name == "verify"}  # fmt: skip
+    modules = {a.asname or a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names if a.name == "math_verify"}
+    hints = []
+    for call in (n for n in ast.walk(tree) if isinstance(n, ast.Call)):
+        func = call.func
+        direct = isinstance(func, ast.Name) and func.id in names
+        qualified = isinstance(func, ast.Attribute) and func.attr == "verify" and isinstance(func.value, ast.Name) and func.value.id in modules
+        if direct or qualified:
+            hints.append(Hint("math_verify_whole_slot", shown, call.lineno, "grader", source.splitlines()[call.lineno - 1].strip()[:140]))
+    return hints
+
+
 def _scan_inspect(tree: ast.AST, shown: str, source: str) -> list[Hint]:
     """Tasks graded with a framework's built-in substring grader (Inspect `includes()`, HUD `contains()`)."""
     imported: dict[str, str] = {}  # local name -> rule
@@ -359,7 +375,7 @@ def scan_file(path: Path, root: Path | None = None) -> list[Hint]:
         module_level = ast.Module(body=[n for n in tree.body if not isinstance(n, (ast.FunctionDef, ast.ClassDef))], type_ignores=[])
         scanner.scan_body(module_level, "<module>", set())
     return (scanner.hints + [Hint(h.rule, shown, h.line, h.where, h.evidence) for h in _scan_dependencies(path, source)]
-            + _scan_inspect(tree, shown, source))
+            + _scan_inspect(tree, shown, source) + _scan_math_verify(tree, shown, source))
 
 
 def scan(root: Path) -> list[Hint]:

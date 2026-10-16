@@ -47,7 +47,8 @@ A digest of the same run, small enough to hand to a model (numbers from `falsepa
 ```json
 {
   "environment": "owner/env",
-  "meta": { "…": "as above" },
+  "meta": {"date": "…", "falsepass": "…", "versions": {"…": "…"}, "examples": 25, "max_reward": 1.0,
+           "adapter": {"format": "<answer>", "answers": "open", "turns": "single-turn", "validity": "ok"}},
   "headline": {"false_pass_ceiling": 1.0, "false_pass_via": "P5 shotgun/all_in_one_slot",
                "lazy_policy_reward": 0.0, "lazy_policy_via": "P3 empty/empty",
                "false_fail_rate": 0.108, "known_good": 93, "known_bad": 233, "scoring_errors": 0},
@@ -59,6 +60,10 @@ A digest of the same run, small enough to hand to a model (numbers from `falsepa
   "note": "Leads, not findings: …"
 }
 ```
+
+`failing` lists false passes first (a known-bad completion was paid), the most
+consistent ones on top, then false fails. `meta` and `static_hints` are trimmed to what an
+agent needs; everything else is in `probe-results.json`.
 
 The headline numbers:
 

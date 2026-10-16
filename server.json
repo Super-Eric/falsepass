@@ -1,0 +1,18 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Super-Eric/falsepass",
+  "title": "falsepass",
+  "description": "Find RL environment graders that pay wrong answers: probes reward code, returns reproducible leads",
+  "websiteUrl": "https://super-eric.github.io/falsepass/",
+  "repository": {"url": "https://github.com/Super-Eric/falsepass", "source": "github"},
+  "version": "0.4.1",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "falsepass",
+      "version": "0.4.1",
+      "transport": {"type": "stdio"},
+      "packageArguments": [{"type": "positional", "value": "mcp"}]
+    }
+  ]
+}

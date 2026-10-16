@@ -1,5 +1,7 @@
 # falsepass
 
+<!-- mcp-name: io.github.Super-Eric/falsepass -->
+
 English | [中文](https://github.com/Super-Eric/falsepass/blob/main/README.zh-CN.md)
 
 [![CI](https://github.com/Super-Eric/falsepass/actions/workflows/ci.yml/badge.svg)](https://github.com/Super-Eric/falsepass/actions/workflows/ci.yml)

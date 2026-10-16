@@ -1,6 +1,6 @@
 [project]
 name = "falsepass"
-version = "0.4.0"
+version = "0.4.1"
 description = "Probe RL environment verifiers for false passes and false fails."
 readme = "README.md"
 keywords = ["reinforcement-learning", "reward-hacking", "verifiers", "rlvr", "evaluation", "llm"]

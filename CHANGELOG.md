@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.1 — 2026-10-16
+
+- Listed in the official MCP Registry as `io.github.Super-Eric/falsepass` (`server.json`;
+  each release publishes it from GitHub Actions). `uvx falsepass mcp` now works without
+  the `mcp` extra: the server restarts itself through `uvx --from "falsepass[mcp]"`.
+- New static rule `math_verify_whole_slot`: the answer slot goes to math_verify's
+  `parse()` whole, so a denial or a false equation inside it is paid (confirmed by P15).
+  On the sources of the environments audited so far it adds two hints, both real.
+- The results digest is smaller (about a fifth): `meta` and `static_hints` keep what an
+  agent needs, and `failing` lists false passes first, most consistent on top.
+
 ## 0.4.0 — 2026-10-16
 
 Fixes from running falsepass the way a new coding agent would, from the docs alone,
