@@ -12,6 +12,7 @@ from typing import Any
 
 from falsepass.adapter import Adapter
 from falsepass.model import Completion, Example, Expect, Policy, ProbeResult
+from falsepass.policies import REVEALED, TERMINAL
 from falsepass.scorers import Scorer
 
 EPS = 1e-9
@@ -447,11 +448,6 @@ async def t5_turn_limit(adapter: Adapter, scorer: Scorer, ex: Example) -> list[P
     )
     return [ProbeResult("T5", "turn_limit", "never_answers", ex.key, Expect.ZERO, score.reward, passed,
                         detail, preview(script), score.metrics, score.errors, True)]  # fmt: skip
-
-
-# What an environment says when it gives the answer away, and when it says the episode is over.
-REVEALED = re.compile(r"(?:answer|word|solution|number|target|correct (?:answer|word))\s+(?:was|is)\s*:?\s*\**[\"'`]?([^\s\"'`*.,!?;]+)", re.I)
-TERMINAL = re.compile(r"game over|you (?:win|won|lose|lost)\b|the (?:correct )?(?:answer|word|solution) (?:was|is)\b|episode (?:is )?(?:over|done|finished)|out of (?:guesses|turns|attempts)", re.I)
 
 
 async def t8_after_the_end(adapter: Adapter, scorer: Scorer, ex: Example) -> list[ProbeResult]:

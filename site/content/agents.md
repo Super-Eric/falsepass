@@ -128,10 +128,15 @@ through the environment's own rollout loop and rubric. Fill in:
 - `solver(example)`: a policy that does the task properly (it may read the row's answer).
   It should earn full reward; set `max_reward` to what it earns.
 - `gives_up(example)`: plays honestly without solving. It should earn nothing.
-- `exploits(example)`: policies that never use the answer. Ones that found real holes:
-  keep talking after the environment says the episode is over; repeat a solution the
-  environment printed after a loss; put `nan`, `inf` or a negative number where the
-  environment parses a number; never act at all; act twice in one message.
+- `exploits(example)`: policies that never use the answer. The skeleton starts from the
+  ready-made ones in `falsepass.policies`, each of which found a real hole:
+  `after_the_end(wrong, say)` (answer wrong, then repeat what the environment gives away),
+  `keeps_talking(first)` (carry on after "game over"), `never_acts()`. Adapt their
+  messages to the environment's format.
+- `special_number_scripts(example)`: one message sequence the environment accepts;
+  `policies.special_numbers()` turns it into variants with `nan`, `inf`, `-1`, `1e999` and
+  `-0` in place of its numbers (ids such as `#1234` are left alone). A limit written as
+  `amount > LIMIT` is false for NaN.
 
 Then run `falsepass audit <env>` as usual. Each policy's episode (what it said, and the
 whole conversation) is kept: `falsepass_completion` shows it, and `falsepass repro`

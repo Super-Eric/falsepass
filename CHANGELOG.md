@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- `falsepass.policies`: ready-made known-bad policies for games, simulations and tool
+  tasks (`after_the_end`, `keeps_talking`, `never_acts`) and `special_numbers()`, which
+  puts NaN, Infinity and negative values into an accepted action. The `--policies`
+  skeleton uses them, so an agent fills in a few messages instead of writing policies.
 - New probe T8 for multi-turn environments: answer wrong, then repeat what the
   environment gives away after the attempt ("The word was …"). It never uses the
   reference, so any reward is a false pass; the row also says when the episode ran on

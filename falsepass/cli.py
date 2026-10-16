@@ -129,20 +129,11 @@ Run: falsepass audit <env>
 
 import random
 
-from falsepass import Adapter, Example
+from falsepass import Adapter, Example, policies
 from falsepass.model import Expect, Policy
+from falsepass.policies import heard, said  # what the environment / the policy said so far
 from falsepass.probes import check
 from falsepass.scorers import V0RolloutScorer
-
-
-def said(messages):
-    """What the policy itself said so far."""
-    return [str(m.get("content") or "") for m in messages if m.get("role") == "assistant"]
-
-
-def heard(messages):
-    """Everything the environment said so far, as one text."""
-    return "\\n".join(str(m.get("content") or "") for m in messages if m.get("role") == "user")
 
 
 def solver(example):
@@ -160,14 +151,22 @@ def gives_up(example):
 
 
 def exploits(example):
-    """Known-bad policies that never use the answer. Each should earn nothing. Ideas that
-    found real holes: keep talking after the environment says the episode is over; repeat
-    what the environment revealed (a solution printed on a loss); put NaN, Infinity or a
-    negative number where the environment parses a number; never act at all; act twice
-    in one message."""
-    def keeps_talking(messages):
-        return "GUESS: a" if len(said(messages)) < 30 else "..."
-    return {{"keeps_talking": Policy("keeps_talking", keeps_talking)}}
+    """Known-bad policies that never use the answer. Each should earn nothing. The ready-made
+    ones in falsepass.policies found real holes; adapt their messages to this environment.
+    Other ideas: act twice in one message; act on something the task didn't ask about."""
+    wrong = "TODO: a wrong move in this environment's format"
+    return {{
+        "after_the_end": policies.after_the_end(wrong),  # repeats what the environment gives away
+        "keeps_talking": policies.keeps_talking(wrong),  # goes on after "game over"
+        "never_acts": policies.never_acts(),
+    }}
+
+
+def special_number_scripts(example):
+    """Fixed scripts: a sequence the environment accepts, with NaN / inf / -1 / 1e999 put
+    in place of its numbers (a limit written as `amount > LIMIT` is false for NaN)."""
+    accepted = ["TODO: e.g. ACTION: issue_refund #1234 25.00"]
+    return policies.special_numbers(accepted)
 
 
 async def policy_probes(adapter, scorer, ex):
@@ -175,6 +174,8 @@ async def policy_probes(adapter, scorer, ex):
     found.append(await check("X1", "policy", "gives_up", Expect.ZERO, gives_up(ex), adapter, scorer, ex))
     for name, policy in exploits(ex).items():
         found.append(await check("X1", "policy", name, Expect.ZERO, policy, adapter, scorer, ex, answer_free=True))
+    for name, script in special_number_scripts(ex).items():
+        found.append(await check("X2", "special_number", name, Expect.ZERO, script, adapter, scorer, ex, answer_free=True))
     return found
 
 

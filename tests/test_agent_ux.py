@@ -79,3 +79,29 @@ def test_a_policy_episode_is_kept_and_replayed_as_a_script():
            "score": 0.7, "completion_id": key}
     cases = repro.select([row], dict(probes.STORE), None, 2)
     assert cases[0]["completion"] == script
+
+
+def test_ready_made_policies():
+    from falsepass import policies
+
+    convo = [{"role": "user", "content": "Guess the word."}, {"role": "assistant", "content": "GUESS: crane"},
+             {"role": "user", "content": "Game over! The word was FIFTH."}]
+    assert policies.revealed(convo) == "FIFTH" and policies.TERMINAL.search(convo[-1]["content"])
+    assert policies.after_the_end("GUESS: crane", lambda w: f"GUESS: {w.lower()}").act(convo) == "GUESS: fifth"
+    assert policies.after_the_end("GUESS: crane").act(convo[:1]) == "GUESS: crane"
+    talker = policies.keeps_talking("GUESS: crane", turns=2)
+    assert [talker.act(convo[:1]), talker.act(convo), talker.act(convo + convo[1:])] == ["GUESS: crane", "Thanks! Let me keep going.", ""]
+    variants = policies.special_numbers(["lookup #12", "ACTION: issue_refund #350352 580.62"])
+    assert variants["nan"][-1]["content"] == "ACTION: issue_refund #350352 nan"
+    assert variants["inf"][0]["content"] == "lookup #12"  # only the acting message changes
+
+
+def test_policy_skeleton_is_valid_python(tmp_path, monkeypatch, capsys):
+    import ast
+
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["init", str(cli.demo_source()), "--policies", "--json"]) == 0
+    name = json.loads(capsys.readouterr().out)["name"]
+    source = (tmp_path / "audits" / name / "adapter.py").read_text()
+    ast.parse(source)
+    assert "policies.after_the_end" in source and "special_number_scripts" in source
