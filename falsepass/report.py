@@ -79,6 +79,9 @@ def gate(results: list[dict[str, Any]], conditions: list[str]) -> list[str]:
     return met
 
 
+MAX_FAILING = 25  # failing probe variants listed in a digest; the rest are counted
+
+
 def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[str, Any] | None = None) -> dict[str, Any]:
     """A compact, machine-readable view of a probe run for scripts and coding agents: the
     headline numbers, every probe variant that failed (with one failing completion), and
@@ -98,6 +101,8 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
         first = bad[0]
         completion = first.get("completion")
         full = (completions or {}).get(first.get("completion_id") or "")
+        if isinstance(full, dict) and "transcript" in full:  # a policy's episode: what it said, in order
+            full = " | ".join(m["content"] for m in full["transcript"] if m.get("role") == "assistant")
         if isinstance(full, str):
             completion = preview(full, example_chars)
         failing.append({
@@ -108,19 +113,41 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
             "completion": completion[:example_chars] if isinstance(completion, str) and full is None else completion,
             "completion_id": first.get("completion_id") or None,
             "answer_free": bool(first.get("answer_free")),
+            **({"errors": first["errors"][:2]} if first.get("errors") else {}),
         })  # fmt: skip
     # False passes first (a known-bad completion paid), the most consistent ones on top; then false fails.
     failing.sort(key=lambda f: (f["expected"] != "zero", -f["failed"] / f["runs"]))
     meta = payload["meta"]
     adapter = meta.get("adapter")
+    validity = adapter.get("validity", "ok") if isinstance(adapter, dict) else "ok"
+    extra: dict[str, Any] = {}
+    if validity.startswith("inconclusive"):
+        # The control failed, so rows that needed the reference say nothing. Rows built without it still hold.
+        holds = [f for f in failing if f["answer_free"]]
+        extra = {
+            "status": "inconclusive",
+            "reason": validity,
+            "facts_that_hold": [f"{f['probe']} {f['name']}/{f['variant']}: expected {f['expected']}, got "
+                                f"{', '.join(_fmt(x) for x in f['scores'][:3])} on {f['failed']} of {f['runs']} tasks" for f in holds[:8]],
+            "failing_omitted": len(failing),
+            "next": "Automatic mode could not tell a correct completion from an empty one here (a game, a simulation, a "
+                    "tool task, or a reward that ignores the answer). Write policies for it: `falsepass init <target> --policies --force` "
+                    "(MCP: falsepass_init with policies=true, force=true) and "
+                    "https://super-eric.github.io/falsepass/docs/agents/#games-simulations-and-tool-tasks",
+        }  # fmt: skip
+        failing = []
+    elif len(failing) > MAX_FAILING:
+        extra = {"failing_omitted": len(failing) - MAX_FAILING}
+        failing = failing[:MAX_FAILING]
     return {
+        **extra,
         "environment": meta["environment"],
         "meta": {  # the rest of the run's metadata is in probe-results.json
             **{k: meta[k] for k in ("date", "falsepass", "versions", "examples", "max_reward") if k in meta},
             "adapter": {k: adapter[k] for k in ("format", "answers", "turns", "validity", "note") if adapter.get(k)}
             if isinstance(adapter, dict) else adapter,
         },
-        "headline": headline(payload["results"]),
+        "headline": None if validity.startswith("inconclusive") else headline(payload["results"]),
         "failing": failing,
         "static_hints": [{k: h[k] for k in ("rule", "file", "line", "evidence", "meaning", "verdict") if k in h}
                          for h in payload.get("static", [])],  # fmt: skip
@@ -193,7 +220,10 @@ def summary(payload: dict[str, Any]) -> str:
         scores = [r["score"] for r in rows if r["score"] is not None]
         stats = f"{_fmt(min(scores))} / {_fmt(sum(scores) / len(scores))} / {_fmt(max(scores))}" if scores else "—"
         failed = [r for r in rows if not r["passed"]]
-        first = failed[0]["detail"].replace("|", "\\|").replace("\n", " ")[:110] if failed else ""
+        first = failed[0]["detail"] if failed else ""
+        if failed and failed[0]["score"] is None and failed[0].get("errors"):
+            first = f"{first}; raised {failed[0]['errors'][0]}"
+        first = first.replace("|", "\\|").replace("\n", " ")[:160]
         lines.append(f"| {probe} {name} | {variant} | {expected} | {len(rows)} | {len(failed)} | {stats} | {first} |")
 
     leaks = term_leak(results, meta.get("weights") or {})

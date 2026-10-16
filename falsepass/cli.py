@@ -113,6 +113,105 @@ ADAPTER = Env()
 '''
 
 
+POLICY_TEMPLATE = '''"""falsepass adapter for {id}: policies for a game, a simulation or a tool task.
+
+Automatic mode cannot script these, because a fixed reply is not a fair test: the model
+reacts to what the environment says. A policy does the same. It is a function from the
+conversation so far (a list of {{"role", "content"}} dicts) to the next assistant message:
+a string, or {{"content": ..., "tool_calls": [{{"name": ..., "arguments": {{...}}}}]}}
+(`Policy(name, act, wants_tools=True)` also passes the tool schemas: `act(messages, tools)`).
+
+Each policy runs through the environment's own rollout loop and rubric. Its episode
+(what it said, and the whole conversation) is kept, so `falsepass results <env>
+--completion <id>` shows it and `falsepass repro <env>` replays it turn by turn.
+Run: falsepass audit <env>
+"""
+
+import random
+
+from falsepass import Adapter, Example
+from falsepass.model import Expect, Policy
+from falsepass.probes import check
+from falsepass.scorers import V0RolloutScorer
+
+
+def said(messages):
+    """What the policy itself said so far."""
+    return [str(m.get("content") or "") for m in messages if m.get("role") == "assistant"]
+
+
+def heard(messages):
+    """Everything the environment said so far, as one text."""
+    return "\\n".join(str(m.get("content") or "") for m in messages if m.get("role") == "user")
+
+
+def solver(example):
+    """Known-good: does the task properly (it may read the row's answer). Should earn full reward."""
+    def act(messages):
+        raise NotImplementedError("TODO: the next message of a policy that solves the task")
+    return Policy("solver", act)
+
+
+def gives_up(example):
+    """Known-bad, honest: plays without solving (wrong moves, or none). Should earn nothing."""
+    def act(messages):
+        return "I don't know."
+    return Policy("gives_up", act)
+
+
+def exploits(example):
+    """Known-bad policies that never use the answer. Each should earn nothing. Ideas that
+    found real holes: keep talking after the environment says the episode is over; repeat
+    what the environment revealed (a solution printed on a loss); put NaN, Infinity or a
+    negative number where the environment parses a number; never act at all; act twice
+    in one message."""
+    def keeps_talking(messages):
+        return "GUESS: a" if len(said(messages)) < 30 else "..."
+    return {{"keeps_talking": Policy("keeps_talking", keeps_talking)}}
+
+
+async def policy_probes(adapter, scorer, ex):
+    found = [await check("X1", "policy", "solver", Expect.FULL, solver(ex), adapter, scorer, ex)]
+    found.append(await check("X1", "policy", "gives_up", Expect.ZERO, gives_up(ex), adapter, scorer, ex))
+    for name, policy in exploits(ex).items():
+        found.append(await check("X1", "policy", name, Expect.ZERO, policy, adapter, scorer, ex, answer_free=True))
+    return found
+
+
+class Env(Adapter):
+    name = "{id}"
+    max_reward = 1.0  # what the solver earns; set it to the real figure once the X1 solver rows show it
+    per_example_probes = [policy_probes]
+    # how `falsepass repro` reloads the same rows (keys must end in the row index)
+    loader = {{"kind": "v0-rollout", "module": "{package}", "load_args": {{}}, "getter": "get_dataset"}}
+
+    def load(self, n, seed):
+        import verifiers as vf
+
+        self.env = vf.load_environment("{package}")
+        self.rows = self.env.get_dataset()
+        picks = random.Random(seed).sample(range(len(self.rows)), min(n, len(self.rows)))
+        return V0RolloutScorer(self.env), [self._example(i) for i in picks]
+
+    def _example(self, i) -> Example:
+        row = self.rows[i]
+        return Example(f"row-{{i}}", row["prompt"][-1]["content"], row.get("answer", ""), row)
+
+    def hygiene_examples(self, limit):
+        return [self._example(i) for i in range(min(limit, len(self.rows)))]
+
+    def render(self, answer, example):
+        """The standard probes ask for "the right answer" and "a wrong one": map them to policies."""
+        return solver(example) if answer == example.answer else gives_up(example)
+
+    def wrong_answer(self, example):
+        return "WRONG"
+
+
+ADAPTER = Env()
+'''
+
+
 def find_audit(env: str, needs: str = "env.toml") -> Path | None:
     """The audit folder for `env`: a path to one, or a name under audits/ (`arc_easy` also
     finds `arc-easy`, the name `init` gives it)."""
@@ -177,7 +276,6 @@ def scaffold(args) -> int:
         import shutil
 
         shutil.rmtree(audit_dir / "src", ignore_errors=True)
-        (audit_dir / "adapter.py").unlink(missing_ok=True)
     audit_dir.mkdir(parents=True, exist_ok=True)
     keys = ("id", "framework", "task", "package", "version", "module", "index", "verifiers", "inspect_ai", "hud", "source", "answers", "extra")
     required = ("index",) if info.get("framework", "verifiers") == "verifiers" else ()
@@ -189,14 +287,21 @@ def scaffold(args) -> int:
         if target.resolve().is_relative_to((audit_dir / "src").resolve()):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content)
-    if args.manual:
-        (audit_dir / "adapter.py").write_text(ADAPTER_TEMPLATE.format(id=info["id"], package=info.get("module") or info.get("task", "")))
+    kept_adapter = (args.manual or args.policies) and (audit_dir / "adapter.py").exists()
+    if (args.manual or args.policies) and not kept_adapter:
+        template = POLICY_TEMPLATE if args.policies else ADAPTER_TEMPLATE
+        (audit_dir / "adapter.py").write_text(template.format(id=info["id"], package=info.get("module") or info.get("task", "")))
+    if kept_adapter:
+        print(f"falsepass: kept the existing {audit_dir}/adapter.py (delete it first for a fresh skeleton)", file=sys.stderr)
+    args.manual = args.manual or args.policies
     if args.json:
         print(json.dumps({"name": name, "folder": str(audit_dir.resolve()), "framework": info.get("framework", "verifiers"),
                           "env": {k: info[k] for k in keys if info.get(k)}, "manual": bool(args.manual),
                           "others": info.get("others", []), "next": f"falsepass audit {name}"}, indent=1))  # fmt: skip
         return 0
-    if args.manual:
+    if args.policies:
+        print(f"created {audit_dir}/env.toml and adapter.py — fill in solver() and exploits(), then:")
+    elif args.manual:
         print(f"created {audit_dir}/env.toml and adapter.py — fill in render() and wrong_answer(), then:")
     elif info.get("framework") == "hud":
         how = "with the reference answers given" if info.get("answers") else "answer-free probes only; add --answers for all"
@@ -242,7 +347,13 @@ def main(argv: list[str] | None = None) -> int:
     )  # fmt: skip
     parser.add_argument("--version", action="version", version=f"falsepass {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
-    audit = sub.add_parser("audit", help="probe one environment in an isolated virtualenv")
+    audit = sub.add_parser(
+        "audit", help="probe one environment in an isolated virtualenv",
+        epilog="Probe options, passed through to the run: -n N (tasks to sample, default 25), --seed N, "
+               "--few N (tasks for the slower probes, default 3), --search CALLS (mutation search budget per "
+               "direction and task; 120 is a good value), --search-examples N, --out DIR (write results "
+               "elsewhere), --fail-on COND (repeatable, e.g. 'ceiling>0.1' 'errors>0': exit 1 when met).",
+    )  # fmt: skip
     audit.add_argument("env", help="name of a folder under audits/, or a path to one")
     audit.add_argument("--print-command", action="store_true", help="show the uv command and exit")
     audit.add_argument("--source", type=Path, help="install the environment from this local folder instead of its release")
@@ -264,7 +375,9 @@ def main(argv: list[str] | None = None) -> int:
     init.add_argument("--framework", choices=["verifiers", "inspect", "hud"], help="force the framework (default: detected)")
     init.add_argument("--answers", help="HUD: a JSON file with reference answers, either an object from task slug to "
                                         'answer ({"add-2-3": "5"}) or a list in task order (["5", "12"])')
-    init.add_argument("--force", action="store_true", help="rewrite the env.toml of an existing audit folder")
+    init.add_argument("--force", action="store_true", help="rewrite the env.toml of an existing audit folder (adapter.py is kept)")
+    init.add_argument("--policies", action="store_true",
+                      help="like --manual, for games, simulations and tool tasks: an adapter skeleton built around policies")
     init.add_argument("--json", action="store_true", help="print the result as JSON (name to audit with, env.toml fields)")
     init.add_argument("--task", help="Inspect: which @task to audit when a file or project defines several")
     init.add_argument("--with", dest="extra", action="append", default=[], metavar="REQ",

@@ -25,7 +25,10 @@ falsepass results environment --json      # headline numbers and failing probes
 Work in a scratch directory: `init` creates `audits/<name>/` in the current directory.
 If `audit` stops at the control ("inconclusive", "needs a hand-written adapter"), the
 environment is multi-turn, tool-use, sandboxed or judge-only in a way automatic mode
-cannot script. Say so; `falsepass init --manual` writes an adapter skeleton to fill in.
+cannot script. Say so, then write policies: `falsepass init <target> --policies --force`
+writes a skeleton (a solver, an honest loser, and exploit policies that never use the
+answer); see "Games, simulations and tool tasks" on the agents page of the docs. For a
+Q&A environment whose answer format can't be inferred, `--manual` writes a simpler one.
 
 ## 2. Read the results
 

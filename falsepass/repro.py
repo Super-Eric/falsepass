@@ -33,6 +33,8 @@ Depends only on {depends}. Run twice from a clean virtualenv:
   uv run --isolated --no-project --python 3.12 {install} python {path}
 
 Each line prints: observed reward, the reward a correct verifier would give, and the case.
+Compare stdout between the two runs; stderr carries install and progress messages that
+change from run to run.
 """
 import asyncio
 import json
@@ -238,7 +240,11 @@ def select(results: list[dict[str, Any]], completions: dict[str, Any], probes: l
         group = (r["probe"], r["name"], r["variant"])
         stored = completions.get(r["completion_id"])
         if isinstance(stored, str) and stored.startswith("Policy("):
-            continue  # a reactive policy is code, not text; its repro is written by hand
+            continue  # a policy run from before episodes were kept: only its name is known
+        if isinstance(stored, dict) and "script" in stored:  # a policy's episode: replay what it said, turn by turn
+            if not stored["script"]:
+                continue
+            stored = stored["script"]
         if r["passed"] or r["completion_id"] not in completions or (probes and r["probe"] not in probes):
             continue
         if taken.get(group, 0) >= per_group:
@@ -247,7 +253,7 @@ def select(results: list[dict[str, Any]], completions: dict[str, Any], probes: l
         cases.append({
             "probe": r["probe"], "name": r["name"], "variant": r["variant"], "example": r["example"],
             "expected": "full" if r["expected"] == "full" else "0", "recorded": r["score"],
-            "completion": completions[r["completion_id"]],
+            "completion": stored,
         })  # fmt: skip
     return cases
 

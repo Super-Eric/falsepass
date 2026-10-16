@@ -103,6 +103,41 @@ The digest from `results --json` and from the MCP audit tools (abridged):
 
 All fields are described in [Output files]({ORIGIN}{BASE}/docs/output/).
 
+## Games, simulations and tool tasks
+
+Automatic mode needs a reference answer it can write into a reply. A game, a
+customer-service simulation or a tool task has none: the reward depends on what the model
+does over several turns. There, an audit ends `"status": "inconclusive"` (the reference
+and an empty reply earned about the same) or, for tool tasks, runs only the generic tool
+policies. The digest then lists only `facts_that_hold`: rows built without the answer,
+such as "an empty reply earned 1.0 on 20 of 20 tasks", which are true either way.
+
+The next step is to write policies, which takes a capable agent a few minutes per
+environment:
+
+```bash
+falsepass init owner/environment --policies --force   # adds adapter.py: a policy skeleton
+```
+
+A policy is a function from the conversation so far (a list of `{"role", "content"}`
+dicts) to the next assistant message, either a string or
+`{"content": ..., "tool_calls": [{"name": ..., "arguments": {...}}]}`. With
+`Policy(name, act, wants_tools=True)` it also gets the tool schemas. Each policy runs
+through the environment's own rollout loop and rubric. Fill in:
+
+- `solver(example)`: a policy that does the task properly (it may read the row's answer).
+  It should earn full reward; set `max_reward` to what it earns.
+- `gives_up(example)`: plays honestly without solving. It should earn nothing.
+- `exploits(example)`: policies that never use the answer. Ones that found real holes:
+  keep talking after the environment says the episode is over; repeat a solution the
+  environment printed after a loss; put `nan`, `inf` or a negative number where the
+  environment parses a number; never act at all; act twice in one message.
+
+Then run `falsepass audit <env>` as usual. Each policy's episode (what it said, and the
+whole conversation) is kept: `falsepass_completion` shows it, and `falsepass repro`
+replays the policy's turns as a fixed script, so a lead found by a policy is reproduced
+without falsepass.
+
 ## Reading the output
 
 - **`false_pass_ceiling` near the maximum**: some known-bad completion was paid. `failing`

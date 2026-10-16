@@ -58,9 +58,32 @@ def test_audit_runs_in_the_background_and_status_returns_the_results(tmp_path):
 
     missing, init, first, during, again, done, full = asyncio.run(go())
     assert missing["is_error"] and "falsepass_init" in missing["text"]
-    assert init["name"] == "falsepass-toy-env" and init["next"] == "falsepass audit falsepass-toy-env"
+    assert init["name"] == "falsepass-toy-env" and init["next"] == "Call falsepass_audit(env='falsepass-toy-env')"
     assert first["status"] == during["status"] == again["status"] == "running"
     assert done["status"] == "finished", done
     assert done["headline"]["false_pass_ceiling"] == 1.0
     assert full["text"].strip() and len(full["text"]) >= len(done["failing"][0]["completion"].split(" … ")[0])
     assert json.loads((tmp_path / "audits" / "falsepass-toy-env" / "job.json").read_text())["state"] == "finished"
+
+
+def test_long_output_reaches_the_client_whole(tmp_path):
+    """Command output is not cut: a long completion (or a long JSON digest) arrives intact."""
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    audit = tmp_path / "audits" / "big"
+    audit.mkdir(parents=True)
+    (audit / "env.toml").write_text("[env]\n")
+    (audit / "probe-results.json").write_text(json.dumps({"meta": {"environment": "big"}, "results": [], "static": []}))
+    text = "word " * 12_000 + "THE END"
+    (audit / "completions.json").write_text(json.dumps({"abc": text}))
+
+    async def go():
+        params = StdioServerParameters(command=sys.executable, args=["-m", "falsepass.cli", "mcp"])
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                result = await session.call_tool("falsepass_completion", {"env": "big", "completion_id": "abc", "workdir": str(tmp_path)})
+                return json.loads(result.content[0].text)
+
+    assert asyncio.run(go())["text"].strip() == text.strip()

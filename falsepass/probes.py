@@ -44,6 +44,23 @@ def preview(completion: Completion, limit: int = 300) -> str:
     return f"{text[:head]} … [{len(text)} chars] … {text[len(text) - (limit - head):]}"
 
 
+def remember_episode(policy: Any, info: dict[str, Any]) -> str:
+    """A policy's run, kept as what it actually said (`script`, replayable) and the whole
+    conversation (`transcript`); a policy is code, so its name alone reproduces nothing."""
+    import hashlib
+    import json
+
+    if not info.get("script") and not info.get("transcript"):
+        return remember(policy)
+    episode = {"policy": repr(policy), "script": info.get("script") or [], "transcript": info.get("transcript") or []}
+    text = json.dumps(episode, ensure_ascii=False, default=str)
+    if len(text) > STORE_LIMIT:
+        return ""
+    key = hashlib.sha1(text.encode("utf-8", "surrogatepass")).hexdigest()[:12]
+    STORE[key] = episode
+    return key
+
+
 def judge(expected: Expect, score: float | None, adapter: Adapter) -> bool:
     if score is None:
         return False
@@ -68,7 +85,8 @@ async def check(
     detail = "" if passed else f"expected {expected.value}, got {score.reward}"
     return ProbeResult(
         probe, name, variant, example.key, expected, score.reward, passed,
-        detail, preview(completion), score.metrics, score.errors, answer_free, remember(completion),
+        detail, preview(completion), score.metrics, score.errors, answer_free,
+        remember_episode(completion, score.info) if isinstance(completion, Policy) else remember(completion),
     )  # fmt: skip
 
 
@@ -503,7 +521,7 @@ async def t6_tool_policies(adapter: Adapter, scorer: Scorer, ex: Example) -> lis
         said = [m["content"] for m in score.info.get("transcript", []) if m.get("role") == "assistant"]
         results.append(ProbeResult("T6", "tool_policy", name, ex.key, Expect.ZERO, score.reward,
                                    judge(Expect.ZERO, score.reward, adapter), detail, preview(" | ".join(said)),
-                                   score.metrics, score.errors, True))  # fmt: skip
+                                   score.metrics, score.errors, True, remember_episode(policy, score.info)))  # fmt: skip
     return results
 
 

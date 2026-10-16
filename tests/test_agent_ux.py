@@ -49,3 +49,33 @@ def test_init_refuses_to_overwrite_without_force(tmp_path, monkeypatch, capsys):
     assert cli.main(["init", str(source)]) == 1
     assert "--force" in capsys.readouterr().err
     assert cli.main(["init", str(source), "--force"]) == 0
+
+
+def test_inconclusive_digest_keeps_only_what_holds():
+    rows = [
+        {"probe": "P3", "name": "empty", "variant": "empty", "expected": "zero", "passed": False, "score": 1.0,
+         "detail": "", "example": "e", "completion": "", "completion_id": "", "answer_free": True, "metrics": {}, "errors": []},
+        {"probe": "P6", "name": "format_only", "variant": "wrong", "expected": "zero", "passed": False, "score": 1.0,
+         "detail": "", "example": "e", "completion": "x", "completion_id": "", "answer_free": False, "metrics": {}, "errors": []},
+    ]
+    payload = {"meta": {"environment": "t", "adapter": {"validity": "inconclusive: the reference scored 1.000 ..."}},
+               "results": rows, "static": []}
+    digest = report.digest(payload)
+    assert digest["status"] == "inconclusive" and digest["headline"] is None and digest["failing"] == []
+    assert digest["facts_that_hold"] == ["P3 empty/empty: expected zero, got 1 on 1 of 1 tasks"]
+    assert "--policies" in digest["next"]
+
+
+def test_a_policy_episode_is_kept_and_replayed_as_a_script():
+    from falsepass import probes, repro
+    from falsepass.model import Policy
+
+    probes.STORE.clear()
+    policy = Policy("p", lambda messages: "hi")
+    script = [{"role": "assistant", "content": "GUESS: crane"}, {"role": "assistant", "content": "GUESS: fifth"}]
+    key = probes.remember_episode(policy, {"script": script, "transcript": [{"role": "user", "content": "go"}, *script]})
+    assert probes.STORE[key]["script"] == script
+    row = {"probe": "X1", "name": "policy", "variant": "p", "example": "row-1", "expected": "zero", "passed": False,
+           "score": 0.7, "completion_id": key}
+    cases = repro.select([row], dict(probes.STORE), None, 2)
+    assert cases[0]["completion"] == script

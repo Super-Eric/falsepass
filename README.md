@@ -219,7 +219,7 @@ the reference answer in each candidate format (from the parser and the prompt te
 keeping the one the environment's own reward code pays best. Wrong answers come from the
 label set, a shifted number, or another row. This covers environments with reference
 answers, single- or multi-turn; tool-use and sandbox environments, and games whose rows
-carry no answer, need `falsepass init --manual` or a hand-written script. A tag that the
+carry no answer, need policies: `falsepass init --policies` writes a skeleton (or `--manual` for Q&A). A tag that the
 prompt uses to enclose its input (`<conversation>…</conversation>`) is not taken for an
 answer format, and when every format scores the same the plain answer is used. As a
 control, automatic mode compares the reference with an empty completion and marks the

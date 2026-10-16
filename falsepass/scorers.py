@@ -127,6 +127,33 @@ def tool_schema(tool: Any) -> dict[str, Any]:
     return {"name": getattr(tool, "name", ""), "parameters": getattr(tool, "parameters", None) or {}}
 
 
+def _role(message: Any) -> str:
+    return message.get("role", "") if isinstance(message, dict) else getattr(message, "role", "")
+
+
+def _script_entry(message: Any) -> dict[str, Any]:
+    """An assistant message as a script entry: replaying the entries reproduces what the model did."""
+    import json
+
+    get = message.get if isinstance(message, dict) else lambda k, d=None: getattr(message, k, d)
+    content = get("content")
+    entry: dict[str, Any] = {"role": "assistant", "content": content if isinstance(content, str) else "" if content is None else str(content)}
+    calls = []
+    for call in get("tool_calls") or []:
+        call = call.get("function", call) if isinstance(call, dict) else call
+        cget = call.get if isinstance(call, dict) else lambda k, d=None: getattr(call, k, d)
+        arguments = cget("arguments")
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except json.JSONDecodeError:
+                pass
+        calls.append({"name": cget("name"), "arguments": arguments})
+    if calls:
+        entry["tool_calls"] = calls
+    return entry
+
+
 def _calls_text(message: Any) -> str:
     """Tool calls of a message as text, so a transcript shows what the model did."""
     get = message.get if isinstance(message, dict) else lambda k, d=None: getattr(message, k, d)
@@ -231,8 +258,9 @@ class V0RolloutScorer(V0RubricScorer):
         turns = getattr(client, "calls", None)
         if turns is None and state is not None:  # a real client: count the model turns the rollout recorded
             turns = len(state.get("trajectory") or [])
+        script = [_script_entry(m) for m in (state.get("completion") or []) if _role(m) == "assistant"] if state is not None else []
         info = {"turns": turns, "stop": state.get("stop_condition") if state is not None else None,
-                "transcript": transcript}  # fmt: skip
+                "transcript": transcript, "script": script}  # fmt: skip
         if not ok or state is None:
             return Score(None, {}, list(errors), info)
         return Score(float(state["reward"]), dict(state.get("metrics") or {}), list(errors), info)

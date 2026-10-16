@@ -47,7 +47,8 @@ def _run(args: list[str], workdir: str, timeout: int = 3600) -> dict[str, Any]:
         [sys.executable, "-m", "falsepass.cli", *args], cwd=Path(workdir).expanduser(),
         capture_output=True, text=True, timeout=timeout, check=False,
     )  # fmt: skip
-    return {"exit_code": done.returncode, "stdout": done.stdout[-20000:], "stderr": done.stderr[-4000:]}
+    # stdout is kept whole: it is often JSON, and a cut-off document cannot be parsed
+    return {"exit_code": done.returncode, "stdout": done.stdout, "stderr": done.stderr[-4000:]}
 
 
 # Audits run as background jobs so that a client's tool-call timeout never kills one halfway.
@@ -206,7 +207,7 @@ def build():
     def falsepass_init(
         target: str, name: str | None = None, version: str | None = None, framework: str | None = None,
         task: str | None = None, answers: str | None = None, extra: list[str] | None = None,
-        manual: bool = False, force: bool = False, workdir: str = ".",
+        manual: bool = False, policies: bool = False, force: bool = False, workdir: str = ".",
     ) -> Any:  # fmt: skip
         """Set up audits/<name>/ for an environment and return the name to audit it with.
 
@@ -218,16 +219,22 @@ def build():
         (HUD: path to a JSON file of reference answers, an object from task slug to answer or
         a list in task order; without it only answer-free probes run), `extra` (more
         requirements to install, e.g. ["inspect-evals[math]"]), `manual` (also write an
-        adapter.py skeleton for environments automatic mode cannot script), `force` (rewrite
-        an existing audit's env.toml, e.g. to add answers)."""
+        adapter.py skeleton for a Q&A environment automatic mode cannot script), `policies`
+        (the same for games, simulations and tool tasks: a skeleton built around policies;
+        use it when an audit comes back "inconclusive"), `force` (rewrite an existing
+        audit's env.toml, e.g. to add answers; adapter.py is kept)."""
         args = ["init", target, "--json"]
         for flag, value in (("--name", name), ("--version", version), ("--framework", framework), ("--task", task), ("--answers", answers)):
             if value:
                 args += [flag, value]
         for requirement in extra or []:
             args += ["--with", requirement]
-        args += ["--manual"] * manual + ["--force"] * force
-        return _json(_run(args, workdir, timeout=600))
+        args += ["--manual"] * manual + ["--policies"] * policies + ["--force"] * force
+        manual = manual or policies
+        result = _json(_run(args, workdir, timeout=600))
+        result["next"] = (f"Fill in {result['folder']}/adapter.py, then call falsepass_audit(env={result['name']!r})" if manual
+                          else f"Call falsepass_audit(env={result['name']!r})")  # fmt: skip
+        return result
 
     @tool
     def falsepass_audit(env: str, n: int = 25, search: int = 0, wait: int = 45, workdir: str = ".") -> Any:

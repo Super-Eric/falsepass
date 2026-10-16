@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.5.0 — 2026-10-16
+
+From a second run as a new agent, this time on a word game, a customer-service
+simulation, a tool task and a long-conversation benchmark.
+
+- Policies: `falsepass init <target> --policies` (MCP: `policies=true`) writes an adapter
+  skeleton for games, simulations and tool tasks: a solver, an honest loser and exploit
+  policies, run through the environment's own rollout loop. The docs have a new section,
+  "Games, simulations and tool tasks", on the agents page.
+- A policy's episode is kept: what it said (replayable) and the whole conversation.
+  `results --completion` / `falsepass_completion` show it, the digest previews it, and
+  `falsepass repro` replays the policy's turns as a fixed script, so a lead found by a
+  policy reproduces without falsepass.
+- Inconclusive runs (automatic mode could not tell a correct reply from an empty one) no
+  longer print a headline or a failing list that mean nothing: the digest says
+  `"status": "inconclusive"`, lists `facts_that_hold` (rows built without the answer) and
+  says what to do next. Other digests list at most 25 failing variants.
+- MCP: command output is no longer cut at 20,000 characters, which broke the JSON of
+  large digests (`JSONDecodeError` from `falsepass_results`). `falsepass_init` returns an
+  MCP-style next step.
+- When the reward code raises, the summary table shows the exception, and digest rows
+  carry `errors`.
+- `init --force` keeps a hand-written adapter.py; `audit --help` lists the probe options
+  (`-n`, `--search`, `--fail-on`, ...); repro scripts say to compare stdout only.
+
 ## 0.4.1 — 2026-10-16
 
 - Listed in the official MCP Registry as `io.github.Super-Eric/falsepass` (`server.json`;
