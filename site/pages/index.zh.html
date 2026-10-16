@@ -1,0 +1,136 @@
+<div class="wrap">
+  <section class="hero">
+    <div>
+      <p class="eyebrow">RL 环境的判分器测试</p>
+      <h1>找出判分器<em>不该</em>给分的回答。</h1>
+      <p class="lede">falsepass 用环境自己的奖励代码，给一批事先已知对错的回答打分，然后报告每一处不一致：错的回答拿了分，对的回答没拿到分。不需要模型，不需要跑训练，也不需要 GPU。</p>
+      <div class="cmd"><code id="cmd-demo">uvx --from git+https://github.com/Super-Eric/falsepass falsepass demo</code><button class="copy" data-copy="cmd-demo" data-done="已复制">复制</button></div>
+      <div class="actions">
+        <a class="btn primary" href="{BASE}/zh/docs/">阅读使用指南</a>
+        <a class="btn" href="{BASE}/docs/agents/">让 AI 代理来用</a>
+      </div>
+    </div>
+    <div class="probe" role="figure" aria-label="探测结果示例">
+      <div class="probe-head"><span>探测结果</span><span>得分 · 应得</span></div>
+      <table>
+        <thead><tr><th>回答</th><th class="n">得分</th><th class="n">应得</th><th></th></tr></thead>
+        <tbody>
+          <tr><td class="c">#### 42</td><td class="n">1.0</td><td class="n">1.0</td><td><span class="tag good">正常</span></td></tr>
+          <tr><td class="c">The answer is definitely not 42.</td><td class="n">1.0</td><td class="n">0</td><td><span class="tag bad">假通过</span></td></tr>
+          <tr><td class="c">\boxed{42 \text{ is wrong}}</td><td class="n">1.0</td><td class="n">0</td><td><span class="tag bad">假通过</span></td></tr>
+          <tr><td class="c">A B C D E F G H I J</td><td class="n">1.0</td><td class="n">0</td><td><span class="tag bad">假通过</span></td></tr>
+          <tr><td class="c">#### 42.</td><td class="n">0.0</td><td class="n">1.0</td><td><span class="tag bad">假失败</span></td></tr>
+          <tr><td class="c">（空）</td><td class="n">0.0</td><td class="n">0</td><td><span class="tag good">正常</span></td></tr>
+        </tbody>
+      </table>
+      <div class="probe-foot">示意数据。每一种情况都在公开环境里真实出现过。</div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>工作原理</h2>
+    <p class="sub">判分器就是一条断言。测试它的方法和测试任何一条别人写的断言一样：喂给它正确结论已知的输入。</p>
+    <div class="steps">
+      <div class="step">
+        <span class="num">01</span>
+        <h3>指定一个环境</h3>
+        <p>Hub 上的环境、本地文件夹、Inspect AI 任务或 HUD 环境都可以。每个环境装在自己的临时虚拟环境里，版本按它构建时的依赖锁定。</p>
+        <pre>falsepass init owner/environment</pre>
+      </div>
+      <div class="step">
+        <span class="num">02</span>
+        <h3>探测判分器</h3>
+        <p>标准答案及其无害变体；空回答、复述题目、列出所有选项、否定答案、格式完美的错答；格式损坏的输出；重复打分。另有变异搜索和对奖励代码的静态扫描。</p>
+        <pre>falsepass audit environment --search 120</pre>
+      </div>
+      <div class="step">
+        <span class="num">03</span>
+        <h3>确认，再修复</h3>
+        <p>每个失败的探测都能生成一个独立复现脚本，只依赖环境自己的包。改好判分器后重跑，可以看到具体哪些行变了。</p>
+        <pre>falsepass repro environment --probe P5</pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>反复出现的问题</h2>
+    <p class="sub">在几十个公开的 RL 环境上跑下来，同样几类判分缺陷在不同作者的环境里一再出现。</p>
+    <div class="patterns">
+      <div class="pattern"><h3>数关键词打分</h3><p>开放式任务按关键词给分。一段跟任何题都无关的通用文本，对所有题都提交，得分反而超过数据集自带的参考答案。</p><code>return df  # dropna fillna astype …</code></div>
+      <div class="pattern"><h3>为格式付钱</h3><p>格式分和推理分从不检查答案，错误答案也能拿到满分的三分之一左右。</p><code>&lt;think&gt;…&lt;/think&gt; \boxed{B}   (错)</code></div>
+      <div class="pattern"><h3>该严的不严，该松的不松</h3><p>多一个句号就得零分；连答案标记都没有的否定句却拿满分。</p><code>The answer is definitely not 42.</code></div>
+      <div class="pattern"><h3>答案框里的否定</h3><p>本来为单位设计的规范化步骤会丢掉数字后面的文字，等式也只比较了一边。</p><code>\boxed{13 = 12}</code></div>
+      <div class="pattern"><h3>没人看见的异常</h3><p>某个奖励项每次调用都报错，被框架捕获、记日志、记 0 分，跑出来的数字看起来一切正常。</p><code>NameError: name 're' is not defined</code></div>
+      <div class="pattern"><h3>不会结束的回合</h3><p>游戏结束后环境还在回话，奖励又会重读每条消息，于是一直说话的人得分最高。</p><code>That was a great game!</code></div>
+    </div>
+    <p class="more"><a href="{BASE}/blog/reward-functions-are-assertions/">阅读完整文章（英文）：Your reward function is an assertion →</a></p>
+  </section>
+
+  <section class="block">
+    <h2>看它抓出一个埋好的漏洞</h2>
+    <p class="sub"><code>falsepass demo</code> 审计一个玩具环境：只要答案出现在回复里任何位置就给分。静态扫描指出了那一行，三个探测从不同方向确认了它。</p>
+    <div class="demo"><img src="{BASE}/assets/demo.gif" alt="终端录屏：falsepass demo 找出一个埋好的判分漏洞" loading="lazy" width="1011" height="608"></div>
+  </section>
+
+  <section class="block split">
+    <div>
+      <h2>支持你用的框架</h2>
+      <p class="sub">已发布的或还在本地文件夹里的都可以。每个框架都走它自己的代码路径，测到的就是判分器真实运行时的行为。</p>
+      <div class="cards">
+        <div class="card"><h3>verifiers · Environments Hub</h3><p>环境自己的 rubric 或 taskset，三代接口都支持，单轮、多轮，以及按脚本调用工具的策略。</p></div>
+        <div class="card"><h3>Inspect AI</h3><p>任务自己的 solver 链，用按脚本回答的替身代替 <code>generate()</code>，再用它自己的 scorer 打分。</p></div>
+        <div class="card"><h3>HUD</h3><p>按 HUD 服务器的方式调用任务模板的判分代码。没有参考答案时跑不需要答案的探测。</p></div>
+      </div>
+    </div>
+    <div>
+      <h2>每次提交都检查</h2>
+      <p class="sub">GitHub Action 会在错误答案拿到分时让构建失败，并把探测结果表放进任务摘要。</p>
+<pre class="term"><span class="k"># .github/workflows/falsepass.yml</span>
+on: [push, pull_request]
+jobs:
+  falsepass:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: <span class="a">Super-Eric/falsepass@main</span>
+        with:
+          path: .
+          fail-on: "ceiling>0.1 errors>0"</pre>
+    </div>
+  </section>
+
+  <section class="block split">
+    <div>
+      <h2>为 AI 代理调用而设计</h2>
+      <p class="sub">所有命令都不需要交互，都有机器可读的输出。编程代理可以独立跑完一次审计，交给你的是已经复现过的线索。</p>
+      <div class="cards">
+        <div class="card"><h3>MCP 服务器</h3><p>scan、init、audit、results、repro、discover 都作为工具提供，任何 MCP 客户端都能用。</p></div>
+        <div class="card"><h3>代理技能（Skill）</h3><p>完整的审计流程，包括怎么区分缺陷和有意的设计。</p></div>
+        <div class="card"><h3>JSON 与退出码</h3><p>大小适合放进上下文窗口的结果摘要、CI 门槛，以及文档的 <a href="{BASE}/llms.txt">llms.txt</a>。</p></div>
+      </div>
+    </div>
+    <div>
+      <h2>&nbsp;</h2>
+<pre class="term"><span class="k">$</span> claude mcp add falsepass -- uvx --from \
+    "falsepass[mcp] @ git+https://github.com/Super-Eric/falsepass" \
+    falsepass mcp
+
+<span class="k">› 审计 owner/environment 的判分器</span>
+
+  falsepass_init   owner/environment
+  falsepass_audit  environment  n=25
+  <span class="a">false_pass_ceiling 1.0  via P5 shotgun/all_in_one_slot</span>
+  falsepass_repro  environment  probe=["P5"]
+  <span class="k">… 复现两次，读奖励代码，</span>
+  <span class="k">  报告出问题的那一行和修改建议</span></pre>
+      <p class="caption">示意会话。其他 MCP 客户端用法相同：<a href="{BASE}/docs/agents/">其他客户端的配置（英文）→</a></p>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="principle">
+      <p><strong>给的是线索，不是结论。</strong>探测失败只说明值得去读奖励代码。一个发现要成立，需要两次输出完全一致的复现、找到出问题的那一行，并核实它影响了多少真实任务。题目要求的严格格式、为研究奖励作弊而故意留的漏洞，都不算缺陷。</p>
+      <p>已在几十个公开环境上使用过。修复先以小的 pull request 交给维护者。</p>
+    </div>
+  </section>
+</div>

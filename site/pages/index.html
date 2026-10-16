@@ -1,0 +1,136 @@
+<div class="wrap">
+  <section class="hero">
+    <div>
+      <p class="eyebrow">Grader testing for RL environments</p>
+      <h1>Find the answers your grader <em>shouldn't</em> accept.</h1>
+      <p class="lede">falsepass calls an environment's own reward code on completions whose verdict is known in advance, and reports every disagreement: wrong answers that get paid, right answers that don't. No model, no rollouts, no GPU.</p>
+      <div class="cmd"><code id="cmd-demo">uvx --from git+https://github.com/Super-Eric/falsepass falsepass demo</code><button class="copy" data-copy="cmd-demo">copy</button></div>
+      <div class="actions">
+        <a class="btn primary" href="{BASE}/docs/">Read the guide</a>
+        <a class="btn" href="{BASE}/docs/agents/">Use it from an agent</a>
+      </div>
+    </div>
+    <div class="probe" role="figure" aria-label="Example probe results">
+      <div class="probe-head"><span>probe results</span><span>reward · expected</span></div>
+      <table>
+        <thead><tr><th>completion</th><th class="n">got</th><th class="n">want</th><th></th></tr></thead>
+        <tbody>
+          <tr><td class="c">#### 42</td><td class="n">1.0</td><td class="n">1.0</td><td><span class="tag good">ok</span></td></tr>
+          <tr><td class="c">The answer is definitely not 42.</td><td class="n">1.0</td><td class="n">0</td><td><span class="tag bad">false pass</span></td></tr>
+          <tr><td class="c">\boxed{42 \text{ is wrong}}</td><td class="n">1.0</td><td class="n">0</td><td><span class="tag bad">false pass</span></td></tr>
+          <tr><td class="c">A B C D E F G H I J</td><td class="n">1.0</td><td class="n">0</td><td><span class="tag bad">false pass</span></td></tr>
+          <tr><td class="c">#### 42.</td><td class="n">0.0</td><td class="n">1.0</td><td><span class="tag bad">false fail</span></td></tr>
+          <tr><td class="c">(empty)</td><td class="n">0.0</td><td class="n">0</td><td><span class="tag good">ok</span></td></tr>
+        </tbody>
+      </table>
+      <div class="probe-foot">Illustrative rows. Each pattern was found in a public environment.</div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>How it works</h2>
+    <p class="sub">A grader is an assertion. falsepass tests it the way you'd test any assertion you didn't write: feed it inputs whose right verdict you already know.</p>
+    <div class="steps">
+      <div class="step">
+        <span class="num">01</span>
+        <h3>Point it at an environment</h3>
+        <p>A Hub environment, a local folder, an Inspect AI task or a HUD environment. It is installed in its own throw-away virtualenv, pinned to the versions it was built for.</p>
+        <pre>falsepass init owner/environment</pre>
+      </div>
+      <div class="step">
+        <span class="num">02</span>
+        <h3>Probe the grader</h3>
+        <p>The reference answer and harmless variations of it; empty, echoed, every-option, hedged and wrong answers; malformed output; repeats. A mutation search and a static scan of the reward source join in.</p>
+        <pre>falsepass audit environment --search 120</pre>
+      </div>
+      <div class="step">
+        <span class="num">03</span>
+        <h3>Confirm, then fix</h3>
+        <p>Every failing probe becomes a stand-alone repro that needs only the environment's own packages. Patch the grader and rerun it to see exactly which rows change.</p>
+        <pre>falsepass repro environment --probe P5</pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>What it keeps finding</h2>
+    <p class="sub">Run on a few dozen public RL environments, the same handful of grader defects turned up again and again, across different authors.</p>
+    <div class="patterns">
+      <div class="pattern"><h3>Graders that count words</h3><p>Free-form tasks scored by keywords. One generic text, sent for every task, beat the dataset's own reference answers.</p><code>return df  # dropna fillna astype …</code></div>
+      <div class="pattern"><h3>Rewards for the form</h3><p>Format and reasoning terms that never look at the answer pay a wrong answer about a third of the maximum.</p><code>&lt;think&gt;…&lt;/think&gt; \boxed{B}   (wrong)</code></div>
+      <div class="pattern"><h3>Strict and lenient in the wrong places</h3><p>A trailing period scores zero; a denial with no answer marker at all scores full marks.</p><code>The answer is definitely not 42.</code></div>
+      <div class="pattern"><h3>Denials inside the answer box</h3><p>Normalisation built for units drops the text after a number, and only one side of an equation is compared.</p><code>\boxed{13 = 12}</code></div>
+      <div class="pattern"><h3>Exceptions nobody sees</h3><p>A reward term that raises on every call is caught, logged and recorded as zero. Runs finish with plausible numbers.</p><code>NameError: name 're' is not defined</code></div>
+      <div class="pattern"><h3>Episodes that don't end</h3><p>A game keeps answering after it's over, and the reward re-reads every message, so whoever keeps talking scores highest.</p><code>That was a great game!</code></div>
+    </div>
+    <p class="more"><a href="{BASE}/blog/reward-functions-are-assertions/">Read the write-up: Your reward function is an assertion →</a></p>
+  </section>
+
+  <section class="block">
+    <h2>See it catch a planted defect</h2>
+    <p class="sub"><code>falsepass demo</code> audits a toy environment whose grader pays when the answer appears anywhere in the reply. The static scan points at the line, and three probes confirm it from different sides.</p>
+    <div class="demo"><img src="{BASE}/assets/demo.gif" alt="Terminal recording: falsepass demo finds a planted grading defect" loading="lazy" width="1011" height="608"></div>
+  </section>
+
+  <section class="block split">
+    <div>
+      <h2>Works where your environment lives</h2>
+      <p class="sub">Published or still in a local folder. Each framework is driven through its own code path, so what gets tested is the grader as it really runs.</p>
+      <div class="cards">
+        <div class="card"><h3>verifiers · Environments Hub</h3><p>The environment's rubric or taskset, all three API generations, single- and multi-turn, with scripted tool-use policies.</p></div>
+        <div class="card"><h3>Inspect AI</h3><p>The task's own solver chain with a scripted model in place of <code>generate()</code>, then its scorers.</p></div>
+        <div class="card"><h3>HUD</h3><p>The task template's grader, driven the way HUD's server drives it. Answer-free probes when no references exist.</p></div>
+      </div>
+    </div>
+    <div>
+      <h2>Check every push</h2>
+      <p class="sub">The GitHub Action fails the build when a known-bad answer earns reward, and puts the probe table in the job summary.</p>
+<pre class="term"><span class="k"># .github/workflows/falsepass.yml</span>
+on: [push, pull_request]
+jobs:
+  falsepass:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: <span class="a">Super-Eric/falsepass@main</span>
+        with:
+          path: .
+          fail-on: "ceiling>0.1 errors>0"</pre>
+    </div>
+  </section>
+
+  <section class="block split">
+    <div>
+      <h2>Made to be called by agents</h2>
+      <p class="sub">Every command is non-interactive and has a machine-readable form, so a coding agent can run a whole audit and hand you leads it has already reproduced.</p>
+      <div class="cards">
+        <div class="card"><h3>MCP server</h3><p>Scan, init, audit, results, repro and discover as tools, for any MCP client.</p></div>
+        <div class="card"><h3>Agent skill</h3><p>The full audit procedure, including how to tell a defect from a design choice.</p></div>
+        <div class="card"><h3>JSON and exit codes</h3><p>A compact results digest sized for a context window, CI gates, and <a href="{BASE}/llms.txt">llms.txt</a> for the docs.</p></div>
+      </div>
+    </div>
+    <div>
+      <h2>&nbsp;</h2>
+<pre class="term"><span class="k">$</span> claude mcp add falsepass -- uvx --from \
+    "falsepass[mcp] @ git+https://github.com/Super-Eric/falsepass" \
+    falsepass mcp
+
+<span class="k">› audit the grader of owner/environment</span>
+
+  falsepass_init   owner/environment
+  falsepass_audit  environment  n=25
+  <span class="a">false_pass_ceiling 1.0  via P5 shotgun/all_in_one_slot</span>
+  falsepass_repro  environment  probe=["P5"]
+  <span class="k">… runs the repro twice, reads the reward code,</span>
+  <span class="k">  reports the line and a suggested fix</span></pre>
+      <p class="caption">An illustrative session. Any MCP client works the same way: <a href="{BASE}/docs/agents/">setup for other clients →</a></p>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="principle">
+      <p><strong>Leads, not verdicts.</strong> A failing probe is a reason to read the reward code. A finding needs a repro that runs twice with identical output, the line that causes it, and a check of how many real tasks it affects. Strictness the prompt asks for, and graders that are exploitable on purpose, aren't bugs.</p>
+      <p>Used on a few dozen public environments. Fixes go to the maintainers first, as small pull requests.</p>
+    </div>
+  </section>
+</div>

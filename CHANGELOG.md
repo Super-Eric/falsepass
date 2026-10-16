@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Website at https://super-eric.github.io/falsepass/ (English and Chinese), built from
+  this repository by `site/build.py` and deployed by `.github/workflows/pages.yml`. The
+  docs pages are rendered from the README, `docs/` and the skill; every page is also
+  served as Markdown, indexed by `llms.txt` and `llms-full.txt`. New page for agents:
+  MCP setup for several clients, the tool list and the results digest.
+- First write-up: "Your reward function is an assertion" (`site/content/blog/`).
+
 ## 0.3.0 — 2026-10-14
 
 - **Inspect AI** tasks: `falsepass init path/to/task.py`, a project folder that depends on

@@ -21,7 +21,9 @@ rewardlint = ["rewardlint>=0.1.0"]
 mcp = ["mcp>=1.2,<3"]  # 1.x (FastMCP) and 2.x (MCPServer) both work
 
 [project.urls]
-Homepage = "https://github.com/Super-Eric/falsepass"
+Homepage = "https://super-eric.github.io/falsepass/"
+Documentation = "https://super-eric.github.io/falsepass/docs/"
+Source = "https://github.com/Super-Eric/falsepass"
 Issues = "https://github.com/Super-Eric/falsepass/issues"
 Changelog = "https://github.com/Super-Eric/falsepass/blob/main/CHANGELOG.md"
 

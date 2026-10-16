@@ -9,6 +9,8 @@
 
 检查强化学习（RL）环境的判分器（verifier）有没有两类错误：**假通过**（明知是错的回答拿到了奖励）和**假失败**（明知是对的回答没拿到满分）。
 
+网站和文档：**https://super-eric.github.io/falsepass/zh/** · 文章（英文）：[Your reward function is an assertion](https://super-eric.github.io/falsepass/blog/reward-functions-are-assertions/)
+
 举个真实的例子：在一个公开的环境里，把题目原样抄回去，每道题都能拿满分。原因是每道题都列出了全部候选答案，而判分器只检查正确答案有没有出现在回复里的某个位置。所以只要把所有答案都写上，就能拿满分。falsepass 能在训练之前发现这类漏洞。
 
 ![falsepass 演示：从两个方向发现一个埋好的判分漏洞](docs/demo.gif)

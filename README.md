@@ -10,6 +10,9 @@ English | [中文](README.zh-CN.md)
 Probe RL environment verifiers for **false passes** (a known-bad completion is
 rewarded) and **false fails** (a known-good completion is not).
 
+Website and docs: **https://super-eric.github.io/falsepass/** ·
+write-up: [Your reward function is an assertion](https://super-eric.github.io/falsepass/blog/reward-functions-are-assertions/)
+
 In one public environment, echoing the question back earned full reward on every task:
 each question listed all of its candidate answers, and the grader only checked that the
 right one appeared somewhere in the reply, so a policy could collect full reward by
