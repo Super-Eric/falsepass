@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 — 2026-10-16
 
 - `falsepass.policies`: ready-made known-bad policies for games, simulations and tool
   tasks (`after_the_end`, `keeps_talking`, `never_acts`) and `special_numbers()`, which
