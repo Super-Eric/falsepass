@@ -76,7 +76,7 @@ falsepass init ./my-hud-env --answers refs.json        # 提供标准答案：�
 
 Inspect：替身只代替调用 `generate()` 的那一步；提示模板、系统消息、答案解析（`multiple_choice()`）都是任务自己的代码。如果 solver 或 scorer 自己去调用模型（自我批评、`model_graded_qa`），每一行都会被标记出来，而不是给出一个不可信的分数。需要沙箱的任务暂不支持。
 
-HUD：任务模板把标准答案藏在判分代码里，所以不加 `--answers` 时只跑不需要标准答案的测试：空回答、原样抄回题目，以及一次列出 0 到 1000 所有整数、所有字母、yes/no 之类的词或题目里所有词的回答（A1）。如果这些回答能拿分，判分实际上就是在做子串匹配。`examples/inspect-toy/` 和 `examples/hud-toy/` 各埋了一个漏洞，可以拿来试。
+HUD：任务模板把标准答案藏在判分代码里，所以不加 `--answers` 时只跑不需要标准答案的测试：空回答、原样抄回题目，以及一次列出 0 到 1000 所有整数、所有字母、yes/no 之类的词或题目里所有词的回答（A1；提供答案时它也会和其他测试一起跑）。如果这些回答能拿分，判分实际上就是在做子串匹配。答案文件是 JSON：要么是"任务 slug → 答案"的对象（`{"add-2-3": "5"}`），要么是按任务顺序排列的列表（`["5", "12"]`）。要给已经建好的审计补上答案，带 `--force` 重新运行 `init`。`examples/inspect-toy/` 和 `examples/hud-toy/` 各埋了一个漏洞，可以拿来试。
 
 ## 给环境作者：发布前先检查
 
@@ -100,9 +100,9 @@ jobs:
 
 ## 给 AI 编程代理
 
-- **MCP 服务**：`falsepass mcp` 通过 stdio 把各个命令提供为工具（`falsepass_scan`、`_init`、`_audit`、`_audit_status`、`_results`、`_repro`、`_discover`）。审计在后台运行，客户端单次调用的超时不会把它打断。任何 MCP 客户端都可以用这条命令启动它：`uvx --from "falsepass[mcp]" falsepass mcp`。以 Claude Code 为例：`claude mcp add falsepass -- uvx --from "falsepass[mcp]" falsepass mcp`。
+- **MCP 服务**：`falsepass mcp` 通过 stdio 把各个命令提供为工具（`falsepass_scan`、`_init`、`_audit`、`_audit_status`、`_results`、`_completion`、`_repro`、`_discover`）。审计在后台运行，客户端单次调用的超时不会把它打断；出错时以工具错误返回，并写明原因。任何 MCP 客户端都可以用这条命令启动它：`uvx --from "falsepass[mcp]" falsepass mcp`。以 Claude Code 为例：`claude mcp add falsepass -- uvx --from "falsepass[mcp]" falsepass mcp`。
 - **Skill**：`skills/falsepass/SKILL.md` 是一份写好的审计流程（Agent Skills 格式），内容包括怎么运行审计、怎么区分漏洞和有意的设计、怎么写给维护者。把这个文件夹复制到代理的 skills 目录即可（Claude Code 是 `~/.claude/skills/`）。
-- **普通命令行**：所有命令都不需要交互，结果写成文件；`results --json` 和 `scan --json` 输出 JSON；`audit --fail-on ...` 在条件满足时以退出码 1 结束。输出格式见 `docs/OUTPUT.md`（英文）。
+- **普通命令行**：所有命令都不需要交互，结果写成文件；`init --json`、`results --json` 和 `scan --json` 输出 JSON；`results --completion ID` 输出某个回答的全文；`audit --fail-on ...` 在条件满足时以退出码 1 结束。输出格式见 `docs/OUTPUT.md`（英文）。
 
 不管由谁来运行，输出都只是一份**线索**清单。代理应当先复现线索、读过奖励代码，再判断是不是漏洞；不能只凭一张测试表格就说某个环境有问题。
 
@@ -114,6 +114,7 @@ falsepass audit environment               # 问答类任务不需要写适配器
 falsepass audit environment --search 120  # 加上变异搜索（每个方向、每道题调用判分器的次数）
 falsepass audit environment --fail-on 'ceiling>0.1' --fail-on 'errors>0'   # CI 门槛，满足时退出码为 1
 falsepass results environment [--json]    # 上一次的结果：summary.md，或精简的 JSON
+falsepass results environment --completion ID   # 某个回答的全文（ID 在 JSON 摘要里）
 falsepass scan path/to/source [--json]    # 只做静态扫描，不安装也不运行任何东西
 falsepass discover --days 90 --limit 160  # 最近有人维护的 Hub 环境，以及每个需要什么条件
 falsepass repro environment               # 生成独立脚本，给那些没通过的回答重新打分

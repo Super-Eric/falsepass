@@ -63,6 +63,10 @@ def rewrite_links(text: str, source: str) -> str:
 
     def fix(match: re.Match[str]) -> str:
         label, target = match.group(1), match.group(2)
+        blob = f"{REPO}/blob/main/"
+        if target.startswith(blob) and target[len(blob):].partition("#")[0] in DOC_PAGES:  # a page this site renders
+            path, _, anchor = target[len(blob):].partition("#")
+            return f"[{label}]({url(DOC_PAGES[path])}{'#' + anchor if anchor else ''})"
         if re.match(r"[a-z]+:|#|/", target):
             return match.group(0)
         path, _, anchor = target.partition("#")

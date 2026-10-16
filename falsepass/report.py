@@ -79,10 +79,14 @@ def gate(results: list[dict[str, Any]], conditions: list[str]) -> list[str]:
     return met
 
 
-def digest(payload: dict[str, Any], example_chars: int = 400) -> dict[str, Any]:
+def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[str, Any] | None = None) -> dict[str, Any]:
     """A compact, machine-readable view of a probe run for scripts and coding agents: the
     headline numbers, every probe variant that failed (with one failing completion), and
-    the static hints. Each item is a lead to reproduce and read, not a verdict."""
+    the static hints. Each item is a lead to reproduce and read, not a verdict. With
+    `completions` (completions.json), the example shows the start and the end of the full
+    text, where the answer usually is; `completion_id` fetches all of it."""
+    from falsepass.probes import preview
+
     groups: dict[tuple[str, str, str, str], list[dict[str, Any]]] = defaultdict(list)
     for r in payload["results"]:
         groups[(r["probe"], r["name"], r["variant"], r["expected"])].append(r)
@@ -93,12 +97,16 @@ def digest(payload: dict[str, Any], example_chars: int = 400) -> dict[str, Any]:
             continue
         first = bad[0]
         completion = first.get("completion")
+        full = (completions or {}).get(first.get("completion_id") or "")
+        if isinstance(full, str):
+            completion = preview(full, example_chars)
         failing.append({
             "probe": probe, "name": name, "variant": variant, "expected": expected,
             "runs": len(rows), "failed": len(bad),
             "scores": [r["score"] for r in bad[:5]],
             "detail": first.get("detail"), "example": first.get("example"),
-            "completion": completion[:example_chars] if isinstance(completion, str) else completion,
+            "completion": completion[:example_chars] if isinstance(completion, str) and full is None else completion,
+            "completion_id": first.get("completion_id") or None,
             "answer_free": bool(first.get("answer_free")),
         })  # fmt: skip
     return {

@@ -113,6 +113,34 @@ ADAPTER = Env()
 '''
 
 
+def find_audit(env: str, needs: str = "env.toml") -> Path | None:
+    """The audit folder for `env`: a path to one, or a name under audits/ (`arc_easy` also
+    finds `arc-easy`, the name `init` gives it)."""
+    for candidate in (Path(env), Path("audits") / env, Path("audits") / env.lower().replace("_", "-")):
+        if (candidate / needs).is_file():
+            return candidate
+    return None
+
+
+def missing_audit(env: str, needs: str = "env.toml") -> int:
+    """Explain why `env` can't be used, and what to run instead."""
+    set_up = find_audit(env)
+    if set_up is None:
+        known = sorted(p.name for p in Path("audits").glob("*") if (p / "env.toml").is_file()) if Path("audits").is_dir() else []
+        print(f"falsepass: no audit named {env!r} in {Path.cwd() / 'audits'} (set up here: {', '.join(known) or 'none'}). "
+              f"Run `falsepass init <target>` first; it prints the name to use.", file=sys.stderr)  # fmt: skip
+        return 1
+    job = set_up / "job.json"
+    if job.is_file() and json.loads(job.read_text()).get("state") == "running":
+        print(f"falsepass: an audit of {set_up.name} is still running (started from the MCP server); "
+              "its output is in job.log. Try again when it has finished.", file=sys.stderr)  # fmt: skip
+        return 1
+    print(f"falsepass: {set_up} has no completed audit yet. Run `falsepass audit {set_up.name}` first "
+          "(if it stopped at the control, this environment needs a hand-written adapter: `falsepass init --manual`).",
+          file=sys.stderr)  # fmt: skip
+    return 1
+
+
 def scaffold(args) -> int:
     from falsepass import hub
 
@@ -141,10 +169,16 @@ def scaffold(args) -> int:
         info["extra"] = [*info.get("extra", []), *args.extra]
     name = args.name or info["id"].split("/")[-1].lower().replace("_", "-")
     audit_dir = Path("audits") / name
-    if audit_dir.exists():
-        print(f"falsepass: {audit_dir} already exists", file=sys.stderr)
+    if audit_dir.exists() and not args.force:
+        print(f"falsepass: {audit_dir} already exists. Pass --force to rewrite its env.toml (stored results are kept "
+              "until the next audit), or --name to set up a second audit next to it.", file=sys.stderr)  # fmt: skip
         return 1
-    audit_dir.mkdir(parents=True)
+    if audit_dir.exists():
+        import shutil
+
+        shutil.rmtree(audit_dir / "src", ignore_errors=True)
+        (audit_dir / "adapter.py").unlink(missing_ok=True)
+    audit_dir.mkdir(parents=True, exist_ok=True)
     keys = ("id", "framework", "task", "package", "version", "module", "index", "verifiers", "inspect_ai", "hud", "source", "answers", "extra")
     required = ("index",) if info.get("framework", "verifiers") == "verifiers" else ()
     lines = [f"{key} = {json.dumps(info[key])}" for key in keys if info.get(key) or key in required]
@@ -157,6 +191,12 @@ def scaffold(args) -> int:
             target.write_bytes(content)
     if args.manual:
         (audit_dir / "adapter.py").write_text(ADAPTER_TEMPLATE.format(id=info["id"], package=info.get("module") or info.get("task", "")))
+    if args.json:
+        print(json.dumps({"name": name, "folder": str(audit_dir.resolve()), "framework": info.get("framework", "verifiers"),
+                          "env": {k: info[k] for k in keys if info.get(k)}, "manual": bool(args.manual),
+                          "others": info.get("others", []), "next": f"falsepass audit {name}"}, indent=1))  # fmt: skip
+        return 0
+    if args.manual:
         print(f"created {audit_dir}/env.toml and adapter.py — fill in render() and wrong_answer(), then:")
     elif info.get("framework") == "hud":
         how = "with the reference answers given" if info.get("answers") else "answer-free probes only; add --answers for all"
@@ -222,7 +262,10 @@ def main(argv: list[str] | None = None) -> int:
     init.add_argument("--verifiers", help="verifiers version to pin (default: inferred from the wheel)")
     init.add_argument("--manual", action="store_true", help="also write an adapter.py skeleton to fill in")
     init.add_argument("--framework", choices=["verifiers", "inspect", "hud"], help="force the framework (default: detected)")
-    init.add_argument("--answers", help="HUD: a JSON file with reference answers (slug -> answer, or a list in task order)")
+    init.add_argument("--answers", help="HUD: a JSON file with reference answers, either an object from task slug to "
+                                        'answer ({"add-2-3": "5"}) or a list in task order (["5", "12"])')
+    init.add_argument("--force", action="store_true", help="rewrite the env.toml of an existing audit folder")
+    init.add_argument("--json", action="store_true", help="print the result as JSON (name to audit with, env.toml fields)")
     init.add_argument("--task", help="Inspect: which @task to audit when a file or project defines several")
     init.add_argument("--with", dest="extra", action="append", default=[], metavar="REQ",
                       help="extra requirement to install for the audit, e.g. 'inspect-evals[math]' (repeatable)")
@@ -256,6 +299,7 @@ def main(argv: list[str] | None = None) -> int:
     res = sub.add_parser("results", help="print the last probe run of an environment (summary, or --json for scripts and agents)")
     res.add_argument("env")
     res.add_argument("--json", action="store_true", help="headline numbers, failing probes and hints as JSON")
+    res.add_argument("--completion", metavar="ID", help="print the full text of one completion (a completion_id from --json)")
     trial = sub.add_parser("demo", help="audit a bundled toy environment with one planted defect (about a minute)")
     trial.add_argument("--dir", type=Path, default=Path("falsepass-demo"), help="where to write the toy environment")
     sub.add_parser("mcp", help="serve falsepass as MCP tools over stdio (needs the `mcp` extra)")
@@ -267,11 +311,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command in ("repro", "draft"):
         from falsepass import draft, repro
 
-        audit_dir = Path(args.env) if (Path(args.env) / "probe-results.json").is_file() else Path("audits") / args.env
-        if not (audit_dir / "probe-results.json").is_file():
-            print(f"falsepass: no probe-results.json in {audit_dir} — `falsepass audit {args.env}` has not completed there "
-                  "(if it stopped at the control, this environment needs a hand-written script)", file=sys.stderr)
-            return 1
+        audit_dir = find_audit(args.env, "probe-results.json")
+        if audit_dir is None:
+            return missing_audit(args.env, "probe-results.json")
         if args.command == "repro":
             path = repro.generate(audit_dir, args.probe, args.per_group)
             print(f"wrote {path} — run it twice from a clean virtualenv (command in its docstring)")
@@ -282,12 +324,20 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "results":
         from falsepass import report
 
-        audit_dir = Path(args.env) if (Path(args.env) / "probe-results.json").is_file() else Path("audits") / args.env
-        if not (audit_dir / "probe-results.json").is_file():
-            print(f"falsepass: no probe-results.json in {audit_dir}; run `falsepass audit {args.env}` first", file=sys.stderr)
-            return 1
+        audit_dir = find_audit(args.env, "probe-results.json")
+        if audit_dir is None:
+            return missing_audit(args.env, "probe-results.json")
+        stored = audit_dir / "completions.json"
+        completions = json.loads(stored.read_text()) if stored.is_file() else {}
+        if args.completion:
+            if args.completion not in completions:
+                print(f"falsepass: no completion {args.completion!r} in {stored}", file=sys.stderr)
+                return 1
+            text = completions[args.completion]
+            print(text if isinstance(text, str) else json.dumps(text, indent=1))
+            return 0
         payload = json.loads((audit_dir / "probe-results.json").read_text())
-        print(json.dumps(report.digest(payload), indent=1) if args.json else report.summary(payload))
+        print(json.dumps(report.digest(payload, completions=completions), indent=1) if args.json else report.summary(payload))
         return 0
 
     if args.command == "demo":
@@ -343,14 +393,18 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "upstream":
         from falsepass import upstream
 
-        audit_dir = Path(args.env) if (Path(args.env) / "env.toml").is_file() else Path("audits") / args.env
+        audit_dir = find_audit(args.env)
+        if audit_dir is None:
+            return missing_audit(args.env)
         print(upstream.describe(upstream.locate(audit_dir, repo=args.repo, limit=args.limit)))
         return 0
 
     if args.command == "verify-fix":
         from falsepass import verify
 
-        audit_dir = Path(args.env) if (Path(args.env) / "env.toml").is_file() else Path("audits") / args.env
+        audit_dir = find_audit(args.env)
+        if audit_dir is None:
+            return missing_audit(args.env)
         source = args.source.resolve()
         if args.print_command:
             print(shlex.join(verify.command_for(audit_dir, args.script, source)))
@@ -362,9 +416,9 @@ def main(argv: list[str] | None = None) -> int:
         print(verify.describe(found))
         return 0
 
-    audit_dir = Path(args.env)
-    if not (audit_dir / "env.toml").is_file():
-        audit_dir = Path("audits") / args.env
+    audit_dir = find_audit(args.env)
+    if audit_dir is None:
+        return missing_audit(args.env)
     module = {"rollout": "falsepass.rollout", "propose": "falsepass.propose", "container": "falsepass.container_probe"}.get(
         args.command, "falsepass.runner"
     )

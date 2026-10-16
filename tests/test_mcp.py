@@ -40,7 +40,7 @@ def test_audit_runs_in_the_background_and_status_returns_the_results(tmp_path):
 
     async def call(session, tool, **arguments):
         result = await session.call_tool(tool, {"workdir": str(tmp_path), **arguments})
-        return json.loads(result.content[0].text)
+        return {"is_error": True, "text": result.content[0].text} if getattr(result, "is_error", None) or getattr(result, "isError", False) else json.loads(result.content[0].text)
 
     async def go():
         params = StdioServerParameters(command=sys.executable, args=["-m", "falsepass.cli", "mcp"])
@@ -48,15 +48,19 @@ def test_audit_runs_in_the_background_and_status_returns_the_results(tmp_path):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 missing = await call(session, "falsepass_audit", env="nothing-here", wait=0)
-                await call(session, "falsepass_init", target=str(tmp_path / "toy"))
-                first = await call(session, "falsepass_audit", env="falsepass-toy-env", n=5, wait=0)
-                again = await call(session, "falsepass_audit", env="falsepass-toy-env", n=5, wait=0)
-                done = await call(session, "falsepass_audit_status", env="falsepass-toy-env", wait=600)
-                return missing, first, again, done
+                init = await call(session, "falsepass_init", target=str(tmp_path / "toy"))
+                first = await call(session, "falsepass_audit", env=init["name"], n=5, wait=0)
+                during = await call(session, "falsepass_results", env="falsepass_toy_env")  # underscores find it too
+                again = await call(session, "falsepass_audit", env=init["name"], n=5, wait=0)
+                done = await call(session, "falsepass_audit_status", env=init["name"], wait=600)
+                full = await call(session, "falsepass_completion", env=init["name"], completion_id=done["failing"][0]["completion_id"])
+                return missing, init, first, during, again, done, full
 
-    missing, first, again, done = asyncio.run(go())
-    assert missing["status"] == "error" and "falsepass_init" in missing["next"]
-    assert first["status"] == "running" and again["status"] == "running"
+    missing, init, first, during, again, done, full = asyncio.run(go())
+    assert missing["is_error"] and "falsepass_init" in missing["text"]
+    assert init["name"] == "falsepass-toy-env" and init["next"] == "falsepass audit falsepass-toy-env"
+    assert first["status"] == during["status"] == again["status"] == "running"
     assert done["status"] == "finished", done
     assert done["headline"]["false_pass_ceiling"] == 1.0
+    assert full["text"].strip() and len(full["text"]) >= len(done["failing"][0]["completion"].split(" … ")[0])
     assert json.loads((tmp_path / "audits" / "falsepass-toy-env" / "job.json").read_text())["state"] == "finished"

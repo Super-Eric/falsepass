@@ -11,4 +11,4 @@ from falsepass.model import Completion, Example, Expect, ProbeResult, Score
 from falsepass import hygiene, probes, report  # noqa: E402,F401
 
 __all__ = ["Adapter", "Completion", "Example", "Expect", "ProbeResult", "Score"]
-__version__ = "0.3.1"
+__version__ = "0.4.0"

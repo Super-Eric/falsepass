@@ -53,7 +53,8 @@ A digest of the same run, small enough to hand to a model (numbers from `falsepa
                "false_fail_rate": 0.108, "known_good": 93, "known_bad": 233, "scoring_errors": 0},
   "failing": [ {"probe": "P5", "name": "shotgun", "variant": "all_in_one_slot", "expected": "zero",
                 "runs": 10, "failed": 10, "scores": [1.0, 1.0, 1.0, 1.0, 1.0], "detail": "…", "example": "row-98",
-                "completion": "first failing completion, truncated", "answer_free": false} ],
+                "completion": "start … [316 chars] … end", "completion_id": "da79bcea66a8",
+                "answer_free": false} ],
   "static_hints": [ "as in probe-results.json" ],
   "note": "Leads, not findings: …"
 }
@@ -67,6 +68,19 @@ The headline numbers:
   dataset under any correct grader; subtract that base rate before reading it.
 - **false-fail rate**: the share of known-good completions denied full reward. Some of
   these are deliberate strictness about format; read the variant names.
+
+`completion` shows the start and the end of the first failing completion (the answer is
+usually at the end); `falsepass results <env> --completion <completion_id>` prints all of it.
+
+## falsepass init --json
+
+```json
+{"name": "gsm8k", "folder": "/abs/path/audits/gsm8k", "framework": "verifiers",
+ "env": {"id": "primeintellect/gsm8k", "package": "gsm8k", "version": "…"}, "manual": false,
+ "others": [], "next": "falsepass audit gsm8k"}
+```
+
+`name` is what every other command takes. Names are forgiving: `arc_easy` finds `arc-easy`.
 
 ## Exit codes
 

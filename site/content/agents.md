@@ -40,11 +40,12 @@ For clients configured with JSON (Cursor, Claude Desktop, and others):
 | Tool | Arguments | Returns |
 |---|---|---|
 | `falsepass_scan` | `path` | static hints for a source folder or file; nothing is installed |
-| `falsepass_init` | `target` (Hub id, local folder, Inspect task, HUD folder), `name` | the command's output; creates `audits/<name>/env.toml` |
+| `falsepass_init` | `target` (Hub id, local folder, Inspect task, HUD folder); optional `name`, `version`, `framework`, `task`, `answers`, `extra`, `manual`, `force` | `{"name": ..., "folder": ..., "framework": ..., "env": {...}, "next": ...}`: `name` is what the other tools take |
 | `falsepass_audit` | `env`, `n` (tasks, default 25), `search` (mutation budget), `wait` (seconds, default 45) | the results digest below with `"status": "finished"`, or `"status": "running"` if the audit needs longer |
-| `falsepass_audit_status` | `env`, `wait` | the same, for an audit already started: results, `"failed"` with the log tail, or `"running"` |
-| `falsepass_results` | `env` | the digest of the last run |
-| `falsepass_repro` | `env`, `probe` (e.g. `["P5"]`) | the command's output; writes `audits/<env>/repro_auto.py` |
+| `falsepass_audit_status` | `env`, `wait` | the same, for an audit already started: results, or `"running"` with the latest progress lines |
+| `falsepass_results` | `env` | the digest of the last run (progress instead while one is running) |
+| `falsepass_completion` | `env`, `completion_id` | the full text of one completion; the digest shows only its start and end |
+| `falsepass_repro` | `env`, `probe` (e.g. `["P5"]`) | where the stand-alone repro script was written |
 | `falsepass_discover` | `days`, `limit` | recently maintained Hub environments and what each needs |
 
 Every tool takes `workdir`; audits are created in `workdir/audits/<name>/`.
@@ -55,7 +56,17 @@ longer than many clients allow for one tool call. It therefore runs in the backg
 `{"status": "running", "elapsed_s": ..., "log_tail": [...]}`. Call
 `falsepass_audit_status` with the same `env` until it finishes. Calling
 `falsepass_audit` again while one is running doesn't start a second audit. The job is
-recorded in `audits/<env>/job.json`, its output in `audits/<env>/job.log`. `uv` must be
+recorded in `audits/<env>/job.json`, its output in `audits/<env>/job.log`.
+
+When something goes wrong (no such audit, a failed install, a dataset that needs a
+login), the tool returns an MCP error whose text says what happened and what to try
+next, so a client sees `isError` and the reason without reading server logs. Names are
+forgiving: `arc_easy` finds the audit `init` named `arc-easy`.
+
+For a HUD environment, pass reference answers with `answers`: a JSON file holding either
+an object from task slug to answer (`{"add-2-3": "5"}`) or a list in task order. Without
+it only the answer-free probes run. Adding answers to an existing audit takes
+`force: true`. `uv` must be
 on the PATH: each audit installs the environment in its own throw-away virtualenv.
 
 ## 2. Agent skill
@@ -83,7 +94,8 @@ The digest from `results --json` and from the MCP audit tools (abridged):
   "headline": {"false_pass_ceiling": 1.0, "false_pass_via": "P5 shotgun/all_in_one_slot",
                "lazy_policy_reward": 0.0, "false_fail_rate": 0.108, "scoring_errors": 0},
   "failing": [{"probe": "P5", "variant": "all_in_one_slot", "runs": 10, "failed": 10,
-               "completion": "first failing completion, truncated"}],
+               "completion": "start of the completion … [316 chars] … its end, where the answer is",
+               "completion_id": "da79bcea66a8"}],
   "static_hints": ["..."],
   "note": "Leads, not findings: ..."
 }
@@ -105,12 +117,15 @@ All fields are described in [Output files]({ORIGIN}{BASE}/docs/output/).
 
 The output is a list of leads. Before an agent reports anything:
 
-1. Reproduce it: `falsepass repro <env> --probe P5` writes a script that depends only on
+1. Read the whole completion if the preview isn't enough: `falsepass_completion` (or
+   `falsepass results <env> --completion <id>`).
+2. Reproduce it: `falsepass repro <env> --probe P5` writes a script that depends only on
    the environment's own packages. Run it twice from a clean virtualenv.
-2. Find the line in the reward code that causes it.
-3. Decide whether it is a defect or a design choice. A grader that is exploitable on
+3. Find the line in the reward code that causes it.
+4. Decide whether it is a defect or a design choice. A grader that is exploitable on
    purpose, or strictness the prompt asks for, is not a bug.
-4. Measure how many of the environment's own tasks it affects.
+5. Measure how many of the environment's own tasks it affects. The audit samples 25
+   tasks by default; the repro script is the place to extend it to the full dataset.
 
 Don't let an agent call an environment broken on the strength of a probe table, and
 don't let it file issues on other people's repositories without a person agreeing.

@@ -55,9 +55,18 @@ def _stats(rows: list[dict[str, Any]]) -> str:
     return f"min {min(scores):.3g}, mean {sum(scores) / len(scores):.3g}, max {max(scores):.3g}"
 
 
+def _inline(full: Any, stored: Any, preview: Any) -> str:
+    text = preview(full, 220) if isinstance(full, str) else str(stored)[:220]
+    return text.replace("\n", " ⏎ ").replace("`", "'")
+
+
 def draft(audit_dir: Path) -> Path:
+    from falsepass.probes import preview
+
     payload = json.loads((audit_dir / "probe-results.json").read_text())
     meta, results = payload["meta"], payload["results"]
+    stored = audit_dir / "completions.json"
+    completions = json.loads(stored.read_text()) if stored.is_file() else {}
     head = report.headline(results)
     adapter = meta.get("adapter")
     versions = " · ".join(f"{k} {v}" for k, v in meta["versions"].items())
@@ -102,9 +111,13 @@ def draft(audit_dir: Path) -> Path:
             f"### C{number} — {MEANING.get(probe, name)}  [severity: TODO]",
             "",
             f"- Check: {probe} {name}; failing variants: {', '.join(variants)}",
-            f"- Observed: {len(failed)} of {len(rows)} runs failed; scores {_stats(failed)}; expected {first['expected']}",
+            f"- Observed: {len(failed)} of {len(rows)} runs failed; expected {first['expected']}. By failing variant "
+            "(failed / runs, scores of the failed runs): "
+            + "; ".join(f"{v} {sum(1 for r in failed if r['variant'] == v)}/{sum(1 for r in rows if r['variant'] == v)}, "
+                        f"{_stats([r for r in failed if r['variant'] == v])}" for v in variants),
             f"- Example `{first['example']}`, variant `{first['variant']}`: {first['detail'] or 'see results'}",
-            f"- Completion (preview): `{first['completion'][:160].replace(chr(10), ' ').replace('`', chr(39))}`",
+            f"- Completion (start and end; full text: `falsepass results {audit_dir.name} --completion {first.get('completion_id') or '?'}`): "
+            f"`{_inline(completions.get(first.get('completion_id') or ''), first['completion'], preview)}`",
         ]
         for h in backing:
             lines.append(f"- Source hint: `{h['file']}:{h['line']}` {h['rule']} — `{h['evidence']}`")

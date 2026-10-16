@@ -39,6 +39,11 @@ cannot script. Say so; `falsepass init --manual` writes an adapter skeleton to f
 - `static_hints` with `verdict: confirmed` point at the line that likely causes a failure.
 - HUD tasks without `--answers`: only answer-free probes ran (P3, P4, A1, P10, P11). A1
   paying means a reply that lists everything earns reward; P1/P5/P9 need reference answers.
+- Each failing entry shows the start and the end of one completion (the answer is
+  usually at the end). `falsepass results environment --completion <completion_id>`
+  prints it in full.
+- Through MCP, an audit runs in the background: if `falsepass_audit` returns
+  `"status": "running"`, call `falsepass_audit_status` until it finishes.
 
 ## 3. Confirm before you claim
 

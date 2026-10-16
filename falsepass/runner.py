@@ -53,10 +53,11 @@ def run(
     loop = asyncio.new_event_loop()
     results: list[ProbeResult] = []
 
-    def run_probes(probe_list, subset) -> None:
-        for example in subset:
+    def run_probes(probe_list, subset, label: str = "probes") -> None:
+        for i, example in enumerate(subset, 1):
             for probe in probe_list:
                 results.extend(loop.run_until_complete(probe(adapter, scorer, example)))
+            print(f"falsepass: {label}: example {i} of {len(subset)} done", file=sys.stderr, flush=True)  # progress for job.log
 
     try:
         if hasattr(adapter, "prepare"):
@@ -65,15 +66,18 @@ def run(
             run_probes(probes.TOOL_MODE, examples)
         elif getattr(adapter, "answer_free", False):
             run_probes(probes.ANSWER_FREE, examples)
-            run_probes(probes.ANSWER_FREE_FEW, examples[:few])
+            run_probes(probes.ANSWER_FREE_FEW, examples[:few], "slower probes")
         else:
             run_probes(probes.PER_EXAMPLE + list(adapter.per_example_probes), examples)
-            run_probes(probes.FEW_EXAMPLES + list(adapter.extra_probes), examples[:few])
+            run_probes(probes.FEW_EXAMPLES + list(adapter.extra_probes), examples[:few], "slower probes")
         if search_calls and not getattr(adapter, "tool_mode", False) and not getattr(adapter, "answer_free", False):
             from falsepass import search
 
-            run_probes([search.make_probe(search_calls, seed)], examples[:search_examples])
-        results.extend(hygiene.check_dataset(adapter.hygiene_examples(100)) if adapter.hygiene_examples(1) else [])
+            run_probes([search.make_probe(search_calls, seed)], examples[:search_examples], "mutation search")
+        hygiene_results = hygiene.check_dataset(adapter.hygiene_examples(100)) if adapter.hygiene_examples(1) else []
+        if getattr(adapter, "answer_free", False):  # no references were given, so none is "empty"
+            hygiene_results = [r for r in hygiene_results if r.variant != "empty_answer"]
+        results.extend(hygiene_results)
         no_reference = getattr(adapter, "tool_mode", False) or getattr(adapter, "answer_free", False)
         lint = None if no_reference else rewardlint_bridge.run(adapter, scorer, examples[0], loop)
     finally:

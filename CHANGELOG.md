@@ -1,6 +1,31 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-10-16
+
+Fixes from running falsepass the way a new coding agent would, from the docs alone,
+through the CLI and the MCP server, on a Hub environment, an Inspect task and a HUD
+environment.
+
+- MCP: a results digest that held a lone surrogate (from the P10 probe) could not be
+  sent, so `falsepass_audit` and `falsepass_results` failed with no reason on some
+  environments. Text is now escaped before it is sent.
+- MCP: failures are tool errors (`isError`) whose text gives the reason and the next
+  step, instead of a successful reply with `exit_code: 1` inside.
+- MCP: `falsepass_init` takes every option the CLI has (`version`, `framework`, `task`,
+  `answers`, `extra`, `manual`, `force`) and returns the audit name as a field
+  (`init --json` on the CLI). New `falsepass_completion` returns one completion in full.
+  Tool descriptions no longer carry source indentation.
+- Digest and draft: the example completion shows its start and its end, where the answer
+  usually is, plus a `completion_id`; `falsepass results <env> --completion <id>` prints
+  it in full. Drafts break the observed scores down by variant.
+- Audits print progress per example, which the MCP status shows while an audit runs.
+- Names are forgiving (`arc_easy` finds `arc-easy`), and a missing or unfinished audit
+  gets a message that lists the audits that exist, instead of a traceback or advice that
+  can't work. `init --force` rewrites an existing audit's env.toml (e.g. to add HUD answers).
+- A1 (answer-free sprays) runs in every mode, plus an `all_labels` variant on closed
+  answer sets, so the lazy-policy number no longer drops when HUD answers are given. The
+  dataset check no longer reports empty answers when none were given.
+- The HUD answers file format is documented in the guide and on the agents page.
 
 - MCP: audits run in the background. `falsepass_audit` waits up to `wait` seconds (default
   45) and returns the results or `{"status": "running", ...}`; the new

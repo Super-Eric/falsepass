@@ -93,7 +93,10 @@ on every row instead of being scored. Tasks that need a sandbox are not supporte
 HUD: a task template keeps its expected answer inside the grader, so without
 `--answers` only answer-free probes run: an empty reply, the prompt echoed back, and
 replies that list every integer from 0 to 1000, every letter, yes/no words or the
-prompt's words (A1). A grader that pays those is a substring test in practice.
+prompt's words (A1; it also runs, with every other probe, when answers are given). A
+grader that pays those is a substring test in practice. The answers file is JSON: an
+object from task slug to answer (`{"add-2-3": "5"}`) or a list in task order
+(`["5", "12"]`). To add answers to an existing audit, rerun `init` with `--force`.
 `examples/inspect-toy/` and `examples/hud-toy/` each have one planted defect to try.
 
 ## For environment authors: check before you publish
@@ -123,17 +126,19 @@ need a login or an API key at load time cannot be audited in CI without that sec
 ## For coding agents
 
 - **MCP server.** `falsepass mcp` serves the commands as tools (`falsepass_scan`,
-  `_init`, `_audit`, `_audit_status`, `_results`, `_repro`, `_discover`) over stdio. Audits
-  run in the background, so a client's tool-call timeout never cuts one off. Any MCP client starts
+  `_init`, `_audit`, `_audit_status`, `_results`, `_completion`, `_repro`, `_discover`)
+  over stdio. Audits run in the background, so a client's tool-call timeout never cuts
+  one off; failures come back as tool errors with the reason. Any MCP client starts
   it with `uvx --from "falsepass[mcp]" falsepass mcp`;
   in Claude Code, for example: `claude mcp add falsepass -- uvx --from "falsepass[mcp]" falsepass mcp`.
-- **Skill.** `skills/falsepass/SKILL.md` is a ready-made audit procedure in the Agent
+- **Skill.** [skills/falsepass/SKILL.md](https://github.com/Super-Eric/falsepass/blob/main/skills/falsepass/SKILL.md) is a ready-made audit procedure in the Agent
   Skills format: how to run an audit, how to tell a defect from a design choice, and how
   to write it up for a maintainer. Copy the folder into the agent's skills directory
   (for Claude Code, `~/.claude/skills/`).
-- **Plain CLI.** Every command is non-interactive and writes files; `results --json` and
-  `scan --json` print JSON; `audit --fail-on ...` exits 1 when a condition is met. The
-  output formats are described in `docs/OUTPUT.md`.
+- **Plain CLI.** Every command is non-interactive and writes files; `init --json`,
+  `results --json` and `scan --json` print JSON; `results --completion ID` prints one
+  completion in full; `audit --fail-on ...` exits 1 when a condition is met. The output
+  formats are described in [docs/OUTPUT.md](https://github.com/Super-Eric/falsepass/blob/main/docs/OUTPUT.md).
 
 Whatever drives it, the output is a list of leads. An agent should reproduce a lead and
 read the reward code before calling it a defect, and should not report an environment as
@@ -147,6 +152,7 @@ falsepass audit environment               # no adapter needed for Q&A tasks: the
 falsepass audit environment --search 120  # add mutation search (scorer calls per direction and example)
 falsepass audit environment --fail-on 'ceiling>0.1' --fail-on 'errors>0'   # CI gate, exit 1 when met
 falsepass results environment [--json]    # the last run: summary.md, or a compact JSON digest
+falsepass results environment --completion ID   # one completion in full (IDs are in the JSON digest)
 falsepass scan path/to/source [--json]    # static pre-scan only, nothing is installed or run
 falsepass discover --days 90 --limit 160  # recently maintained Hub environments and what each needs
 falsepass repro environment               # stand-alone script that re-scores the exact failing completions
@@ -263,7 +269,7 @@ A probe run produces **leads, not findings**. To turn one into a finding:
    or a design choice: a grader that is exploitable on purpose is an observation.
 3. `falsepass draft <env>` writes `REPORT.draft.md` with each failing probe group as a
    candidate, the confirmed static hints attached, and the places marked where a person
-   has to judge. Rate what holds with `docs/SEVERITY.md`.
+   has to judge. Rate what holds with [docs/SEVERITY.md](https://github.com/Super-Eric/falsepass/blob/main/docs/SEVERITY.md).
 4. Have someone who did not write the report check every number against the stored output.
 
 ## From a report to a fix upstream

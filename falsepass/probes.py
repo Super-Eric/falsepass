@@ -36,8 +36,12 @@ def remember(completion: Completion) -> str:
 
 
 def preview(completion: Completion, limit: int = 300) -> str:
+    """A short form for tables and digests: the start and the end, where the answer usually is."""
     text = completion if isinstance(completion, str) else repr(completion)
-    return text if len(text) <= limit else f"{text[:limit]}… [{len(text)} chars]"
+    if len(text) <= limit:
+        return text
+    head = limit * 2 // 5
+    return f"{text[:head]} … [{len(text)} chars] … {text[len(text) - (limit - head):]}"
 
 
 def judge(expected: Expect, score: float | None, adapter: Adapter) -> bool:
@@ -515,10 +519,13 @@ def answer_free_sprays(prompt: str) -> dict[str, str]:
 
 
 async def a1_answer_free_spray(adapter: Adapter, scorer: Scorer, ex: Example) -> list[ProbeResult]:
-    """With no reference to work from: replies that list everything must not be paid."""
+    """Replies that list everything, built without the reference, must not be paid."""
+    sprays = answer_free_sprays(ex.prompt)
+    if getattr(adapter, "closed", False):  # a small closed label set: every label, always in the same order
+        sprays["all_labels"] = " ".join(adapter.labels)
     return [
         await check("A1", "answer_free_spray", variant, Expect.ZERO, adapter.render(done, ex), adapter, scorer, ex, answer_free=True)
-        for variant, done in answer_free_sprays(ex.prompt).items()
+        for variant, done in sprays.items()
     ]
 
 
@@ -547,7 +554,7 @@ ANSWER_FREE_FEW = [p10_exception_path, a2_determinism]
 PER_EXAMPLE = [
     p1_ground_truth, p2_equivalent_forms, p3_empty, p4_echo, p5_shotgun,
     p6_format_only, p7_wrong_confident, p8_judge_injection, p9_oversized,
-    p13_special_numbers, p14_format_mentions, p15_hedged_in_slot,
+    p13_special_numbers, p14_format_mentions, p15_hedged_in_slot, a1_answer_free_spray,
 ]  # fmt: skip
 # Slower or input-independent probes run on a handful of examples only.
 FEW_EXAMPLES = [p10_exception_path, p11_determinism, t4_state_reset, t5_turn_limit, t7_tool_call_first]
