@@ -180,7 +180,13 @@ def build():
         from mcp.server.fastmcp import FastMCP as Server
         from mcp.server.fastmcp.exceptions import ToolError
 
-    server = Server("falsepass", instructions=INSTRUCTIONS)
+    from falsepass import __version__
+
+    if "version" in inspect.signature(Server.__init__).parameters:  # mcp 2.x
+        server = Server("falsepass", instructions=INSTRUCTIONS, version=__version__)
+    else:  # mcp 1.x: set on the low-level server, which reports it as serverInfo.version
+        server = Server("falsepass", instructions=INSTRUCTIONS)
+        server._mcp_server.version = __version__
 
     def tool(function):
         """Register `function`; its docstring, without the source indentation, is the description."""

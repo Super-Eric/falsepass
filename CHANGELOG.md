@@ -18,6 +18,13 @@
   61 s on one such audit). Only scorers that build their own state per call run
   concurrently; multi-turn rollouts, tool-mode policies and Inspect / HUD tasks stay one
   at a time.
+- `verify-fix` works in one step from what `repro` writes: it uses `repro.py`, else
+  `repro_auto.py`; with no stored output it runs the unpatched script once and stores it
+  as the baseline; `--source` may be a patched copy of the audit's `src/` (no
+  `pyproject.toml`), laid over the released package via `PYTHONPATH`. Missing files give
+  one-line errors. The agents page has the fix-checking step.
+- `repro` prints the exact command to run the script (absolute path).
+- The MCP server reports its version in `serverInfo`.
 
 ## 0.5.0 — 2026-10-16
 

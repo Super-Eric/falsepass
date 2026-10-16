@@ -8,6 +8,11 @@ byte-identical.
 The install line comes from the first header line of the stored output (`# uv run ...`),
 which records how the stored run was made, with the environment package swapped for the
 patched folder. Without such a header it is built from `env.toml`.
+
+A patched folder without a `pyproject.toml` (an audit's own `src/`, unpacked from the Hub
+wheel) is laid over the released package instead: the release stays installed, so its
+dependencies are right, and the folder goes first on `PYTHONPATH`. With no stored output
+yet, the unpatched script is run once first and its output stored as the baseline.
 """
 
 from __future__ import annotations
@@ -89,23 +94,48 @@ def patched(command: list[str], env: dict, source: Path) -> list[str]:
     return out
 
 
-def command_for(audit_dir: Path, script: str, source: Path) -> list[str]:
+def default_script(audit_dir: Path) -> str:
+    """`repro.py` (hand-written) if there is one, else what `falsepass repro` writes."""
+    return "repro.py" if (audit_dir / "repro.py").is_file() or not (audit_dir / "repro_auto.py").is_file() else "repro_auto.py"
+
+
+def overlay(source: Path | None) -> bool:
+    """A folder of modules without packaging: laid over the release via PYTHONPATH."""
+    return source is not None and source.is_dir() and not (source / "pyproject.toml").is_file()
+
+
+def command_for(audit_dir: Path, script: str, source: Path | None) -> list[str]:
+    """The command that runs `script` with the environment taken from `source` (None: the
+    release, unpatched)."""
     from falsepass.cli import install_args
 
     env = tomllib.loads((audit_dir / "env.toml").read_text())["env"]
     output = audit_dir / (Path(script).stem + ".output.txt")
     stored = stored_command(output) if output.is_file() else None
+    package = None if source is None or overlay(source) else source
     if stored:
-        return patched(stored, env, source)
-    from falsepass.hub import newer
+        command = patched(stored, env, package) if package else stored
+    else:
+        from falsepass.hub import newer
 
-    floor = source_floor(source)
-    if floor and env.get("verifiers") and newer(floor, env["verifiers"]):
-        env = {**env, "verifiers": floor}
-    return [
-        "uv", "run", "-q", "--isolated", "--no-project", "--python", env.get("python", "3.12"),
-        *install_args(env, source), "python", str(audit_dir / script),
-    ]  # fmt: skip
+        floor = source_floor(package) if package else None
+        if floor and env.get("verifiers") and newer(floor, env["verifiers"]):
+            env = {**env, "verifiers": floor}
+        command = [
+            "uv", "run", "-q", "--isolated", "--no-project", "--python", env.get("python", "3.12"),
+            *install_args(env, package), "python", str((audit_dir / script).resolve()),
+        ]  # fmt: skip
+    return ["env", f"PYTHONPATH={source}", *command] if overlay(source) else command
+
+
+def baseline(audit_dir: Path, script: str) -> tuple[Path, str, int]:
+    """Run the unpatched script once and store its output, headed by the command."""
+    output = audit_dir / (Path(script).stem + ".output.txt")
+    command = command_for(audit_dir, script, None)
+    done = subprocess.run(command, capture_output=True, text=True, check=False)
+    if done.returncode == 0:
+        output.write_text(f"# {shlex.join(command)}\n" + done.stdout)
+    return output, done.stderr[-2000:], done.returncode
 
 
 def run(audit_dir: Path, source: Path, script: str = "repro.py") -> tuple[list[Change], str, int]:

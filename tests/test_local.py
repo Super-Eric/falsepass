@@ -89,3 +89,24 @@ def test_digest_lists_failing_probes_with_one_completion(tmp_path: Path, monkeyp
 def test_scan_json_on_the_bundled_toy_environment(capsys):
     assert cli.main(["scan", str(cli.demo_source()), "--json"]) == 0
     assert [h["rule"] for h in json.loads(capsys.readouterr().out)] == ["reference_substring_match"]
+
+
+def test_verify_fix_lays_a_plain_folder_over_the_release(tmp_path: Path):
+    """An audit's own `src/` has no pyproject.toml: the release stays installed (its
+    dependencies are right) and the patched modules come first on PYTHONPATH."""
+    audit = tmp_path / "audit"
+    audit.mkdir()
+    (audit / "env.toml").write_text('[env]\nid = "o/my-env"\npackage = "my-env"\nversion = "0.2.0"\nverifiers = "0.3.1"\n')
+    (audit / "repro_auto.py").write_text("print('A')\n")
+    assert verify.default_script(audit) == "repro_auto.py"
+    (audit / "repro.py").write_text("print('A')\n")
+    assert verify.default_script(audit) == "repro.py"
+    plain = tmp_path / "src"
+    (plain / "my_env").mkdir(parents=True)
+    command = verify.command_for(audit, "repro.py", plain)
+    assert command[:2] == ["env", f"PYTHONPATH={plain}"]
+    assert "my-env==0.2.0" in command  # the release is kept
+    (audit / "repro.output.txt").write_text("# uv run -q --isolated --with verifiers==0.3.1 --with my-env==0.2.0 python r.py\nA\n")
+    command = verify.command_for(audit, "repro.py", plain)
+    assert command[:2] == ["env", f"PYTHONPATH={plain}"] and "my-env==0.2.0" in command
+    assert verify.command_for(audit, "repro.py", None)[0] == "uv"  # the unpatched baseline

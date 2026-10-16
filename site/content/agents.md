@@ -167,6 +167,14 @@ The output is a list of leads. Before an agent reports anything:
    purpose, or strictness the prompt asks for, is not a bug.
 5. Measure how many of the environment's own tasks it affects. The audit samples 25
    tasks by default; the repro script is the place to extend it to the full dataset.
+6. If you have a fix, check it: copy the audit's `src/` (or the package), patch the copy,
+   and run `falsepass verify-fix <env> --source <copy>` (CLI). It reruns the repro script
+   (`repro.py`, else `repro_auto.py`) unpatched once if no output is stored yet, then with
+   the patch, and prints the lines that changed. A folder without `pyproject.toml` is laid
+   over the released package, so its dependencies stay as released. It only replays the
+   stored cases: to see whether the fix still pays correct answers, also `falsepass init`
+   the patched copy as a local environment and audit it (the false-fail rate should not
+   rise).
 
 Don't let an agent call an environment broken on the strength of a probe table, and
 don't let it file issues on other people's repositories without a person agreeing.

@@ -61,8 +61,9 @@ For each lead:
    strictness the prompt asks for are design choices: report them as observations.
 4. Measure reach on the environment's own data: on how many tasks does it happen?
 5. If you have a fix, check it keeps every correct answer that is paid today and run the
-   repro again; with a patched copy, `falsepass verify-fix environment --source <folder>`
-   shows which lines change.
+   repro again; with a patched copy (of the audit's `src/` or the package),
+   `falsepass verify-fix environment --source <folder>` shows which lines change, and an
+   audit of the copy (`falsepass init <folder>`) shows whether correct answers still pass.
 
 ## 4. Write it up
 

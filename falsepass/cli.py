@@ -408,8 +408,10 @@ def main(argv: list[str] | None = None) -> int:
     up.add_argument("--limit", type=int, default=5, help="search results per query")
     fix = sub.add_parser("verify-fix", help="rerun a stored repro against a patched source and show what changed")
     fix.add_argument("env")
-    fix.add_argument("--source", type=Path, required=True, help="the patched environment package (a folder with pyproject.toml)")
-    fix.add_argument("--script", default="repro.py", help="repro script in the audit folder (default: repro.py)")
+    fix.add_argument("--source", type=Path, required=True,
+                     help="the patched environment: a package folder with pyproject.toml, or a folder of its modules "
+                          "(e.g. a patched copy of the audit's src/), which is laid over the release via PYTHONPATH")
+    fix.add_argument("--script", help="repro script in the audit folder (default: repro.py, else repro_auto.py)")
     fix.add_argument("--print-command", action="store_true", help="show the uv command and exit")
     res = sub.add_parser("results", help="print the last probe run of an environment (summary, or --json for scripts and agents)")
     res.add_argument("env")
@@ -431,7 +433,10 @@ def main(argv: list[str] | None = None) -> int:
             return missing_audit(args.env, "probe-results.json")
         if args.command == "repro":
             path = repro.generate(audit_dir, args.probe, args.per_group)
-            print(f"wrote {path} — run it twice from a clean virtualenv (command in its docstring)")
+            env = tomllib.loads((audit_dir / "env.toml").read_text())["env"]
+            command = ["uv", "run", "--isolated", "--no-project", "--python", env.get("python", "3.12"),
+                       *install_args(env), "python", str(Path(path).resolve())]
+            print(f"wrote {path} — run it twice from a clean virtualenv and compare stdout:\n  {shlex.join(command)}")
         else:
             print(f"wrote {draft.draft(audit_dir)} — candidates only, review before reporting")
         return 0
@@ -521,10 +526,25 @@ def main(argv: list[str] | None = None) -> int:
         if audit_dir is None:
             return missing_audit(args.env)
         source = args.source.resolve()
+        script = args.script or verify.default_script(audit_dir)
+        if not (audit_dir / script).is_file():
+            print(f"falsepass: no {script} in {audit_dir}; write one with `falsepass repro {args.env}` "
+                  "or name yours with --script", file=sys.stderr)
+            return 2
+        if not source.is_dir():
+            print(f"falsepass: --source {source} is not a folder", file=sys.stderr)
+            return 2
         if args.print_command:
-            print(shlex.join(verify.command_for(audit_dir, args.script, source)))
+            print(shlex.join(verify.command_for(audit_dir, script, source)))
             return 0
-        found, stderr, code = verify.run(audit_dir, source, args.script)
+        if not (audit_dir / (Path(script).stem + ".output.txt")).is_file():
+            stored, stderr, code = verify.baseline(audit_dir, script)
+            if code != 0:
+                print(f"falsepass: the unpatched baseline run exited {code}:\n{stderr}", file=sys.stderr)
+                return 1
+            print(f"falsepass: no stored output yet; ran the unpatched {script} once and stored it as {stored}",
+                  file=sys.stderr)
+        found, stderr, code = verify.run(audit_dir, source, script)
         if code != 0:
             print(f"falsepass: the patched run exited {code}:\n{stderr}", file=sys.stderr)
             return 1

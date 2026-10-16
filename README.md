@@ -283,8 +283,9 @@ A probe run produces **leads, not findings**. To turn one into a finding:
 audited file with the repository's default branch, line endings ignored, and prints what
 a contributor needs: default branch, licence, last push, open pull requests, how many
 recent merges came from outside. `falsepass verify-fix <env> --source <patched folder>`
-reruns the stored repro with the patched package and prints the lines that changed; a fix
-is ready when only the finding's lines move.
+reruns the stored repro with the patched package (or a patched copy of the audit's `src/`,
+laid over the release) and prints the lines that changed, storing an unpatched baseline
+first if there is none; a fix is ready when only the finding's lines move.
 
 ## Adding an environment
 
