@@ -12,7 +12,7 @@ to turn leads into findings a maintainer can act on, or to drop them.
 ## 1. Run it
 
 Requires `uv` on the PATH. If `falsepass` is not installed, prefix every command with
-`uvx --from git+https://github.com/Super-Eric/falsepass`.
+`uvx` (`uvx falsepass init ...`), or install it once with `uv tool install falsepass`.
 
 ```bash
 falsepass scan path/to/source --json      # optional first look, nothing installed

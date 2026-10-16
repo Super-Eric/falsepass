@@ -4,7 +4,7 @@
       <p class="eyebrow">Grader testing for RL environments</p>
       <h1>Find the answers your grader <em>shouldn't</em> accept.</h1>
       <p class="lede">falsepass calls an environment's own reward code on completions whose verdict is known in advance, and reports every disagreement: wrong answers that get paid, right answers that don't. No model, no rollouts, no GPU.</p>
-      <div class="cmd"><code id="cmd-demo">uvx --from git+https://github.com/Super-Eric/falsepass falsepass demo</code><button class="copy" data-copy="cmd-demo">copy</button></div>
+      <div class="cmd"><code id="cmd-demo">uvx falsepass demo</code><button class="copy" data-copy="cmd-demo">copy</button></div>
       <div class="actions">
         <a class="btn primary" href="{BASE}/docs/">Read the guide</a>
         <a class="btn" href="{BASE}/docs/agents/">Use it from an agent</a>
@@ -111,9 +111,8 @@ jobs:
     </div>
     <div>
       <h2>&nbsp;</h2>
-<pre class="term"><span class="k">$</span> claude mcp add falsepass -- uvx --from \
-    "falsepass[mcp] @ git+https://github.com/Super-Eric/falsepass" \
-    falsepass mcp
+<pre class="term"><span class="k">$</span> claude mcp add falsepass -- \
+    uvx --from "falsepass[mcp]" falsepass mcp
 
 <span class="k">› audit the grader of owner/environment</span>
 

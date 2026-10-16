@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/Super-Eric/falsepass/actions/workflows/ci.yml/badge.svg)](https://github.com/Super-Eric/falsepass/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/github/v/tag/Super-Eric/falsepass?label=version)](CHANGELOG.md)
+[![PyPI](https://img.shields.io/pypi/v/falsepass)](https://pypi.org/project/falsepass/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
 
 检查强化学习（RL）环境的判分器（verifier）有没有两类错误：**假通过**（明知是错的回答拿到了奖励）和**假失败**（明知是对的回答没拿到满分）。
@@ -30,9 +30,10 @@
 需要先装好 [uv](https://docs.astral.sh/uv/)（每次审计都在一个用完即弃的虚拟环境里运行），以及 Python 3.11 或更新版本。
 
 ```bash
-uvx --from git+https://github.com/Super-Eric/falsepass falsepass demo   # 直接试用，不用安装
-uv tool install git+https://github.com/Super-Eric/falsepass            # 或者装成常驻命令 `falsepass`
-pip install git+https://github.com/Super-Eric/falsepass                # 或者装进现有的 Python 环境
+uvx falsepass demo              # 直接试用，不用安装
+uv tool install falsepass       # 或者装成常驻命令 `falsepass`
+pip install falsepass           # 或者装进现有的 Python 环境
+uvx --from git+https://github.com/Super-Eric/falsepass falsepass --version   # 还没发布的 main 分支
 ```
 
 ## 快速上手
@@ -99,7 +100,7 @@ jobs:
 
 ## 给 AI 编程代理
 
-- **MCP 服务**：`falsepass mcp` 通过 stdio 把各个命令提供为工具（`falsepass_scan`、`_init`、`_audit`、`_results`、`_repro`、`_discover`）。任何 MCP 客户端都可以用这条命令启动它：`uvx --from "falsepass[mcp] @ git+https://github.com/Super-Eric/falsepass" falsepass mcp`。以 Claude Code 为例：`claude mcp add falsepass -- uvx --from "falsepass[mcp] @ git+https://github.com/Super-Eric/falsepass" falsepass mcp`。
+- **MCP 服务**：`falsepass mcp` 通过 stdio 把各个命令提供为工具（`falsepass_scan`、`_init`、`_audit`、`_results`、`_repro`、`_discover`）。任何 MCP 客户端都可以用这条命令启动它：`uvx --from "falsepass[mcp]" falsepass mcp`。以 Claude Code 为例：`claude mcp add falsepass -- uvx --from "falsepass[mcp]" falsepass mcp`。
 - **Skill**：`skills/falsepass/SKILL.md` 是一份写好的审计流程（Agent Skills 格式），内容包括怎么运行审计、怎么区分漏洞和有意的设计、怎么写给维护者。把这个文件夹复制到代理的 skills 目录即可（Claude Code 是 `~/.claude/skills/`）。
 - **普通命令行**：所有命令都不需要交互，结果写成文件；`results --json` 和 `scan --json` 输出 JSON；`audit --fail-on ...` 在条件满足时以退出码 1 结束。输出格式见 `docs/OUTPUT.md`（英文）。
 

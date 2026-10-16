@@ -6,7 +6,7 @@ calls a paid service; `audit` installs packages into a throw-away virtualenv wit
 
 Register it with an MCP client, e.g. Claude Code:
 
-    claude mcp add falsepass -- uvx --from "falsepass[mcp] @ git+https://github.com/Super-Eric/falsepass" falsepass mcp
+    claude mcp add falsepass -- uvx --from "falsepass[mcp]" falsepass mcp
 """
 
 from __future__ import annotations

@@ -15,13 +15,13 @@ are three ways in, from most to least structured.
 without installing anything first:
 
 ```bash
-uvx --from "falsepass[mcp] @ git+https://github.com/Super-Eric/falsepass" falsepass mcp
+uvx --from "falsepass[mcp]" falsepass mcp
 ```
 
 For Claude Code:
 
 ```bash
-claude mcp add falsepass -- uvx --from "falsepass[mcp] @ git+https://github.com/Super-Eric/falsepass" falsepass mcp
+claude mcp add falsepass -- uvx --from "falsepass[mcp]" falsepass mcp
 ```
 
 For clients configured with JSON (Cursor, Claude Desktop, and others):
@@ -31,7 +31,7 @@ For clients configured with JSON (Cursor, Claude Desktop, and others):
   "mcpServers": {
     "falsepass": {
       "command": "uvx",
-      "args": ["--from", "falsepass[mcp] @ git+https://github.com/Super-Eric/falsepass", "falsepass", "mcp"]
+      "args": ["--from", "falsepass[mcp]", "falsepass", "mcp"]
     }
   }
 }

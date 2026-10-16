@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Docs, website, skill and MCP instructions install from PyPI (`uvx falsepass`,
+  `uvx --from "falsepass[mcp]" falsepass mcp`); a PyPI version badge.
+
 ## 0.3.1 — 2026-10-16
 
 - First release on PyPI: `pip install falsepass`, `uvx falsepass`. README links are

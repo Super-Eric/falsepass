@@ -1,6 +1,6 @@
 #!/bin/bash
 # Typed-out session for the README recording.
-falsepass() { uvx --quiet --from git+https://github.com/Super-Eric/falsepass falsepass "$@"; }
+falsepass() { uvx --quiet falsepass "$@"; }
 say() { printf '\033[1;32m$\033[0m '; for ((i=0; i<${#1}; i++)); do printf '%s' "${1:i:1}"; sleep 0.035; done; sleep 0.4; echo; }
 rm -rf /tmp/fp && mkdir -p /tmp/fp && cd /tmp/fp
 clear

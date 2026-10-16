@@ -4,7 +4,7 @@
       <p class="eyebrow">RL 环境的判分器测试</p>
       <h1>找出判分器<em>不该</em>给分的回答。</h1>
       <p class="lede">falsepass 用环境自己的奖励代码，给一批事先已知对错的回答打分，然后报告每一处不一致：错的回答拿了分，对的回答没拿到分。不需要模型，不需要跑训练，也不需要 GPU。</p>
-      <div class="cmd"><code id="cmd-demo">uvx --from git+https://github.com/Super-Eric/falsepass falsepass demo</code><button class="copy" data-copy="cmd-demo" data-done="已复制">复制</button></div>
+      <div class="cmd"><code id="cmd-demo">uvx falsepass demo</code><button class="copy" data-copy="cmd-demo" data-done="已复制">复制</button></div>
       <div class="actions">
         <a class="btn primary" href="{BASE}/zh/docs/">阅读使用指南</a>
         <a class="btn" href="{BASE}/docs/agents/">让 AI 代理来用</a>
@@ -111,9 +111,8 @@ jobs:
     </div>
     <div>
       <h2>&nbsp;</h2>
-<pre class="term"><span class="k">$</span> claude mcp add falsepass -- uvx --from \
-    "falsepass[mcp] @ git+https://github.com/Super-Eric/falsepass" \
-    falsepass mcp
+<pre class="term"><span class="k">$</span> claude mcp add falsepass -- \
+    uvx --from "falsepass[mcp]" falsepass mcp
 
 <span class="k">› 审计 owner/environment 的判分器</span>
 

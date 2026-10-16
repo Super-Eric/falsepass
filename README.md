@@ -4,7 +4,7 @@ English | [中文](https://github.com/Super-Eric/falsepass/blob/main/README.zh-C
 
 [![CI](https://github.com/Super-Eric/falsepass/actions/workflows/ci.yml/badge.svg)](https://github.com/Super-Eric/falsepass/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/Super-Eric/falsepass/blob/main/LICENSE)
-[![Version](https://img.shields.io/github/v/tag/Super-Eric/falsepass?label=version)](https://github.com/Super-Eric/falsepass/blob/main/CHANGELOG.md)
+[![PyPI](https://img.shields.io/pypi/v/falsepass)](https://pypi.org/project/falsepass/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://github.com/Super-Eric/falsepass/blob/main/pyproject.toml)
 
 Probe RL environment verifiers for **false passes** (a known-bad completion is
@@ -39,9 +39,10 @@ Needs [uv](https://docs.astral.sh/uv/) on the PATH (every audit runs in its own
 throw-away virtualenv) and Python 3.11 or newer.
 
 ```bash
-uvx --from git+https://github.com/Super-Eric/falsepass falsepass demo   # try it, nothing to install
-uv tool install git+https://github.com/Super-Eric/falsepass            # or keep `falsepass` on the PATH
-pip install git+https://github.com/Super-Eric/falsepass                # or into an existing environment
+uvx falsepass demo              # try it, nothing to install
+uv tool install falsepass       # or keep `falsepass` on the PATH
+pip install falsepass           # or into an existing environment
+uvx --from git+https://github.com/Super-Eric/falsepass falsepass --version   # the unreleased main branch
 ```
 
 ## Quick start
@@ -123,8 +124,8 @@ need a login or an API key at load time cannot be audited in CI without that sec
 
 - **MCP server.** `falsepass mcp` serves the commands as tools (`falsepass_scan`,
   `_init`, `_audit`, `_results`, `_repro`, `_discover`) over stdio. Any MCP client starts
-  it with `uvx --from "falsepass[mcp] @ git+https://github.com/Super-Eric/falsepass" falsepass mcp`;
-  in Claude Code, for example: `claude mcp add falsepass -- uvx --from "falsepass[mcp] @ git+https://github.com/Super-Eric/falsepass" falsepass mcp`.
+  it with `uvx --from "falsepass[mcp]" falsepass mcp`;
+  in Claude Code, for example: `claude mcp add falsepass -- uvx --from "falsepass[mcp]" falsepass mcp`.
 - **Skill.** `skills/falsepass/SKILL.md` is a ready-made audit procedure in the Agent
   Skills format: how to run an audit, how to tell a defect from a design choice, and how
   to write it up for a maintainer. Copy the folder into the agent's skills directory

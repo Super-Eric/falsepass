@@ -229,7 +229,7 @@ def build(out: Path) -> None:
         "Inspect AI, HUD) for false passes (a known-bad completion is rewarded) and false fails (a known-good one is not). "
         "CLI, MCP server, GitHub Action and an agent skill. Apache-2.0.",
         "",
-        f"Install: `uvx --from git+{REPO} falsepass demo`. MCP: `falsepass mcp` (extra `falsepass[mcp]`). "
+        f"Install: `uvx falsepass demo` (PyPI). MCP: `uvx --from \"falsepass[mcp]\" falsepass mcp`. "
         "Output is a list of leads; reproduce one and read the reward code before calling it a defect.",
         "",
         "## Docs",
