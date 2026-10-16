@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- MCP: audits run in the background. `falsepass_audit` waits up to `wait` seconds (default
+  45) and returns the results or `{"status": "running", ...}`; the new
+  `falsepass_audit_status` waits for it again. A client's tool-call timeout no longer cuts
+  an audit off, a second call doesn't start a duplicate, and a failed audit returns its
+  log tail with a hint. State in `audits/<env>/job.json`, output in `job.log`.
+
 - Docs, website, skill and MCP instructions install from PyPI (`uvx falsepass`,
   `uvx --from "falsepass[mcp]" falsepass mcp`); a PyPI version badge.
 

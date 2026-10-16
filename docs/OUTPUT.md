@@ -9,6 +9,7 @@ Everything an audit writes lives in `audits/<env>/` (or the folder given with `-
 | `probe-results.json` | every probe run, machine-readable (below) | `falsepass audit` |
 | `summary.md` | the same for people: headline numbers, one row per probe variant, reward terms, static hints | `falsepass audit` |
 | `completions.json` | the full text of every completion a result refers to, keyed by `completion_id` | `falsepass audit` |
+| `job.json`, `job.log` | an audit started from the MCP server: its state (`running`, `finished`, `failed`), pid, start time, and its console output | `falsepass mcp` |
 | `repro_auto.py` | stand-alone script that re-scores the failing completions | `falsepass repro` |
 | `REPORT.draft.md` | candidate findings to review | `falsepass draft` |
 

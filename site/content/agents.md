@@ -41,12 +41,21 @@ For clients configured with JSON (Cursor, Claude Desktop, and others):
 |---|---|---|
 | `falsepass_scan` | `path` | static hints for a source folder or file; nothing is installed |
 | `falsepass_init` | `target` (Hub id, local folder, Inspect task, HUD folder), `name` | the command's output; creates `audits/<name>/env.toml` |
-| `falsepass_audit` | `env`, `n` (tasks, default 25), `search` (mutation budget) | the results digest below, plus the path of `summary.md` |
+| `falsepass_audit` | `env`, `n` (tasks, default 25), `search` (mutation budget), `wait` (seconds, default 45) | the results digest below with `"status": "finished"`, or `"status": "running"` if the audit needs longer |
+| `falsepass_audit_status` | `env`, `wait` | the same, for an audit already started: results, `"failed"` with the log tail, or `"running"` |
 | `falsepass_results` | `env` | the digest of the last run |
 | `falsepass_repro` | `env`, `probe` (e.g. `["P5"]`) | the command's output; writes `audits/<env>/repro_auto.py` |
 | `falsepass_discover` | `days`, `limit` | recently maintained Hub environments and what each needs |
 
-Every tool takes `workdir`; audits are created in `workdir/audits/<name>/`. `uv` must be
+Every tool takes `workdir`; audits are created in `workdir/audits/<name>/`.
+
+An audit installs the environment before it probes it, so it can take several minutes,
+longer than many clients allow for one tool call. It therefore runs in the background:
+`falsepass_audit` waits up to `wait` seconds and either returns the results or
+`{"status": "running", "elapsed_s": ..., "log_tail": [...]}`. Call
+`falsepass_audit_status` with the same `env` until it finishes. Calling
+`falsepass_audit` again while one is running doesn't start a second audit. The job is
+recorded in `audits/<env>/job.json`, its output in `audits/<env>/job.log`. `uv` must be
 on the PATH: each audit installs the environment in its own throw-away virtualenv.
 
 ## 2. Agent skill
