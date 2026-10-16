@@ -144,8 +144,8 @@ def doc_body(markdown_text: str, *, toc: bool = True) -> str:
 def readme_for_site(text: str) -> str:
     """The README without its badge block and demo image (the landing page has those)."""
     text = re.sub(r"^\[!\[.*\n", "", text, flags=re.M)
-    text = re.sub(r"^!\[[^\]]*\]\(docs/demo\.gif\)\n\n?", "", text, flags=re.M)
-    text = re.sub(r"^(English \| \[中文\]\(README\.zh-CN\.md\)|\[English\]\(README\.md\) \| 中文)\n\n?", "", text, flags=re.M)
+    text = re.sub(r"^!\[[^\]]*\]\([^)]*demo\.gif\)\n\n?", "", text, flags=re.M)
+    text = re.sub(r"^(English \| \[中文\]\([^)]*README\.zh-CN\.md\)|\[English\]\([^)]*README\.md\) \| 中文)\n\n?", "", text, flags=re.M)
     text = re.sub(r"^(Website and docs:|网站和文档：).*\n(?:.+\n)*\n?", "", text, flags=re.M)
     return text
 

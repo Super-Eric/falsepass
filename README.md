@@ -1,11 +1,11 @@
 # falsepass
 
-English | [中文](README.zh-CN.md)
+English | [中文](https://github.com/Super-Eric/falsepass/blob/main/README.zh-CN.md)
 
 [![CI](https://github.com/Super-Eric/falsepass/actions/workflows/ci.yml/badge.svg)](https://github.com/Super-Eric/falsepass/actions/workflows/ci.yml)
-[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/github/v/tag/Super-Eric/falsepass?label=version)](CHANGELOG.md)
-[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](pyproject.toml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/Super-Eric/falsepass/blob/main/LICENSE)
+[![Version](https://img.shields.io/github/v/tag/Super-Eric/falsepass?label=version)](https://github.com/Super-Eric/falsepass/blob/main/CHANGELOG.md)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://github.com/Super-Eric/falsepass/blob/main/pyproject.toml)
 
 Probe RL environment verifiers for **false passes** (a known-bad completion is
 rewarded) and **false fails** (a known-good completion is not).
@@ -18,7 +18,7 @@ each question listed all of its candidate answers, and the grader only checked t
 right one appeared somewhere in the reply, so a policy could collect full reward by
 listing everything. falsepass finds this kind of hole before training does.
 
-![falsepass demo: a planted grading defect found from two sides](docs/demo.gif)
+![falsepass demo: a planted grading defect found from two sides](https://raw.githubusercontent.com/Super-Eric/falsepass/main/docs/demo.gif)
 
 An RL environment is a task dataset plus a verifier that turns a model's output into
 reward. `falsepass` treats that verifier as the system under test: it calls the

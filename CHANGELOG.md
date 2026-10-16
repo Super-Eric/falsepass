@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.3.1 — 2026-10-16
+
+- First release on PyPI: `pip install falsepass`, `uvx falsepass`. README links are
+  absolute so they work on the PyPI page.
 
 - Website at https://super-eric.github.io/falsepass/ (English and Chinese), built from
   this repository by `site/build.py` and deployed by `.github/workflows/pages.yml`. The
