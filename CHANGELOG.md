@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 — 2026-10-17
 
 - `falsepass reach <env> --template TEXT` (MCP `falsepass_reach` with `templates`): count a
   completion of your own on every task or a sample, without writing a script. `{answer}`,
