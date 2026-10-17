@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 — 2026-10-17
 
 - `falsepass reach <env> --probe P15/denied [--tasks N]` (MCP `falsepass_reach`): after an
   audit, count how many tasks one failing probe row reaches, on every task or a sample.
