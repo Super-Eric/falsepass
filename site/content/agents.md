@@ -178,10 +178,10 @@ The output is a list of leads. Before an agent reports anything:
    and run `falsepass verify-fix <env> --source <copy>` (CLI). It reruns the repro script
    (`repro.py`, else `repro_auto.py`) unpatched once if no output is stored yet, then with
    the patch, and prints the lines that changed. A folder without `pyproject.toml` is laid
-   over the released package, so its dependencies stay as released. It only replays the
-   stored cases: to see whether the fix still pays correct answers, also `falsepass init`
-   the patched copy as a local environment and audit it (the false-fail rate should not
-   rise).
+   over the released package, so its dependencies stay as released. Add `--known-good`
+   to also score every correct-answer row (P1, P2, P14) on every task with and without the
+   patch (`--known-good 500` for a sample): it lists the tasks whose correct answer the
+   patch stops paying. A fix that refuses correct answers is not ready.
 
 Don't let an agent call an environment broken on the strength of a probe table, and
 don't let it file issues on other people's repositories without a person agreeing.

@@ -19,6 +19,10 @@
   left out of the ceiling and the lazy-policy reward; the summary says how many there were.
 - The results digest says why a failing row has no `completion_id` (P10's 2 MB reply is kept
   as a preview only). The `--policies` skeleton says what an `Example` holds.
+- `verify-fix --known-good [TASKS]`: also score every correct-answer row (P1, P2, P14) on
+  every task (or a sample) with the release and with the patch, and list the tasks whose
+  correct answer the patch stops paying. `reach --probe known-good` is the same count for
+  one source; `reach --source` takes a patched copy of `src/` the way `verify-fix` does.
 - Installed Inspect tasks get a `src/` too: the audit copies the task's own folder and the
   modules of the scorers it uses, so the static scan and a reader see the grading code.
   Two new static rules, both documented inspect_ai behaviour that a report should treat

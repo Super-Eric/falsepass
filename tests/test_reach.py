@@ -69,3 +69,17 @@ def test_a_known_bad_reply_identical_to_the_known_good_one_is_not_a_false_pass()
     assert rows[1].same_as_good and rows[1].passed and not rows[2].same_as_good and not rows[2].passed
     head = headline([r.to_dict() for r in rows])
     assert head["same_as_good"] == 1 and head["known_bad"] == 1 and head["false_pass_ceiling"] == 1.0
+
+
+def test_known_good_counts_every_correct_answer_row_and_a_patch_that_refuses_one_is_shown(tmp_path: Path):
+    from falsepass import verify
+
+    folder = audit(tmp_path, "toy", safe=True)
+    release = reach.run(folder, ["known-good"], tasks=6, jobs=1, out=tmp_path / "a")
+    assert {r["expected"] for r in release["rows"]} == {"full"} and not any(r["control"] for r in release["rows"])
+    assert all(r["failed"] == 0 for r in release["rows"])  # the toy pays every correct answer
+    patched = json.loads(json.dumps(release))
+    patched["rows"][0].update(failed=1, failed_tasks=["ex-3"])
+    text = verify.describe_known_good(release, patched)
+    assert "0 -> 1 of 6  now refused on ex-3" in text and "refuses correct answers the release pays, in 1 row(s)" in text
+    assert "stops paying no correct answer" in verify.describe_known_good(release, release)

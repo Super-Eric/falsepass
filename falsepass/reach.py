@@ -63,6 +63,9 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
         # What can be asked for: run the probes on one task with nothing scored.
         probes.ONLY = {"(none)"}
         catalog = score_examples(adapter, scorer, loop, probe_list, examples[:1], 1, "catalog")
+        if "known-good" in wanted:  # every row whose completion is correct: does a patch still pay them?
+            wanted = [w for w in wanted if w != "known-good"] + sorted(
+                {f"{r.probe}/{r.variant}" for r in catalog if r.expected is Expect.FULL})
         known = {r.probe for r in catalog} | {f"{r.probe}/{r.variant}" for r in catalog}
         unknown = [w for w in wanted if w not in known]
         if unknown:
@@ -86,7 +89,7 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
     for (probe, name, variant), group in rows.items():
         failing = [r for r in group if not r.passed]
         counted.append({
-            "probe": probe, "name": name, "variant": variant, "control": probe in control and probe not in wanted,
+            "probe": probe, "name": name, "variant": variant, "control": probe in control and probe not in wanted and f"{probe}/{variant}" not in wanted,
             "expected": group[0].expected.value, "tasks": len(group),
             "failed": len(failing),  # expected 0: paid more than the tolerance; expected full: paid less
             "full_reward": sum(1 for r in group if r.score is not None and r.score >= adapter.max_reward - probes.EPS),
@@ -148,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m falsepass.reach")
     parser.add_argument("audit_dir", type=Path)
     parser.add_argument("--probe", action="append", required=True, metavar="CODE[/VARIANT]",
-                        help="what to count, e.g. P15 or P15/denied (repeatable)")
+                        help="what to count, e.g. P15 or P15/denied (repeatable); known-good: every correct-answer row")
     parser.add_argument("--tasks", default="all", help="number of tasks to sample, or 'all' (default)")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--jobs", type=int, default=DEFAULT_JOBS)

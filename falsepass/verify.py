@@ -179,6 +179,24 @@ def twice(audit_dir: Path, script: str) -> dict:
     return result
 
 
+def describe_known_good(release: dict, patched: dict) -> str:
+    """Correct-answer rows (from two `reach --probe known-good` runs): what the patch stops paying."""
+    before = {(r["probe"], r["variant"]): r for r in release["rows"]}
+    rows = [f"correct answers, on {patched['meta']['tasks_counted']} tasks ({'every task' if patched['meta']['all_tasks'] else 'a sample'}):"]
+    worse = 0
+    for r in patched["rows"]:
+        old = before.get((r["probe"], r["variant"]))
+        lost = sorted(set(r["failed_tasks"]) - set(old["failed_tasks"] if old else []))
+        gained = sorted(set(old["failed_tasks"] if old else []) - set(r["failed_tasks"]))
+        worse += bool(lost)
+        mark = "  now refused on " + ", ".join(lost[:10]) + (f" and {len(lost) - 10} more" if len(lost) > 10 else "") if lost else ""
+        mark += f"  (now paid on {len(gained)} it refused before)" if gained else ""
+        rows.append(f"  {r['probe']} {r['name']}/{r['variant']}: not paid in full on {old['failed'] if old else '?'} -> {r['failed']} of {r['tasks']}{mark}")
+    rows.append("the patch stops paying no correct answer that the release pays" if not worse
+                else f"the patch refuses correct answers the release pays, in {worse} row(s): read them before sending it")
+    return "\n".join(rows)
+
+
 def describe_twice(result: dict) -> str:
     if result.get("error"):
         return f"{result['script']}: {result['error']}; nothing stored. End of stderr:\n{result.get('stderr', '')}"

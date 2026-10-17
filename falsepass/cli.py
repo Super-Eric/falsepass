@@ -74,6 +74,16 @@ def uv_command(audit_dir: Path, extra: list[str], module: str = "falsepass.runne
     return [*command, "python", "-m", module, str(audit_dir), *package, *extra]
 
 
+def source_command(audit_dir: Path, extra: list[str], module: str, source: Path | None) -> list[str]:
+    """`uv_command`, with a folder of modules without packaging (a patched copy of the
+    audit's src/) laid over the released package via PYTHONPATH, as verify-fix does."""
+    from falsepass import verify
+
+    if verify.overlay(source):
+        return ["env", f"PYTHONPATH={source}", *uv_command(audit_dir, extra, module, None)]
+    return uv_command(audit_dir, extra, module, source)
+
+
 ADAPTER_TEMPLATE = '''"""falsepass adapter for {id}."""
 
 import random
@@ -413,13 +423,16 @@ def main(argv: list[str] | None = None) -> int:
     )  # fmt: skip
     reach.add_argument("env")
     reach.add_argument("--probe", action="append", required=True, metavar="CODE[/VARIANT]",
-                       help="a probe code, or code/variant as in the results, e.g. P15/denied (repeatable)")
+                       help="a probe code, or code/variant as in the results, e.g. P15/denied (repeatable); "
+                            "`known-good` counts every correct-answer row (P1, P2, P14)")
     reach.add_argument("--tasks", default="all", help="how many tasks to sample, or 'all' (default)")
     reach.add_argument("--seed", default="0")
     reach.add_argument("--jobs", help="tasks scored at once where safe (default up to 8)")
     reach.add_argument("--json", action="store_true", help="print the result as JSON")
     reach.add_argument("--print-command", action="store_true", help="show the uv command and exit")
-    reach.add_argument("--source", type=Path, help="install the environment from this local folder instead of its release")
+    reach.add_argument("--source", type=Path, help="install the environment from this local folder instead of its release "
+                                                   "(a folder without pyproject.toml is laid over the release, as in verify-fix)")
+    reach.add_argument("--out", help="folder for the result (default audits/<env>/reach/)")
     drafted = sub.add_parser("draft", help="write REPORT.draft.md: candidate findings for manual review")
     drafted.add_argument("env")
     over = sub.add_parser("overview", help="one table over every audited environment")
@@ -439,6 +452,9 @@ def main(argv: list[str] | None = None) -> int:
                           "(e.g. a patched copy of the audit's src/), which is laid over the release via PYTHONPATH")
     fix.add_argument("--script", help="repro script in the audit folder (default: repro.py, else repro_auto.py)")
     fix.add_argument("--print-command", action="store_true", help="show the uv command and exit")
+    fix.add_argument("--known-good", nargs="?", const="all", metavar="TASKS",
+                     help="also score every correct-answer row (P1, P2, P14) with and without the patch on every task "
+                          "(or TASKS sampled) and show which the patch stops paying")
     res = sub.add_parser("results", help="print the last probe run of an environment (summary, or --json for scripts and agents)")
     res.add_argument("env")
     res.add_argument("--json", action="store_true", help="headline numbers, failing probes and hints as JSON")
@@ -584,6 +600,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"falsepass: the patched run exited {code}:\n{stderr}", file=sys.stderr)
             return 1
         print(verify.describe(found))
+        if args.known_good:
+            counts = {}
+            for label, patch in (("release", None), ("patched", source)):
+                extra = ["--probe", "known-good", "--tasks", args.known_good, "--json", "--out", str(audit_dir / "reach" / f"known-good-{label}")]
+                done = subprocess.run(source_command(audit_dir, extra, "falsepass.reach", patch), capture_output=True, text=True, check=False)
+                if done.returncode != 0:
+                    print(f"falsepass: scoring the correct answers ({label}) exited {done.returncode}:\n{done.stderr[-2000:]}", file=sys.stderr)
+                    return 1
+                counts[label] = json.loads(done.stdout)
+            print(verify.describe_known_good(counts["release"], counts["patched"]))
         return 0
 
     audit_dir = find_audit(args.env)
@@ -597,7 +623,9 @@ def main(argv: list[str] | None = None) -> int:
         args.command, "falsepass.runner"
     )
     source = args.source.resolve() if args.source else None
-    command = uv_command(audit_dir, extra, module, source)
+    if args.command == "reach" and args.out:
+        extra += ["--out", str(Path(args.out).resolve())]
+    command = source_command(audit_dir, extra, module, source)
     if args.print_command:
         print(shlex.join(command))
         return 0

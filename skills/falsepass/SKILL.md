@@ -65,8 +65,8 @@ For each lead:
    (`--tasks N` for a sample), with the reference as a control.
 5. If you have a fix, check it keeps every correct answer that is paid today and run the
    repro again; with a patched copy (of the audit's `src/` or the package),
-   `falsepass verify-fix environment --source <folder>` shows which lines change, and an
-   audit of the copy (`falsepass init <folder>`) shows whether correct answers still pass.
+   `falsepass verify-fix environment --source <folder> --known-good` shows which lines
+   change and which correct answers, on every task, the patch stops paying.
 
 ## 4. Write it up
 
