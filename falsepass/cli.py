@@ -123,6 +123,53 @@ ADAPTER = Env()
 '''
 
 
+V1_ADAPTER_TEMPLATE = '''"""falsepass adapter for {id} (a verifiers v1 taskset)."""
+
+import random
+
+from falsepass import Adapter, Example
+from falsepass.scorers import V1TaskScorer
+
+MODULE = "{package}"
+
+
+class Env(Adapter):
+    name = "{id}"
+
+    def _tasks(self):
+        import verifiers.v1 as vf
+        from verifiers.v1.utils.loaders import taskset_class
+
+        # A Taskset in a submodule that the top level does not export: import its class directly
+        # (e.g. `from {package}.taskset import MyTaskset`) and use `MyTaskset(MyConfig(id=MODULE))`.
+        return list(taskset_class(MODULE)(vf.taskset_config_type(MODULE)(id=MODULE)).load())
+
+    def _example(self, i, task) -> Example:
+        # The reference: whichever field of task.data holds the correct reply, written the way
+        # the prompt asks for it (an `answer`, a key such as `solutions[0]`, a JSON answer key).
+        return Example(f"task-{{i}}", task.data.prompt_text, str(getattr(task.data, "answer", "") or ""), task)
+
+    def load(self, n, seed):
+        self.tasks = self._tasks()
+        picks = random.Random(seed).sample(range(len(self.tasks)), min(n, len(self.tasks)))  # n may exceed it (reach)
+        return V1TaskScorer(self.tasks[0]), [self._example(i, self.tasks[i]) for i in picks]
+
+    def hygiene_examples(self, limit):
+        return [self._example(i, t) for i, t in enumerate(self.tasks[:limit])]
+
+    def render(self, answer, example):
+        """Write `answer` exactly the way the environment's prompt asks for it."""
+        raise NotImplementedError
+
+    def wrong_answer(self, example):
+        """Return an answer that is definitely wrong for this example."""
+        raise NotImplementedError
+
+
+ADAPTER = Env()
+'''
+
+
 POLICY_TEMPLATE = '''"""falsepass adapter for {id}: policies for a game, a simulation or a tool task.
 
 Automatic mode cannot script these, because a fixed reply is not a fair test: the model
@@ -315,7 +362,8 @@ def scaffold(args) -> int:
             target.write_bytes(content)
     kept_adapter = (args.manual or args.policies) and (audit_dir / "adapter.py").exists()
     if (args.manual or args.policies) and not kept_adapter:
-        template = POLICY_TEMPLATE if args.policies else ADAPTER_TEMPLATE
+        v1 = bool(info.get("sources")) and hub.classify(info["sources"])["generation"] == "v1"
+        template = POLICY_TEMPLATE if args.policies else V1_ADAPTER_TEMPLATE if v1 else ADAPTER_TEMPLATE
         (audit_dir / "adapter.py").write_text(template.format(id=info["id"], package=info.get("module") or info.get("task", "")))
     if kept_adapter:
         print(f"falsepass: kept the existing {audit_dir}/adapter.py (delete it first for a fresh skeleton)", file=sys.stderr)

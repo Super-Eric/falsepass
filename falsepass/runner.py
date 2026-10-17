@@ -222,8 +222,12 @@ def main(argv: list[str] | None = None) -> int:
     # Absolute paths: a HUD environment is loaded from its own folder (its hooks use relative paths).
     args.audit_dir = args.audit_dir.resolve()
     args.out = args.out.resolve() if args.out else None
-    payload = run(args.audit_dir, args.n, args.seed, args.few, args.package, args.search, args.search_examples, args.out,
-                  max(1, args.jobs))
+    try:
+        payload = run(args.audit_dir, args.n, args.seed, args.few, args.package, args.search, args.search_examples, args.out,
+                      max(1, args.jobs))
+    except RuntimeError as stop:  # falsepass's own "cannot audit this as it stands" messages: no traceback
+        print(f"falsepass: {stop}", file=sys.stderr)
+        return 1
     print(report.summary(payload))
     met = report.gate(payload["results"], args.fail_on)
     for condition in met:

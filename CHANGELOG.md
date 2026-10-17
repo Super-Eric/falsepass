@@ -35,6 +35,10 @@
   source shows no reference answer, or a sandbox, tools, judge or API key, it says the
   automatic run may stop and names the flags to use. `init --json` gains
   `automatic_likely`.
+- `falsepass init --manual` writes a v1 skeleton (`taskset_class`, `V1TaskScorer`) for a
+  v1 taskset; it wrote the v0 one (`vf.load_environment`) for every package.
+- `falsepass audit` prints its own stop messages (no reference answers, a failed control,
+  a container task) as one line on stderr, without a Python traceback.
 - "no reference answers found" now names the command to run next (`init <id> --force
   --manual`, or `--policies` for games, simulations and tool tasks).
 
