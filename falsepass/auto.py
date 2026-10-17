@@ -112,6 +112,7 @@ class AutoAdapter(Adapter):
         self.per_example_probes = [other_task_reference]
         self.format_name, self.format = "bare", (lambda a: a)
         self.inferred: dict[str, Any] = {}
+        self.load_notes: list[str] = []  # how the environment was found, when not the usual way
 
     # --- loading -------------------------------------------------------------------
     def load(self, n: int, seed: int) -> tuple[Scorer, list[Example]]:
@@ -137,7 +138,12 @@ class AutoAdapter(Adapter):
         if not (self.tool_mode or self.answer_free):
             self.pool = [e for e in self.pool if e.answer.strip()]
         if not self.pool:
-            raise RuntimeError("no reference answers found: this environment needs a hand-written adapter")
+            raise RuntimeError(
+                "no reference answers found: this environment needs a hand-written adapter. Run "
+                f"`falsepass init {self.name} --force --manual` for a task with an answer to compare, or "
+                "`--policies` for a game, simulation or tool task, then fill in adapter.py"
+                + "".join(f". Note: {note}" for note in self.load_notes)
+            )
         lengths = sorted(len(e.answer) for e in self.pool)
         # Open-ended tasks (write code, explain, document): the reference is a passage, not a value.
         self.open_ended = lengths[len(lengths) // 2] > 60 or sum("\n" in e.answer for e in self.pool) > len(self.pool) / 2
@@ -209,7 +215,19 @@ class AutoAdapter(Adapter):
         import verifiers.v1 as vf
         from verifiers.v1.utils.loaders import taskset_class
 
-        taskset = taskset_class(self.module)(vf.taskset_config_type(self.module)(id=self.module, **self.load_args))
+        try:
+            cls, config = taskset_class(self.module), vf.taskset_config_type(self.module)
+        except (AttributeError, TypeError) as not_exported:
+            found = submodule_taskset(self.module, vf.Taskset)
+            if found is None:
+                raise
+            cls, config = found, taskset_config_of(found, vf)
+            self.load_notes.append(
+                f"verifiers' own loader cannot load this taskset by its module ({not_exported}); falsepass found "
+                f"{cls.__name__} in {cls.__module__} and audits that. A run addressed by the Hub id may not start: "
+                "worth telling the maintainer"
+            )
+        taskset = cls(config(id=self.module, **self.load_args))
         tasks = list(itertools.islice(iter(taskset.load()), MAX_ROWS))
         if tasks and type(tasks[0]).NEEDS_CONTAINER:
             # Graded on what is left in a box, not on text: text probes would all score 0
@@ -294,7 +312,7 @@ class AutoAdapter(Adapter):
             )
         else:
             validity = "ok"
-        notes = []
+        notes = list(self.load_notes)
         if abs(table[best] - 1.0) > 1e-9:
             notes.append(f"the reference did not score exactly 1.0; the best format averaged {table[best]:.3f} and is used as the maximum")
         if sum(own_markup(ex.answer) for ex in trial) > len(trial) / 2:
@@ -392,3 +410,31 @@ async def other_task_reference(adapter: AutoAdapter, scorer: Scorer, ex: Example
     return await targeted("X1", "task_independence", {
         "other_task_reference": (Expect.ZERO, adapter.format(other)),
     }, adapter, scorer, ex, answer_free=("other_task_reference",))  # fmt: skip
+
+
+def submodule_taskset(module: str, base: type) -> type | None:
+    """The one Taskset subclass defined in a submodule of `module` (`pkg.taskset`), for a
+    package whose top level does not export it. None when there is not exactly one."""
+    import importlib
+    import pkgutil
+
+    package = importlib.import_module(module)
+    found = []
+    for info in pkgutil.walk_packages(getattr(package, "__path__", []), f"{module}."):
+        try:
+            sub = importlib.import_module(info.name)
+        except Exception:  # noqa: BLE001 - a submodule that needs extras: not the taskset
+            continue
+        found += [obj for obj in vars(sub).values()
+                  if isinstance(obj, type) and issubclass(obj, base) and obj is not base and obj.__module__ == sub.__name__]  # fmt: skip
+    return found[0] if len(found) == 1 else None
+
+
+def taskset_config_of(cls: type, vf: Any) -> type:
+    """The config class a Taskset subclass is specialised with (`Taskset[Task, Config]`)."""
+    try:
+        from verifiers.v1.utils.loaders import concrete_type
+
+        return concrete_type(cls, vf.TasksetConfig, origin=vf.Taskset) or vf.TasksetConfig
+    except ImportError:
+        return vf.TasksetConfig

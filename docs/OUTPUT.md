@@ -137,10 +137,14 @@ named `<probes>+template-<hash>.json`.
 ```json
 {"name": "gsm8k", "folder": "/abs/path/audits/gsm8k", "framework": "verifiers",
  "env": {"id": "primeintellect/gsm8k", "package": "gsm8k", "version": "…"}, "manual": false,
- "others": [], "next": "falsepass audit gsm8k"}
+ "automatic_likely": true, "others": [], "next": "falsepass audit gsm8k"}
 ```
 
 `name` is what every other command takes. Names are forgiving: `arc_easy` finds `arc-easy`.
+`automatic_likely` is read from the package source (single- or multi-turn, a reference
+answer in the data, no sandbox, tools, judge or API key): `false` means the automatic run
+will probably stop and an adapter (`--manual` or `--policies`) is needed; `null` when there
+is no wheel to read (local folders, Inspect registry names).
 
 ## Exit codes
 

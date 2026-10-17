@@ -27,7 +27,9 @@ class Adapter:
 
     # --- loading -----------------------------------------------------------------
     def load(self, n: int, seed: int) -> tuple["Scorer", list[Example]]:
-        """Return the scorer and `n` examples, sampled deterministically from `seed`."""
+        """Return the scorer and `n` examples, sampled deterministically from `seed`. `n` can
+        exceed the dataset (`falsepass reach` asks for every task with a huge `n`): return
+        them all then, e.g. `random.Random(seed).sample(rows, min(n, len(rows)))`."""
         raise NotImplementedError
 
     def hygiene_examples(self, limit: int) -> list[Example]:

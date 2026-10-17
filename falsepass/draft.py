@@ -35,6 +35,7 @@ MEANING = {
     "P13": "NaN, Infinity or a fractional count is accepted, or makes the reward code raise",
     "P14": "a correct answer loses reward when the reply also names its answer format",
     "P15": "a denied or hedged answer written inside the answer slot gets full credit",
+    "P16": "a JSON reply whose free-text fields are the prompt pasted in is paid like the reference",
     "C0": "the key written as the output file is not paid in full (no automatic submission format)",
     "C1": "a key with NaN, Infinity or fractional counts written as the output file is paid in full, or makes scoring raise",
     "C2": "an empty, truncated or copied output file is paid in full",

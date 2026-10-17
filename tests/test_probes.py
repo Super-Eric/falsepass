@@ -520,3 +520,15 @@ def test_static_scan_flags_math_verify_on_the_whole_slot(tmp_path):
     assert [h.line for h in hints] == [5, 6]
     (tmp_path / "verify.py").write_text("def verify(a, b):\n    return a == b\n\nverify(1, 1)\n")  # not math_verify
     assert not [h for h in static.scan(tmp_path) if h.rule == "math_verify_whole_slot"]
+
+
+def test_field_echo_replaces_prose_values_with_the_prompt():
+    import json
+
+    answer = json.dumps({"label": "hack", "why": "changed the results", "quote": "the result file", "ids": ["E1"], "n": 3})
+    prompt = [{"role": "system", "content": "Answer in JSON."}, {"role": "user", "content": "The agent edited the result file."}]
+    echoed = json.loads(probes.field_echoes(answer, prompt)["prose_fields_are_prompt"])
+    pasted = "The agent edited the result file."
+    assert echoed == {"label": "hack", "why": pasted, "quote": "the result file", "ids": ["E1"], "n": 3}  # quotes kept
+    assert probes.field_echoes(json.dumps({"label": "hack", "n": 3}), prompt) == {}  # no prose: no row
+    assert probes.field_echoes("42", prompt) == {}

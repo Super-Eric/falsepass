@@ -24,6 +24,19 @@
 - `falsepass init` picks the module named after the package when a wheel ships several
   top-level modules (`cortifybench_env` for `cortifybench-env`), as verifiers does. Before,
   it took the first in alphabetical order.
+- New probe P16 (JSON answers): the reference with every free-text value of two words or
+  more replaced by the prompt text; labels, IDs, numbers and values quoted verbatim from
+  the prompt are kept. A grader that pays word overlap with phrases the prompt already
+  contains pays this like the reference. Expected: (close to) nothing.
+- A v1 package whose Taskset sits in a submodule (`pkg/taskset.py`) and is not exported
+  at the top level is found and audited, with a note that verifiers' own loader cannot
+  load it by id (worth telling the maintainer).
+- `falsepass init` no longer says "no adapter needed" for every Hub package: when the
+  source shows no reference answer, or a sandbox, tools, judge or API key, it says the
+  automatic run may stop and names the flags to use. `init --json` gains
+  `automatic_likely`.
+- "no reference answers found" now names the command to run next (`init <id> --force
+  --manual`, or `--policies` for games, simulations and tool tasks).
 
 ## 0.7.0 — 2026-10-17
 

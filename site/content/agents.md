@@ -173,7 +173,7 @@ The output is a list of leads. Before an agent reports anything:
    tasks by default; `falsepass reach <env> --probe P15/denied` (MCP `falsepass_reach`)
    scores that one row, and the reference as a control, on every task (`--tasks N` for a
    sample) and writes the counts and failing task keys to `audits/<env>/reach/`. It covers
-   the per-example probes (P1–P9, P13–P15, A1, X1). A count is for the completion the
+   the per-example probes (P1–P9, P13–P16, A1, X1). A count is for the completion the
    probe wrote, including the wrong value falsepass picked and where it put it: P15 has
    both orders (`false_equation` and `false_equation_reversed`), because a grader that keeps
    one side pays only one. To count a completion of your own, pass it as a template:

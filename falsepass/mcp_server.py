@@ -335,7 +335,7 @@ def build():
         Each template row also returns `first_completion`, the text it became on the first task.
         Returns per row the tasks counted, how many failed (expected 0: paid; expected full:
         not paid in full), full-reward and error counts, the failing task keys and up to
-        three failing completions. Per-example probes only (P1-P9, P13-P15, A1, X1).
+        three failing completions. Per-example probes only (P1-P9, P13-P16, A1, X1).
         Runs in the background like falsepass_audit: status "running" means call
         falsepass_audit_status. Whole datasets whose reward starts a process per call
         (uv scripts) take minutes to an hour."""

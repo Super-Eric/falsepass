@@ -370,6 +370,50 @@ async def p14_format_mentions(adapter: Adapter, scorer: Scorer, ex: Example) -> 
     ]
 
 
+# --- P16: free-text fields of a JSON reply filled with the prompt -----------------------
+
+
+def _prose_values(value: Any, fill: str) -> tuple[Any, int]:
+    """A copy of a JSON value with every string of two words or more replaced by `fill`,
+    except strings already quoted verbatim from it (cited evidence)."""
+    if isinstance(value, str):
+        return (fill, 1) if len(value.split()) >= 2 and " ".join(value.split()) not in fill else (value, 0)
+    if isinstance(value, dict):
+        pairs = {k: _prose_values(v, fill) for k, v in value.items()}
+        return {k: v for k, (v, _) in pairs.items()}, sum(n for _, n in pairs.values())
+    if isinstance(value, list):
+        items = [_prose_values(v, fill) for v in value]
+        return [v for v, _ in items], sum(n for _, n in items)
+    return value, 0
+
+
+def field_echoes(answer: str, prompt: Any) -> dict[str, str]:
+    """For a JSON-object reference: the reference with its free-text values (two words or
+    more) replaced by the prompt text. Labels, IDs, numbers and values quoted verbatim from
+    the prompt are kept, so this is not
+    answer-free; it isolates the free-text fields. A grader that pays word overlap with
+    phrases the prompt already contains pays it as much as the reference."""
+    import json
+
+    try:
+        value = json.loads(answer)
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    text = prompt if isinstance(prompt, str) else "\n".join(str(m.get("content") or "") for m in prompt if isinstance(m, dict) and m.get("role") != "system")
+    echoed, n = _prose_values(value, " ".join(text.split()))
+    return {"prose_fields_are_prompt": json.dumps(echoed)} if n and text.strip() else {}
+
+
+async def p16_field_echo(adapter: Adapter, scorer: Scorer, ex: Example) -> list[ProbeResult]:
+    """The prose fields of a JSON reply pasted from the prompt must not keep full credit."""
+    return [
+        await check("P16", "field_echo", variant, Expect.ZERO, adapter.render(done, ex), adapter, scorer, ex)
+        for variant, done in field_echoes(ex.answer, ex.prompt).items()
+    ]
+
+
 # --- T7: a tool call before the answer --------------------------------------------------
 
 
@@ -695,7 +739,7 @@ ANSWER_FREE_FEW = [p10_exception_path, a2_determinism]
 PER_EXAMPLE = [
     p1_ground_truth, p2_equivalent_forms, p3_empty, p4_echo, p5_shotgun,
     p6_format_only, p7_wrong_confident, p8_judge_injection, p9_oversized,
-    p13_special_numbers, p14_format_mentions, p15_hedged_in_slot, a1_answer_free_spray,
+    p13_special_numbers, p14_format_mentions, p15_hedged_in_slot, p16_field_echo, a1_answer_free_spray,
 ]  # fmt: skip
 # Slower or input-independent probes run on a handful of examples only.
 FEW_EXAMPLES = [p10_exception_path, p11_determinism, t4_state_reset, t5_turn_limit, t7_tool_call_first, t8_after_the_end]

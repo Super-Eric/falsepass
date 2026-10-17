@@ -320,9 +320,11 @@ def scaffold(args) -> int:
     if kept_adapter:
         print(f"falsepass: kept the existing {audit_dir}/adapter.py (delete it first for a fresh skeleton)", file=sys.stderr)
     args.manual = args.manual or args.policies
+    kind = hub.classify(info["sources"]) if info.get("sources") else None  # read from the wheel's source text
     if args.json:
         print(json.dumps({"name": name, "folder": str(audit_dir.resolve()), "framework": info.get("framework", "verifiers"),
                           "env": {k: info[k] for k in keys if info.get(k)}, "manual": bool(args.manual),
+                          "automatic_likely": kind["automatic"] if kind else None,
                           "others": info.get("others", []), "next": f"falsepass audit {name}"}, indent=1))  # fmt: skip
         return 0
     if args.policies:
@@ -334,6 +336,10 @@ def scaffold(args) -> int:
         print(f"created {audit_dir}/env.toml — each reply is graded by its task template ({how}):")
     elif info.get("framework") == "inspect":
         print(f"created {audit_dir}/env.toml — each reply goes through the task's own solver chain and scorers:")
+    elif kind and not kind["automatic"]:
+        why = ", ".join([*kind["needs"], *([] if kind["has_reference"] else ["no reference answer found in the source"])])
+        print(f"created {audit_dir}/env.toml — automatic mode may not fit ({why or kind['turns']}); try it, and if it "
+              f"stops, rerun with --force --manual (or --policies for a game, simulation or tool task):")
     else:
         print(f"created {audit_dir}/env.toml — no adapter needed for single-turn environments with reference answers:")
     if info.get("source"):
@@ -429,7 +435,7 @@ def main(argv: list[str] | None = None) -> int:
         "reach", help="count how many tasks a probe fails on: a sample of N or every task (after an audit)",
         epilog="Scores only the probe rows asked for, plus the reference (P1) as a control, in an isolated "
                "virtualenv like `audit`, and writes audits/<env>/reach/<probe>.json; the stored audit results are "
-               "not touched. Per-example probes only (P1-P9, P13-P15, A1, X1). Examples: "
+               "not touched. Per-example probes only (P1-P9, P13-P16, A1, X1). Examples: "
                "falsepass reach my-env --probe P15/denied --tasks all; "
                "falsepass reach my-env --template '\\boxed{{answer} \\text{ is wrong}}' --template '{wrong} or {answer}'",
     )  # fmt: skip

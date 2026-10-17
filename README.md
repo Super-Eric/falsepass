@@ -197,6 +197,7 @@ the commands with `uv run`; `uv run pytest` runs the kit's own tests.
 | P13 | `NaN`, `Infinity`, an integer answer plus 0.9 (JSON answers: floats set to NaN, integers plus 0.9 or Infinity) | gives nothing and does not raise |
 | P14 | the correct answer, with the answer tag or `\boxed{}` also named in prose before or after it | gives full reward |
 | P15 | the answer denied, or named next to a wrong value, inside the answer slot (`\boxed{R \text{ is wrong}}`, `\boxed{W = R}`) | gives nothing |
+| P16 | JSON answers: the reference with every free-text value (two words or more) replaced by the prompt; labels, IDs and numbers kept | gives (close to) nothing |
 | A1 | no reference needed: every integer 0–1000, every letter, yes/no words, or the prompt's words in one reply | gives nothing |
 | T7 | the correct answer after one no-op tool call | gives full reward (a judgement call where the harness offers no tools) |
 | C0–C2 | container tasks: the key written as the output file (C0), with NaN / Infinity / fractional counts (C1), emptied, truncated or replaced by an input file (C2) | pays C0 in full and no mutation in full |
