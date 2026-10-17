@@ -343,8 +343,12 @@ def format_mentions(rendered: Completion, answer: str) -> dict[str, str]:
         return {}
     prefix, suffix = (part.strip() for part in rendered.split(answer))
     tag = re.search(r"<([A-Za-z_][\w-]*)>$", prefix)
-    if tag and suffix.startswith(f"</{tag.group(1)}>"):
-        opener, closer = f"<{tag.group(1)}>", f"</{tag.group(1)}>"
+    name = tag.group(1) if tag and suffix.startswith(f"</{tag.group(1)}>") else None
+    if name is None and not prefix and not suffix:  # the reference is the whole block, wrapper included
+        own = re.fullmatch(r"\s*<([A-Za-z_][\w-]*)>[\s\S]*</\1>\s*", answer)
+        name = own.group(1) if own else None
+    if name:
+        opener, closer = f"<{name}>", f"</{name}>"
         return {
             "tag_named_in_prose_before": f"Here is the answer, inside {opener} tags:\n{rendered}",
             "empty_tag_pair_named_before": f"I will wrap the answer in {opener}{closer}.\n{rendered}",

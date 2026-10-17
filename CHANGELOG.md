@@ -8,6 +8,9 @@
   stay, so LaTeX can be typed as is. Each template is a row `U1/t1`, `t2`, ... with the text
   it became on the first task. `--expect full` counts where a template is not paid in full.
   `--probe` is no longer required when a template is given.
+- P14 (the answer wrapper named in prose) now also runs when the dataset stores the whole
+  block, wrapper included, as the reference (for example `<answer>…</answer>` with a bare
+  answer format). Before, such environments got no P14 rows.
 
 ## 0.7.0 — 2026-10-17
 

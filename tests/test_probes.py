@@ -425,6 +425,11 @@ def test_format_mentions_tell_first_last_and_last_nonempty_apart():
     assert failed(last_nonempty_tag) == set()
     assert probes.format_mentions("reasoning\n#### 42", "42") == {}  # no paired wrapper
     assert set(probes.format_mentions("\\boxed{42}", "42")) == {"empty_box_named_before", "empty_box_named_after"}
+    # A dataset that stores the whole block as the reference (wrapper included, rendered bare)
+    block = "<answer>\n3\n1 0\n</answer>"
+    assert set(probes.format_mentions(block, block)) == {"tag_named_in_prose_before", "empty_tag_pair_named_before",
+                                                         "empty_tag_pair_named_after"}  # fmt: skip
+    assert probes.format_mentions("<a>1</b>", "<a>1</b>") == {}  # not one paired wrapper
 
 
 class ListScorer(FakeScorer):
