@@ -128,7 +128,7 @@ need a login or an API key at load time cannot be audited in CI without that sec
 ## For coding agents
 
 - **MCP server.** `falsepass mcp` serves the commands as tools (`falsepass_scan`,
-  `_init`, `_audit`, `_audit_status`, `_results`, `_completion`, `_repro`, `_discover`)
+  `_init`, `_audit`, `_audit_status`, `_results`, `_completion`, `_reach`, `_repro`, `_discover`)
   over stdio. Audits run in the background, so a client's tool-call timeout never cuts
   one off; failures come back as tool errors with the reason. Any MCP client starts
   it with `uvx --from "falsepass[mcp]" falsepass mcp`;
@@ -158,6 +158,7 @@ falsepass results environment [--json]    # the last run: summary.md, or a compa
 falsepass results environment --completion ID   # one completion in full (IDs are in the JSON digest)
 falsepass scan path/to/source [--json]    # static pre-scan only, nothing is installed or run
 falsepass discover --days 90 --limit 160  # recently maintained Hub environments and what each needs
+falsepass reach environment --probe P15/denied   # how many tasks one failing probe row reaches (every task by default)
 falsepass repro environment               # stand-alone script that re-scores the exact failing completions
 falsepass rollout environment -n 20       # what a local model's own replies earn (Ollama)
 falsepass propose environment -n 5        # a local model writes wrong answers and climbs on the reward

@@ -9,7 +9,8 @@ Everything an audit writes lives in `audits/<env>/` (or the folder given with `-
 | `probe-results.json` | every probe run, machine-readable (below) | `falsepass audit` |
 | `summary.md` | the same for people: headline numbers, one row per probe variant, reward terms, static hints | `falsepass audit` |
 | `completions.json` | the full text of every completion a result refers to, keyed by `completion_id` | `falsepass audit` |
-| `job.json`, `job.log` | an audit started from the MCP server: its state (`running`, `finished`, `failed`), pid, start time, and its console output | `falsepass mcp` |
+| `job.json`, `job.log` | an audit or reach job started from the MCP server: its `command`, state (`running`, `finished`, `failed`), pid, start time, and its console output | `falsepass mcp` |
+| `reach/<probe>.json`, `reach/latest.json` | per-row counts over many tasks (below) | `falsepass reach` |
 | `repro_auto.py` | stand-alone script that re-scores the failing completions | `falsepass repro` |
 | `REPORT.draft.md` | candidate findings to review | `falsepass draft` |
 
@@ -77,6 +78,27 @@ The headline numbers:
 `completion` shows the start and the end of the first failing completion (the answer is
 usually at the end); `falsepass results <env> --completion <completion_id>` prints all of it.
 
+## reach/<probe>.json
+
+```json
+{"meta": {"environment": "owner/env", "date": "…", "falsepass": "…", "asked": ["P15/denied"],
+          "tasks_counted": 500, "tasks_in_dataset": 500, "all_tasks": true, "seed": 0, "jobs": 8,
+          "max_reward": 1.0, "bad_tolerance": 0.0, "format": "reasoning+boxed",
+          "audit_format": "reasoning+boxed", "note": "", "versions": {"verifiers": "…"}},
+ "rows": [{"probe": "P1", "name": "ground_truth", "variant": "reference", "control": true,
+           "expected": "full", "tasks": 500, "failed": 0, "full_reward": 500, "errors": 0,
+           "mean_reward": 1.0, "failed_tasks": [], "examples": []},
+          {"probe": "P15", "name": "hedged_in_slot", "variant": "denied", "control": false,
+           "expected": "zero", "tasks": 500, "failed": 7, "full_reward": 7, "errors": 0,
+           "mean_reward": 0.014, "failed_tasks": ["test-17", "…"],
+           "examples": [{"task": "test-17", "score": 1.0, "completion_id": "…", "completion": "…"}]}]}
+```
+
+`failed` counts rows that missed their expectation: for `expected` zero, paid more than
+`bad_tolerance`; for `expected` full, paid less than `max_reward`. `errors` are calls that
+returned no score. The answer format is inferred again for this run; `note` says so when
+it differs from the audit's. `latest.json` is the same document plus `file`, its path.
+
 ## falsepass init --json
 
 ```json
@@ -90,5 +112,6 @@ usually at the end); `falsepass results <env> --completion <completion_id>` prin
 ## Exit codes
 
 `falsepass audit` exits 1 when a `--fail-on` condition is met and with the probe run's
-own code when it fails; every other command exits 0 on success and 1 with a message on
+own code when it fails; `falsepass reach` exits 2 when the rows asked for do not exist (the
+message lists those that do); every other command exits 0 on success and 1 with a message on
 stderr when its input is missing.

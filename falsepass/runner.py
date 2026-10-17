@@ -34,6 +34,37 @@ def concurrent_ok(adapter: Adapter, scorer: Any) -> bool:
     )
 
 
+def score_examples(adapter: Adapter, scorer: Any, loop: asyncio.AbstractEventLoop, probe_list: list, subset: list,
+                   jobs: int = 1, label: str = "probes") -> list[ProbeResult]:
+    """Run `probe_list` on every example of `subset`; each example's probes in order. With
+    `jobs` > 1 (only where `concurrent_ok`), up to `jobs` examples run at once; results are
+    still returned in example order."""
+    done = 0
+
+    async def one(example) -> list[ProbeResult]:
+        nonlocal done
+        out_: list[ProbeResult] = []
+        for probe in probe_list:
+            out_.extend(await probe(adapter, scorer, example))
+        done += 1
+        if len(subset) <= 200 or done % (len(subset) // 100) == 0 or done == len(subset):  # about 100 lines at most
+            print(f"falsepass: {label}: example {done} of {len(subset)} done", file=sys.stderr, flush=True)  # progress for job.log
+        return out_
+
+    if jobs <= 1:
+        return [r for example in subset for r in loop.run_until_complete(one(example))]
+    gate = asyncio.Semaphore(jobs)
+
+    async def gated(example) -> list[ProbeResult]:
+        async with gate:
+            return await one(example)
+
+    async def everything() -> list[list[ProbeResult]]:
+        return await asyncio.gather(*(gated(example) for example in subset))
+
+    return [r for part in loop.run_until_complete(everything()) for r in part]
+
+
 def load_adapter(audit_dir: Path) -> Adapter:
     if not (audit_dir / "adapter.py").is_file():  # no hand-written adapter: infer one
         import tomllib
@@ -74,34 +105,7 @@ def run(
     parallel = jobs > 1 and concurrent_ok(adapter, scorer)
 
     def run_probes(probe_list, subset, label: str = "probes", together: bool = False) -> None:
-        """Each example's probes run in order. With `together`, up to `jobs` examples run
-        at once; results are still collected in example order."""
-        done = 0
-
-        async def one(example) -> list[ProbeResult]:
-            nonlocal done
-            out_: list[ProbeResult] = []
-            for probe in probe_list:
-                out_.extend(await probe(adapter, scorer, example))
-            done += 1
-            print(f"falsepass: {label}: example {done} of {len(subset)} done", file=sys.stderr, flush=True)  # progress for job.log
-            return out_
-
-        if not (together and parallel):
-            for example in subset:
-                results.extend(loop.run_until_complete(one(example)))
-            return
-        gate = asyncio.Semaphore(jobs)
-
-        async def gated(example) -> list[ProbeResult]:
-            async with gate:
-                return await one(example)
-
-        async def everything() -> list[list[ProbeResult]]:
-            return await asyncio.gather(*(gated(example) for example in subset))
-
-        for part in loop.run_until_complete(everything()):
-            results.extend(part)
+        results.extend(score_examples(adapter, scorer, loop, probe_list, subset, jobs if together and parallel else 1, label))
 
     try:
         if hasattr(adapter, "prepare"):

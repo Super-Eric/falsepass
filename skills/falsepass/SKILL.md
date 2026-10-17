@@ -60,6 +60,8 @@ For each lead:
    exploitable grader in an environment built to study reward hacking, and format
    strictness the prompt asks for are design choices: report them as observations.
 4. Measure reach on the environment's own data: on how many tasks does it happen?
+   `falsepass reach environment --probe P15/denied` counts one probe row on every task
+   (`--tasks N` for a sample), with the reference as a control.
 5. If you have a fix, check it keeps every correct answer that is paid today and run the
    repro again; with a patched copy (of the audit's `src/` or the package),
    `falsepass verify-fix environment --source <folder>` shows which lines change, and an

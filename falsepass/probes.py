@@ -62,6 +62,16 @@ def remember_episode(policy: Any, info: dict[str, Any]) -> str:
     return key
 
 
+# `falsepass reach` scores only the probes it was asked for: "P15" (every variant) or
+# "P15/denied". Rows not asked for come back unscored with detail SKIPPED. Empty: score all.
+ONLY: set[str] = set()
+SKIPPED = "skipped: not asked for"
+
+
+def wanted(probe: str, variant: str) -> bool:
+    return not ONLY or probe in ONLY or f"{probe}/{variant}" in ONLY
+
+
 def judge(expected: Expect, score: float | None, adapter: Adapter) -> bool:
     if score is None:
         return False
@@ -81,6 +91,8 @@ async def check(
     example: Example,
     answer_free: bool = False,
 ) -> ProbeResult:
+    if not wanted(probe, variant):
+        return ProbeResult(probe, name, variant, example.key, expected, None, True, SKIPPED, answer_free=answer_free)
     score = await scorer.score(example, completion)
     passed = judge(expected, score.reward, adapter)
     detail = "" if passed else f"expected {expected.value}, got {score.reward}"

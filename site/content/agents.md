@@ -45,6 +45,7 @@ For clients configured with JSON (Cursor, Claude Desktop, and others):
 | `falsepass_audit_status` | `env`, `wait` | the same, for an audit already started: results, or `"running"` with the latest progress lines |
 | `falsepass_results` | `env` | the digest of the last run (progress instead while one is running) |
 | `falsepass_completion` | `env`, `completion_id` | the full text of one completion; the digest shows only its start and end |
+| `falsepass_reach` | `env`, `probe` (e.g. `["P15/denied"]`), `tasks` (0 = every task), `wait` | per probe row and for the reference (P1) as a control: tasks counted, how many failed, full-reward and error counts, the failing task keys, up to three failing completions; runs in the background like an audit |
 | `falsepass_repro` | `env`, `probe` (e.g. `["P5"]`) | where the stand-alone repro script was written |
 | `falsepass_discover` | `days`, `limit` | recently maintained Hub environments and what each needs |
 
@@ -166,7 +167,11 @@ The output is a list of leads. Before an agent reports anything:
 4. Decide whether it is a defect or a design choice. A grader that is exploitable on
    purpose, or strictness the prompt asks for, is not a bug.
 5. Measure how many of the environment's own tasks it affects. The audit samples 25
-   tasks by default; the repro script is the place to extend it to the full dataset.
+   tasks by default; `falsepass reach <env> --probe P15/denied` (MCP `falsepass_reach`)
+   scores that one row, and the reference as a control, on every task (`--tasks N` for a
+   sample) and writes the counts and failing task keys to `audits/<env>/reach/`. It covers
+   the per-example probes (P1–P9, P13–P15, A1, X1). Confirm the count with your own script
+   before you quote it to a maintainer.
 6. If you have a fix, check it: copy the audit's `src/` (or the package), patch the copy,
    and run `falsepass verify-fix <env> --source <copy>` (CLI). It reruns the repro script
    (`repro.py`, else `repro_auto.py`) unpatched once if no output is stored yet, then with

@@ -54,16 +54,26 @@ def test_audit_runs_in_the_background_and_status_returns_the_results(tmp_path):
                 again = await call(session, "falsepass_audit", env=init["name"], n=5, wait=0)
                 done = await call(session, "falsepass_audit_status", env=init["name"], wait=600)
                 full = await call(session, "falsepass_completion", env=init["name"], completion_id=done["failing"][0]["completion_id"])
-                return missing, init, first, during, again, done, full
+                row = done["failing"][0]
+                asked = f"{row['probe']}/{row['variant']}"
+                counted = await call(session, "falsepass_reach", env=init["name"], probe=[asked], wait=0)
+                counted = await call(session, "falsepass_audit_status", env=init["name"], wait=600)
+                wrong = await call(session, "falsepass_reach", env=init["name"], probe=["P99"], wait=600)
+                return missing, init, first, during, again, done, full, asked, counted, wrong
 
-    missing, init, first, during, again, done, full = asyncio.run(go())
+    missing, init, first, during, again, done, full, asked, counted, wrong = asyncio.run(go())
+    assert counted["status"] == "finished", counted
+    assert counted["meta"]["all_tasks"] and [r["probe"] + "/" + r["variant"] for r in counted["rows"]][-1] == asked
+    assert counted["rows"][-1]["failed"] >= 1 and counted["rows"][0]["control"]
+    assert wrong["is_error"] and "this environment has" in wrong["text"]
     assert missing["is_error"] and "falsepass_init" in missing["text"]
     assert init["name"] == "falsepass-toy-env" and init["next"] == "Call falsepass_audit(env='falsepass-toy-env')"
     assert first["status"] == during["status"] == again["status"] == "running"
     assert done["status"] == "finished", done
     assert done["headline"]["false_pass_ceiling"] == 1.0
     assert full["text"].strip() and len(full["text"]) >= len(done["failing"][0]["completion"].split(" … ")[0])
-    assert json.loads((tmp_path / "audits" / "falsepass-toy-env" / "job.json").read_text())["state"] == "finished"
+    job = json.loads((tmp_path / "audits" / "falsepass-toy-env" / "job.json").read_text())
+    assert (job["command"], job["state"]) == ("reach", "failed")  # the last job was the P99 one
 
 
 def test_long_output_reaches_the_client_whole(tmp_path):

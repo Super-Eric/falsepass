@@ -394,6 +394,22 @@ def main(argv: list[str] | None = None) -> int:
     repro.add_argument("env")
     repro.add_argument("--probe", action="append", help="only these probe codes, e.g. --probe P6 (repeatable)")
     repro.add_argument("--per-group", type=int, default=2, help="examples per failing probe variant")
+    reach = sub.add_parser(
+        "reach", help="count how many tasks a probe fails on: a sample of N or every task (after an audit)",
+        epilog="Scores only the probe rows asked for, plus the reference (P1) as a control, in an isolated "
+               "virtualenv like `audit`, and writes audits/<env>/reach/<probe>.json; the stored audit results are "
+               "not touched. Per-example probes only (P1-P9, P13-P15, A1, X1). Example: "
+               "falsepass reach my-env --probe P15/denied --tasks all",
+    )  # fmt: skip
+    reach.add_argument("env")
+    reach.add_argument("--probe", action="append", required=True, metavar="CODE[/VARIANT]",
+                       help="a probe code, or code/variant as in the results, e.g. P15/denied (repeatable)")
+    reach.add_argument("--tasks", default="all", help="how many tasks to sample, or 'all' (default)")
+    reach.add_argument("--seed", default="0")
+    reach.add_argument("--jobs", help="tasks scored at once where safe (default up to 8)")
+    reach.add_argument("--json", action="store_true", help="print the result as JSON")
+    reach.add_argument("--print-command", action="store_true", help="show the uv command and exit")
+    reach.add_argument("--source", type=Path, help="install the environment from this local folder instead of its release")
     drafted = sub.add_parser("draft", help="write REPORT.draft.md: candidate findings for manual review")
     drafted.add_argument("env")
     over = sub.add_parser("overview", help="one table over every audited environment")
@@ -554,7 +570,11 @@ def main(argv: list[str] | None = None) -> int:
     audit_dir = find_audit(args.env)
     if audit_dir is None:
         return missing_audit(args.env)
-    module = {"rollout": "falsepass.rollout", "propose": "falsepass.propose", "container": "falsepass.container_probe"}.get(
+    if args.command == "reach":
+        extra = [*extra, *(a for code in args.probe for a in ("--probe", code)), "--tasks", args.tasks, "--seed", args.seed,
+                 *(["--jobs", args.jobs] if args.jobs else []), *(["--json"] if args.json else [])]  # fmt: skip
+    module = {"rollout": "falsepass.rollout", "propose": "falsepass.propose", "container": "falsepass.container_probe",
+              "reach": "falsepass.reach"}.get(
         args.command, "falsepass.runner"
     )
     source = args.source.resolve() if args.source else None

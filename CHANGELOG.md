@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- `falsepass reach <env> --probe P15/denied [--tasks N]` (MCP `falsepass_reach`): after an
+  audit, count how many tasks one failing probe row reaches, on every task or a sample.
+  Only the rows asked for are scored, plus the reference (P1) as a control; the counts,
+  failing task keys and three failing completions go to `audits/<env>/reach/`, and the
+  stored audit is not touched. Per-example probes only. Asking for a row that does not
+  exist lists the rows that do. The MCP tool runs in the background like an audit.
+- Progress lines in `job.log` are capped at about 100 per stage.
+
 ## 0.6.0 — 2026-10-16
 
 - `falsepass.policies`: ready-made known-bad policies for games, simulations and tool

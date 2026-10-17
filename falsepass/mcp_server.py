@@ -87,8 +87,8 @@ def _job_state(workdir: str, env: str) -> dict[str, Any] | None:
         job.update(state="finished" if code == 0 else "failed", exit_code=code)
     elif _alive(job["pid"]):
         return job
-    else:  # started by an earlier server; it wrote probe-results.json if it got that far
-        results = path.parent / "probe-results.json"
+    else:  # started by an earlier server; it wrote its results file if it got that far
+        results = path.parent / ("reach/latest.json" if job.get("command") == "reach" else "probe-results.json")
         ok = results.is_file() and results.stat().st_mtime >= job["started"]
         job.update(state="finished" if ok else "failed", exit_code=0 if ok else None)
     job["ended"] = time.time()
@@ -105,7 +105,7 @@ def _log_tail(workdir: str, env: str, lines: int = 12) -> list[str]:
     return [line for line in text.splitlines() if line.strip()][-lines:]
 
 
-def _start_audit(env: str, args: list[str], workdir: str) -> dict[str, Any]:
+def _start_audit(env: str, args: list[str], workdir: str, command: str = "audit") -> dict[str, Any]:
     folder = _audit_dir(workdir, env)
     if not (folder / "env.toml").is_file():
         return {"status": "error", "error": f"no audits/{env}/env.toml under {Path(workdir).expanduser().resolve()}",
@@ -114,10 +114,10 @@ def _start_audit(env: str, args: list[str], workdir: str) -> dict[str, Any]:
     if job and job["state"] == "running":
         return job
     log = open(folder / "job.log", "w")  # the child process inherits it
-    proc = subprocess.Popen([sys.executable, "-m", "falsepass.cli", "audit", env, *args], cwd=Path(workdir).expanduser(),
+    proc = subprocess.Popen([sys.executable, "-m", "falsepass.cli", command, env, *args], cwd=Path(workdir).expanduser(),
                             stdout=log, stderr=subprocess.STDOUT, start_new_session=True)  # fmt: skip
     log.close()
-    job = {"env": env, "args": args, "pid": proc.pid, "started": time.time(), "state": "running"}
+    job = {"env": env, "command": command, "args": args, "pid": proc.pid, "started": time.time(), "state": "running"}
     (folder / "job.json").write_text(json.dumps(job, indent=2))
     _jobs[str(folder / "job.json")] = proc
     return job
@@ -135,13 +135,20 @@ def _await_audit(env: str, workdir: str, wait: float) -> dict[str, Any]:
     elapsed = round((job.get("ended") or time.time()) - job["started"])
     if job["state"] == "running":
         return {"status": "running", "env": env, "elapsed_s": elapsed, "log_tail": _log_tail(workdir, env),
-                "next": f"The audit continues in the background. Call falsepass_audit_status(env={env!r}) to wait for it."}  # fmt: skip
+                "next": f"The {job.get('command', 'audit')} job continues in the background. Call falsepass_audit_status(env={env!r}) to wait for it."}  # fmt: skip
     if job["state"] == "failed":
         tail = "\n".join(_log_tail(workdir, env, 30))
-        raise RuntimeError(f"the audit of {env} failed after {elapsed} s (exit code {job.get('exit_code')}). End of "
+        raise RuntimeError(f"the {job.get('command', 'audit')} job of {env} failed after {elapsed} s (exit code {job.get('exit_code')}). End of "
                            f"{_audit_dir(workdir, env) / 'job.log'}:\n{tail}\n\nCommon causes: a missing dependency "
                            "(falsepass_init with `extra`), a dataset that needs a login, or an environment automatic "
                            "mode cannot script (falsepass_init with manual=true writes an adapter skeleton).")  # fmt: skip
+    if job.get("command") == "reach":
+        digest = json.loads((_audit_dir(workdir, env) / "reach" / "latest.json").read_text())
+        for row in digest["rows"]:  # the file keeps every task; the reply stays short
+            if len(row["failed_tasks"]) > 50:
+                row["failed_tasks"] = row["failed_tasks"][:50] + [f"... {len(row['failed_tasks']) - 50} more in {digest['file']}"]
+        digest.update(status="finished", elapsed_s=elapsed)
+        return digest
     digest = _json(_run(["results", env, "--json"], workdir, timeout=120))
     digest.update(status="finished", elapsed_s=elapsed, summary_file=str(_audit_dir(workdir, env) / "summary.md"))
     return digest
@@ -257,13 +264,15 @@ def build():
         started = _start_audit(env, ["-n", str(n), *(["--search", str(search)] if search else [])], workdir)
         if started.get("status") == "error":
             raise RuntimeError(f"{started['error']}. {started['next']}")
+        if started.get("command", "audit") != "audit":
+            raise RuntimeError(f"a {started['command']} job of {env} is still running; wait for it with falsepass_audit_status first")
         return _await_audit(env, workdir, wait)
 
     @tool
     def falsepass_audit_status(env: str, wait: int = 45, workdir: str = ".") -> Any:
-        """Wait up to `wait` seconds (max 600) for the audit started by falsepass_audit, then
-        return its results (status "finished") or progress (status "running": call again).
-        A failed audit is returned as an error with the end of its log."""
+        """Wait up to `wait` seconds (max 600) for the job started by falsepass_audit or
+        falsepass_reach, then return its results (status "finished") or progress (status
+        "running": call again). A failed job is returned as an error with the end of its log."""
         return _await_audit(env, workdir, wait)
 
     @tool
@@ -291,6 +300,25 @@ def build():
         for code in probe or []:
             args += ["--probe", code]
         return {"message": _ok(_run(args, workdir, timeout=120))["stdout"].strip()}
+
+    @tool
+    def falsepass_reach(env: str, probe: list[str], tasks: int = 0, wait: int = 45, workdir: str = ".") -> Any:
+        """After an audit: how many tasks a failing probe reaches. Scores only the rows asked
+        for, e.g. probe=["P15/denied"] (a code, or code/variant as in the results), plus the
+        reference (P1) as a control, on every task (`tasks`=0) or a sample of `tasks`.
+        Returns per row the tasks counted, how many failed (expected 0: paid; expected full:
+        not paid in full), full-reward and error counts, the failing task keys and up to
+        three failing completions. Per-example probes only (P1-P9, P13-P15, A1, X1).
+        Runs in the background like falsepass_audit: status "running" means call
+        falsepass_audit_status. Whole datasets whose reward starts a process per call
+        (uv scripts) take minutes to an hour."""
+        args = [a for code in probe for a in ("--probe", code)] + ["--tasks", str(tasks) if tasks > 0 else "all"]
+        started = _start_audit(env, args, workdir, command="reach")
+        if started.get("status") == "error":
+            raise RuntimeError(f"{started['error']}. {started['next']}")
+        if started.get("command", "audit") != "reach":
+            raise RuntimeError(f"an audit of {env} is still running; wait for it with falsepass_audit_status first")
+        return _await_audit(env, workdir, wait)
 
     @tool
     def falsepass_discover(days: int = 90, limit: int = 40, workdir: str = ".") -> Any:
