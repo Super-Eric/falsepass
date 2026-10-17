@@ -295,7 +295,9 @@ first if there is none; a fix is ready when only the finding's lines move.
 module, index, verifiers pin — all read from the Hub wheel) and unpacks the wheel's source
 into `audits/<name>/src` for the static scan. `falsepass init ./folder` does the same from a
 local `pyproject.toml` and records the folder as `source`, so the folder itself is
-installed and scanned on every run. For Q&A environments that is all.
+installed and scanned on every run. An installed Inspect task (`inspect_evals/gsm8k`) has
+no wheel to unpack: the audit copies the task's own folder and the modules of the scorers
+it uses into `src/` instead. For Q&A environments that is all.
 Otherwise add `--manual` and fill in the generated `adapter.py`: how to load examples, how
 to write an answer the way the prompt asks, and what a wrong answer looks like.
 

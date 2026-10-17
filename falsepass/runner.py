@@ -19,6 +19,7 @@ from falsepass.adapter import Adapter
 from falsepass.model import ProbeResult
 
 DEFAULT_JOBS = min(8, os.cpu_count() or 1)
+INSPECT_MARK = ".installed-inspect-task"  # in a src/ the runner wrote; such a src/ is rewritten on every run
 
 
 def concurrent_ok(adapter: Adapter, scorer: Any) -> bool:
@@ -65,6 +66,29 @@ def score_examples(adapter: Adapter, scorer: Any, loop: asyncio.AbstractEventLoo
     return [r for part in loop.run_until_complete(everything()) for r in part]
 
 
+def write_inspect_sources(audit_dir: Path, adapter: Adapter, scorer: Any) -> None:
+    """An installed Inspect task has no wheel to unpack at `init`: copy its own module folder
+    and the modules of the scorers it uses into src/, for the static scan and for reading."""
+    import shutil
+
+    spec = getattr(adapter, "task_spec", "") or ""
+    if getattr(adapter, "framework", "") != "inspect" or spec.partition("@")[0].endswith(".py"):
+        return  # not Inspect, or a local task file, which is scanned where it is
+    src = audit_dir / "src"
+    if src.exists() and not (src / INSPECT_MARK).exists():
+        return  # a src/ someone else put there
+    from falsepass import inspect_support
+
+    files = inspect_support.source_files(spec, getattr(scorer, "scorers", []))
+    if not files:
+        return
+    shutil.rmtree(src, ignore_errors=True)
+    for relative, file in files.items():
+        (src / relative).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(file, src / relative)
+    (src / INSPECT_MARK).write_text("Copied by falsepass from the installed task and the scorers it uses; rewritten on every audit.\n")
+
+
 def load_adapter(audit_dir: Path) -> Adapter:
     if not (audit_dir / "adapter.py").is_file():  # no hand-written adapter: infer one
         import tomllib
@@ -99,6 +123,7 @@ def run(
     adapter = load_adapter(audit_dir)
     probes.STORE.clear()
     scorer, examples = adapter.load(n, seed)
+    write_inspect_sources(audit_dir, adapter, scorer)
     loop = asyncio.new_event_loop()
     results: list[ProbeResult] = []
 

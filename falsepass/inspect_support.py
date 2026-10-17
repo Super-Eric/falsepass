@@ -15,6 +15,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import itertools
+import re
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,9 @@ def _tasks_in(module: Any) -> list[tuple[str, Any]]:
         if callable(obj) and is_registry_object(obj) and registry_info(obj).type == "task":
             found.append((name, obj))
     return found
+
+
+TASK_MODULE: dict[str, str] = {}  # spec -> the module its task function lives in (installed tasks only)
 
 
 def load_task(spec: str, args: dict[str, Any] | None = None) -> Any:
@@ -52,10 +56,13 @@ def load_task(spec: str, args: dict[str, Any] | None = None) -> Any:
         return getattr(module, function)(**args)
     if ":" in spec:
         module_name, function = spec.split(":", 1)
+        TASK_MODULE[spec] = module_name
         return getattr(importlib.import_module(module_name), function)(**args)
     package, _, name = spec.partition("/")
     try:  # inspect_evals/gsm8k -> inspect_evals.gsm8k:gsm8k
-        return getattr(importlib.import_module(f"{package}.{name}"), name)(**args)
+        made = getattr(importlib.import_module(f"{package}.{name}"), name)(**args)
+        TASK_MODULE[spec] = f"{package}.{name}"
+        return made
     except (ImportError, AttributeError):
         pass
     from inspect_ai._util.registry import ensure_entry_points, registry_lookup
@@ -65,7 +72,48 @@ def load_task(spec: str, args: dict[str, Any] | None = None) -> Any:
     found = registry_lookup("task", spec)
     if found is None:
         raise RuntimeError(f"no Inspect task named {spec!r}")
+    TASK_MODULE[spec] = getattr(found, "__module__", "") or ""
     return found(**args)
+
+
+def source_files(spec: str, scorers: list[Any]) -> dict[str, Path]:
+    """What the static scan should read for an installed task, as {path under src/: file}:
+    the folder of the task's module (its own package files), and the module of each scorer
+    it uses together with the sibling modules that module imports (an Inspect built-in such
+    as `match()` lives in `inspect_ai/scorer/_match.py` and calls `_common.py`)."""
+    import inspect as pyinspect
+    import sys
+
+    def module_file(name: str) -> Path | None:
+        module = sys.modules.get(name)
+        file = getattr(module, "__file__", None)
+        return Path(file) if file else None
+
+    def under_src(name: str, file: Path) -> str:
+        return "/".join(name.split(".")[:-1] + [file.name]) if file.name != "__init__.py" else name.replace(".", "/") + "/__init__.py"
+
+    found: dict[str, Path] = {}
+    task_module = TASK_MODULE.get(spec, "")
+    file = module_file(task_module) if task_module else None
+    if file is not None:
+        package = task_module if file.name == "__init__.py" else task_module.rpartition(".")[0]
+        if package and "." in package:  # the task's own folder (inspect_evals/gsm8k/), not the whole distribution
+            for path in sorted(file.parent.glob("*.py")):
+                found[package.replace(".", "/") + "/" + path.name] = path
+        else:
+            found[under_src(task_module, file)] = file
+    for scorer in scorers:
+        name = getattr(pyinspect.unwrap(scorer), "__module__", "") or ""
+        file = module_file(name)
+        if file is None or not name:
+            continue
+        found.setdefault(under_src(name, file), file)
+        package = name.rpartition(".")[0]
+        for imported in re.findall(r"^from \.(\w+) import", file.read_text(errors="replace"), re.M):
+            sibling = file.parent / f"{imported}.py"
+            if sibling.is_file():
+                found.setdefault(package.replace(".", "/") + "/" + sibling.name, sibling)
+    return found
 
 
 def _text(content: Any) -> str:

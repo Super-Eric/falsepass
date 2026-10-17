@@ -56,3 +56,49 @@ def test_the_toy_task_is_scored_through_its_own_solver_and_scorer():
     assert asyncio.run(scorer.score(example, [{"role": "user", "content": "x"}])).errors == []  # no reply: scored, not raised
     swapped = inspect_support.with_reference(example, "7")
     assert asyncio.run(scorer.score(swapped, "7")).reward == 1.0
+
+
+def test_static_hints_for_inspect_graders_that_read_part_of_the_reply(tmp_path):
+    from falsepass import static
+
+    task = tmp_path / "task.py"
+    task.write_text(
+        "from inspect_ai.scorer import choice, match\n"
+        "import inspect_ai.scorer as s\n"
+        "import re\n"
+        "a = match(numeric=True)\n"
+        "b = match('exact')\n"
+        "c = s.match(location='begin')\n"
+        "d = s.match(location='any')\n"
+        "e = choice()\n"
+        "f = re.match('x', 'y')\n"
+    )
+    found = [(h.rule, h.line) for h in static.scan(task)]
+    assert found == [("inspect_match_end", 4), ("inspect_match_end", 7), ("inspect_choice_lenient", 8)]
+
+
+def test_an_installed_task_gets_its_own_folder_and_its_scorers_modules(tmp_path, monkeypatch):
+    import sys
+    import types
+
+    from falsepass import inspect_support
+
+    package = tmp_path / "evals_pkg" / "quiz"
+    package.mkdir(parents=True)
+    (package.parent / "__init__.py").write_text("")
+    (package / "__init__.py").write_text("from .quiz import quiz\n")
+    (package / "quiz.py").write_text("def quiz(): pass\n")
+    (package / "helpers.py").write_text("X = 1\n")
+    lib = tmp_path / "grader_lib"
+    lib.mkdir()
+    (lib / "__init__.py").write_text("")
+    (lib / "_common.py").write_text("def check(): pass\n")
+    (lib / "_match.py").write_text("from ._common import check\n\ndef score(): pass\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    for name in ["evals_pkg", "evals_pkg.quiz", "evals_pkg.quiz.quiz", "grader_lib._match"]:
+        __import__(name)
+    score = sys.modules["grader_lib._match"].score
+    inspect_support.TASK_MODULE["evals_pkg/quiz"] = "evals_pkg.quiz"
+    files = inspect_support.source_files("evals_pkg/quiz", [score, types.SimpleNamespace()])
+    assert sorted(files) == ["evals_pkg/quiz/__init__.py", "evals_pkg/quiz/helpers.py", "evals_pkg/quiz/quiz.py",
+                             "grader_lib/_common.py", "grader_lib/_match.py"]

@@ -5,7 +5,7 @@ Everything an audit writes lives in `audits/<env>/` (or the folder given with `-
 | File | For | Written by |
 |---|---|---|
 | `env.toml` | how the environment is installed: `id`, `framework` (`verifiers`, `inspect`, `hud`; default verifiers), `task` (Inspect or HUD task spec), `package`, `version`, `module`, `index`, `verifiers` / `inspect_ai` / `hud` (version pins), optional `source` (a local folder), `answers` (HUD reference file), `extra`, `python`, `load_args` | `falsepass init` |
-| `src/` | the Hub wheel's source, for the static scan (local environments are scanned in place) | `falsepass init` |
+| `src/` | the Hub wheel's source, for the static scan (local environments are scanned in place); for an installed Inspect task, its own folder and its scorers' modules, rewritten on every audit | `falsepass init`; `falsepass audit` for Inspect |
 | `probe-results.json` | every probe run, machine-readable (below) | `falsepass audit` |
 | `summary.md` | the same for people: headline numbers, one row per probe variant, reward terms, static hints | `falsepass audit` |
 | `completions.json` | the full text of every completion a result refers to, keyed by `completion_id` | `falsepass audit` |

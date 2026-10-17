@@ -19,6 +19,13 @@
   left out of the ceiling and the lazy-policy reward; the summary says how many there were.
 - The results digest says why a failing row has no `completion_id` (P10's 2 MB reply is kept
   as a preview only). The `--policies` skeleton says what an `Example` holds.
+- Installed Inspect tasks get a `src/` too: the audit copies the task's own folder and the
+  modules of the scorers it uses, so the static scan and a reader see the grading code.
+  Two new static rules, both documented inspect_ai behaviour that a report should treat
+  as a design choice unless the task asks for more: `inspect_match_end` (`match()` reads
+  only the end of the output, or with `numeric=True` its last number, so
+  `100 (this is wrong)` matches 100) and `inspect_choice_lenient` (`choice()` counts
+  `ANSWER: A (this is wrong)` as A). Both are confirmed by P15.
 - Progress lines in `job.log` are capped at about 100 per stage.
 
 ## 0.6.0 — 2026-10-16

@@ -40,6 +40,8 @@ RULES: dict[str, tuple[tuple[str, ...], str]] = {
     "hud_contains_grader": (("P5", "P9"), "HUD's `contains()` / `contains_any()` / `contains_all()` graders are substring tests, so a reply that lists several answers, or names the right one and rejects it, passes"),
     "math_verify_whole_slot": (("P15",), "the answer slot goes to math_verify's `parse()` whole, which pulls one value out of whatever is there: `\\boxed{107 = 100}` is compared by its right-hand side and `\\boxed{100 \\text{ is wrong}}` as 100, so a denial or a false equation inside the slot is paid"),
     "inspect_includes_scorer": (("P5", "P9"), "Inspect's `includes()` scorer passes when the target appears anywhere in the output, so a reply that lists several answers, or names the right one and rejects it, passes"),
+    "inspect_match_end": (("P15", "P9"), "Inspect's `match()` reads only the end of the output (the default `location=\"end\"`; with `numeric=True`, the last number in it) and ignores what comes before: `not 100` matches 100, and with `numeric=True` so does `100 (this is wrong)`. Documented inspect_ai behaviour: a design choice unless the task asks for more"),
+    "inspect_choice_lenient": (("P15",), "Inspect's `choice()` scorer takes the letters `multiple_choice()` parsed, and that parser falls back to the letters right after `ANSWER:` when the line goes on, so `ANSWER: A (this is wrong)` counts as A. Documented inspect_ai behaviour: a design choice unless the task asks for more"),
 }
 
 WANT_WORD = re.compile(r"want|expect|answer|gold|truth|target|reference|key", re.IGNORECASE)
@@ -309,10 +311,18 @@ def _scan_dependencies(path: Path, source: str) -> list[Hint]:
     return hints
 
 
-SUBSTRING_GRADERS = {  # framework grader helpers that are substring tests: (module, function names, rule)
-    "inspect_ai.scorer": ({"includes"}, "inspect_includes_scorer"),
-    "hud.graders": ({"contains", "contains_any", "contains_all"}, "hud_contains_grader"),
-}
+FRAMEWORK_GRADERS = [  # framework grader helpers that read only part of the reply: (module, function names, rule)
+    ("inspect_ai.scorer", {"includes"}, "inspect_includes_scorer"),
+    ("inspect_ai.scorer", {"match"}, "inspect_match_end"),
+    ("inspect_ai.scorer", {"choice"}, "inspect_choice_lenient"),
+    ("hud.graders", {"contains", "contains_any", "contains_all"}, "hud_contains_grader"),
+]
+
+
+def _reads_whole_reply(call: ast.Call) -> bool:
+    """`match(location="begin" | "exact")` compares the start or the whole output: not this hint."""
+    where = call.args[0] if call.args else next((k.value for k in call.keywords if k.arg == "location"), None)
+    return isinstance(where, ast.Constant) and where.value in ("begin", "exact")
 
 
 def _scan_math_verify(tree: ast.AST, shown: str, source: str) -> list[Hint]:
@@ -331,11 +341,13 @@ def _scan_math_verify(tree: ast.AST, shown: str, source: str) -> list[Hint]:
 
 
 def _scan_inspect(tree: ast.AST, shown: str, source: str) -> list[Hint]:
-    """Tasks graded with a framework's built-in substring grader (Inspect `includes()`, HUD `contains()`)."""
+    """Tasks graded with a framework's built-in grader that reads only part of the reply
+    (Inspect `includes()`, `match()`, `choice()`; HUD `contains()`)."""
     imported: dict[str, str] = {}  # local name -> rule
-    for node in (n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module in SUBSTRING_GRADERS):
-        functions, rule = SUBSTRING_GRADERS[node.module]
-        imported.update({a.asname or a.name: rule for a in node.names if a.name in functions})
+    for node in (n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)):
+        for module, functions, rule in FRAMEWORK_GRADERS:
+            if node.module == module:
+                imported.update({a.asname or a.name: rule for a in node.names if a.name in functions})
     aliases = {a.asname: a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names if a.asname}
     hints = []
     # A HUD template receives the reply from a yield (`answer = yield prompt`): `x in answer` there is a substring test.
@@ -353,8 +365,10 @@ def _scan_inspect(tree: ast.AST, shown: str, source: str) -> list[Hint]:
         if rule is None and isinstance(func, ast.Attribute):
             owner = ast.unparse(func.value)
             owner = aliases.get(owner, owner)
-            rule = next((r for module, (functions, r) in SUBSTRING_GRADERS.items()
+            rule = next((r for module, functions, r in FRAMEWORK_GRADERS
                          if func.attr in functions and (owner == module or owner.endswith(module.split(".")[-1]))), None)  # fmt: skip
+        if rule == "inspect_match_end" and _reads_whole_reply(call):
+            rule = None
         if rule:
             hints.append(Hint(rule, shown, call.lineno, "grader", source.splitlines()[call.lineno - 1].strip()[:140]))
     return hints
