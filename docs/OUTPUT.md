@@ -12,6 +12,7 @@ Everything an audit writes lives in `audits/<env>/` (or the folder given with `-
 | `job.json`, `job.log` | an audit or reach job started from the MCP server: its `command`, state (`running`, `finished`, `failed`), pid, start time, and its console output | `falsepass mcp` |
 | `reach/<probe>.json`, `reach/latest.json` | per-row counts over many tasks (below) | `falsepass reach` |
 | `repro_auto.py` | stand-alone script that re-scores the failing completions | `falsepass repro` |
+| `repro_auto.output.txt`, `repro-run.json` | the first of two runs of a repro script, headed by its command and whether the second was identical; the comparison as JSON (below) | `falsepass repro --run` |
 | `REPORT.draft.md` | candidate findings to review | `falsepass draft` |
 
 ## probe-results.json
@@ -24,7 +25,7 @@ Everything an audit writes lives in `audits/<env>/` (or the folder given with `-
   "results": [ { "probe": "P5", "name": "shotgun", "variant": "all_in_one_slot", "example": "row-98",
                  "expected": "zero", "score": 1.0, "passed": false, "detail": "expected zero, got 1.0",
                  "completion": "preview", "metrics": {"term": 1.0}, "errors": [],
-                 "answer_free": false, "completion_id": "…" } ],
+                 "answer_free": false, "completion_id": "…", "same_as_good": false } ],
   "static": [ { "rule": "reference_substring_match", "file": "env.py", "line": 26, "where": "load_environment",
                 "evidence": "source line", "meaning": "…", "confirm_with": ["P9", "P5", "S3"],
                 "verdict": "confirmed: P9 failed 10/20, P5 failed 10/30" } ],
@@ -40,6 +41,10 @@ Everything an audit writes lives in `audits/<env>/` (or the folder given with `-
   knows nothing about the task could produce it. These feed the lazy-policy number.
 - `metrics`: the value of each reward term, so a leak can be traced to the term that pays.
 - `errors`: exceptions or timeouts raised by the reward code on this completion.
+- `completion_id`: key into `completions.json`; empty for completions over 60,000
+  characters (generated payloads such as P10's 2 MB reply), which are kept as a preview.
+- `same_as_good`: a known-bad completion that is identical to a known-good one on the same
+  task (for a policy: the same replies). It is marked `passed` and left out of the headline.
 
 ## falsepass results --json
 
@@ -52,7 +57,8 @@ A digest of the same run, small enough to hand to a model (numbers from `falsepa
            "adapter": {"format": "<answer>", "answers": "open", "turns": "single-turn", "validity": "ok"}},
   "headline": {"false_pass_ceiling": 1.0, "false_pass_via": "P5 shotgun/all_in_one_slot",
                "lazy_policy_reward": 0.0, "lazy_policy_via": "P3 empty/empty",
-               "false_fail_rate": 0.108, "known_good": 93, "known_bad": 233, "scoring_errors": 0},
+               "false_fail_rate": 0.108, "known_good": 93, "known_bad": 233, "scoring_errors": 0,
+               "same_as_good": 0},
   "failing": [ {"probe": "P5", "name": "shotgun", "variant": "all_in_one_slot", "expected": "zero",
                 "runs": 10, "failed": 10, "scores": [1.0, 1.0, 1.0, 1.0, 1.0], "detail": "…", "example": "row-98",
                 "completion": "start … [316 chars] … end", "completion_id": "da79bcea66a8",
@@ -77,6 +83,21 @@ The headline numbers:
 
 `completion` shows the start and the end of the first failing completion (the answer is
 usually at the end); `falsepass results <env> --completion <completion_id>` prints all of it.
+A row without a `completion_id` carries a `completion_note` saying why.
+
+## repro-run.json
+
+Written by `falsepass repro <env> --run` (and returned by MCP `falsepass_repro` with `run=true`):
+
+```json
+{"script": "repro_auto.py", "command": "uv run -q --isolated …", "exit_codes": [0, 0],
+ "identical": true, "output": "/abs/path/audits/env/repro_auto.output.txt", "lines": 12,
+ "differences": [], "cases": 12, "reproduced": 12}
+```
+
+`cases` and `reproduced` appear for scripts `falsepass repro` wrote: `reproduced` counts the
+cases that still miss what a correct verifier gives. A first run that fails gives `error`
+and `stderr` instead, and nothing is stored.
 
 ## reach/<probe>.json
 
@@ -113,5 +134,5 @@ it differs from the audit's. `latest.json` is the same document plus `file`, its
 
 `falsepass audit` exits 1 when a `--fail-on` condition is met and with the probe run's
 own code when it fails; `falsepass reach` exits 2 when the rows asked for do not exist (the
-message lists those that do); every other command exits 0 on success and 1 with a message on
+message lists those that do); `falsepass repro --run` exits 1 when the two runs differ; every other command exits 0 on success and 1 with a message on
 stderr when its input is missing.

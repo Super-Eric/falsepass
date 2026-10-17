@@ -59,9 +59,14 @@ def test_audit_runs_in_the_background_and_status_returns_the_results(tmp_path):
                 counted = await call(session, "falsepass_reach", env=init["name"], probe=[asked], wait=0)
                 counted = await call(session, "falsepass_audit_status", env=init["name"], wait=600)
                 wrong = await call(session, "falsepass_reach", env=init["name"], probe=["P99"], wait=600)
-                return missing, init, first, during, again, done, full, asked, counted, wrong
+                twice = await call(session, "falsepass_repro", env=init["name"], run=True, wait=600)
+                return missing, init, first, during, again, done, full, asked, counted, wrong, twice
 
-    missing, init, first, during, again, done, full, asked, counted, wrong = asyncio.run(go())
+    missing, init, first, during, again, done, full, asked, counted, wrong, twice = asyncio.run(go())
+    assert twice["status"] == "finished" and twice["identical"] is True, twice
+    assert twice["cases"] >= 1 and twice["reproduced"] == twice["cases"]
+    stored = (tmp_path / "audits" / "falsepass-toy-env" / "repro_auto.output.txt").read_text().splitlines()
+    assert stored[0].startswith("# uv run") and "second run identical: yes" in stored[1]
     assert counted["status"] == "finished", counted
     assert counted["meta"]["all_tasks"] and [r["probe"] + "/" + r["variant"] for r in counted["rows"]][-1] == asked
     assert counted["rows"][-1]["failed"] >= 1 and counted["rows"][0]["control"]
@@ -73,7 +78,7 @@ def test_audit_runs_in_the_background_and_status_returns_the_results(tmp_path):
     assert done["headline"]["false_pass_ceiling"] == 1.0
     assert full["text"].strip() and len(full["text"]) >= len(done["failing"][0]["completion"].split(" … ")[0])
     job = json.loads((tmp_path / "audits" / "falsepass-toy-env" / "job.json").read_text())
-    assert (job["command"], job["state"]) == ("reach", "failed")  # the last job was the P99 one
+    assert (job["command"], job["state"]) == ("repro", "finished")
 
 
 def test_long_output_reaches_the_client_whole(tmp_path):

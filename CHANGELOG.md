@@ -8,6 +8,17 @@
   failing task keys and three failing completions go to `audits/<env>/reach/`, and the
   stored audit is not touched. Per-example probes only. Asking for a row that does not
   exist lists the rows that do. The MCP tool runs in the background like an audit.
+- `falsepass repro <env> --run` (MCP `falsepass_repro` with `run=true`): write the script,
+  run it twice, each in a fresh `uv run --isolated` virtualenv, compare stdout and store the
+  first run as `repro_auto.output.txt`, headed by the command and whether the second run
+  was identical (the file `verify-fix` compares against). Reports how many cases still fail.
+  `--script repro.py` runs a hand-written script the same way. Runs that differ exit 1.
+- A known-bad row that said exactly what a known-good row said on the same task (a policy's
+  "unsorted echo" on a row that is already sorted, a wrong answer that happens to equal the
+  reference) is no longer counted as a false pass: it is marked `same_as_good`, passed, and
+  left out of the ceiling and the lazy-policy reward; the summary says how many there were.
+- The results digest says why a failing row has no `completion_id` (P10's 2 MB reply is kept
+  as a preview only). The `--policies` skeleton says what an `Example` holds.
 - Progress lines in `job.log` are capped at about 100 per stage.
 
 ## 0.6.0 — 2026-10-16

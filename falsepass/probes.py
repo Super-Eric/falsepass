@@ -111,6 +111,27 @@ def _text(completion: Completion) -> str:
     return "\n".join(str(m.get("content") or "") for m in completion if m.get("role") == "assistant")
 
 
+def _said(completion_id: str) -> Any:
+    stored = STORE.get(completion_id)
+    return stored["script"] if isinstance(stored, dict) and stored.get("script") else stored
+
+
+def mark_same_as_good(results: list[ProbeResult]) -> int:
+    """Known-bad rows that said exactly what a known-good row said on the same task are not
+    false passes: mark them (see `ProbeResult.same_as_good`). Returns how many were."""
+    good: dict[str, list[Any]] = {}
+    for r in results:
+        if r.expected is Expect.FULL and r.completion_id:
+            good.setdefault(r.example, []).append(_said(r.completion_id))
+    marked = 0
+    for r in results:
+        if r.expected is Expect.ZERO and r.completion_id and r.example in good:
+            if any(said is not None and said == _said(r.completion_id) for said in good[r.example]):
+                r.same_as_good, r.passed, marked = True, True, marked + 1
+                r.detail = "identical to a known-good completion on this task: not counted as a false pass"
+    return marked
+
+
 # --- P1–P7, P9: answer matching, grounded in the env's real examples ----------------
 
 

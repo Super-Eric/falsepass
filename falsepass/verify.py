@@ -138,6 +138,59 @@ def baseline(audit_dir: Path, script: str) -> tuple[Path, str, int]:
     return output, done.stderr[-2000:], done.returncode
 
 
+def twice(audit_dir: Path, script: str) -> dict:
+    """Run the unpatched script twice, each time in a fresh `uv run --isolated` virtualenv,
+    compare stdout and store the first run under a header that says whether the second was
+    identical (what makes a repro count). Writes `repro-run.json` with the summary."""
+    import hashlib
+    import json
+    import re
+    from datetime import date
+
+    output = audit_dir / (Path(script).stem + ".output.txt")
+    command = command_for(audit_dir, script, None)
+    runs = [subprocess.run(command, capture_output=True, text=True, check=False) for _ in range(2)]
+    first, second = runs
+    result: dict = {"script": script, "command": shlex.join(command), "exit_codes": [r.returncode for r in runs]}
+    if first.returncode != 0 or not first.stdout.strip():
+        result.update(identical=False, error=f"the first run exited {first.returncode}", stderr=first.stderr[-2000:])
+    else:
+        same = first.stdout == second.stdout and second.returncode == 0
+        digest = hashlib.sha256(first.stdout.encode()).hexdigest()[:12]
+        output.write_text(f"# {shlex.join(command)}\n# run twice on {date.today().isoformat()}, each in a fresh "
+                          f"`uv run --isolated` virtualenv (stderr dropped); second run identical: {'yes' if same else 'NO'} "
+                          f"({len(first.stdout.encode())} bytes, sha256 {digest}...)\n" + first.stdout)  # fmt: skip
+        lines = first.stdout.splitlines()
+        result.update(identical=same, output=str(output), lines=len(lines),
+                      differences=[f"{c.before!r} -> {c.after!r}" for c in changes(lines, second.stdout.splitlines())][:20])  # fmt: skip
+        stored = audit_dir / "probe-results.json"
+        top = json.loads(stored.read_text())["meta"].get("max_reward", 1.0) if stored.is_file() else 1.0
+        cases = [m.groups() for line in lines if (m := re.match(r"\s*(\S+(?: \S+)?)\s+expected (\S+)\s", line))]
+        if cases:  # a script `falsepass repro` wrote: observed, expected, case
+            def wrong(observed: str, expected: str) -> bool:
+                try:
+                    value = float(observed)
+                except ValueError:
+                    return True  # "raised ...": the reward code failing is itself what was seen
+                return value > 1e-9 if expected == "0" else value < top - 1e-9
+
+            result.update(cases=len(cases), reproduced=sum(wrong(o, e) for o, e in cases))
+    (audit_dir / "repro-run.json").write_text(json.dumps(result, indent=1))
+    return result
+
+
+def describe_twice(result: dict) -> str:
+    if result.get("error"):
+        return f"{result['script']}: {result['error']}; nothing stored. End of stderr:\n{result.get('stderr', '')}"
+    rows = [f"{result['script']}: ran twice, second run identical: {'yes' if result['identical'] else 'NO'}; "
+            f"stored in {result['output']} ({result['lines']} lines)"]
+    if "cases" in result:
+        rows.append(f"{result['reproduced']} of {result['cases']} cases still miss what a correct verifier gives "
+                    "(expected 0 but paid, expected full but not paid in full, or the reward code raised)")
+    rows += [f"  differs: {d}" for d in result["differences"]]
+    return "\n".join(rows)
+
+
 def run(audit_dir: Path, source: Path, script: str = "repro.py") -> tuple[list[Change], str, int]:
     """Run the patched repro; return the changed lines, its stderr tail and exit code."""
     output = audit_dir / (Path(script).stem + ".output.txt")

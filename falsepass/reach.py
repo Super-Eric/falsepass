@@ -77,6 +77,7 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
         loop.run_until_complete(scorer.close())
         loop.close()
 
+    probes.mark_same_as_good(results)  # against the P1 control's completion on each task
     rows: dict[tuple[str, str, str], list] = defaultdict(list)
     for r in results:
         if r.detail != probes.SKIPPED:
@@ -90,6 +91,7 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
             "failed": len(failing),  # expected 0: paid more than the tolerance; expected full: paid less
             "full_reward": sum(1 for r in group if r.score is not None and r.score >= adapter.max_reward - probes.EPS),
             "errors": sum(1 for r in group if r.score is None),
+            "same_as_good": sum(r.same_as_good for r in group),  # identical to the reference reply: not counted as failed
             "mean_reward": round(sum(r.score or 0.0 for r in group) / len(group), 6),
             "failed_tasks": [r.example for r in failing],
             "examples": [{"task": r.example, "score": r.score, "completion_id": r.completion_id,
@@ -133,7 +135,9 @@ def describe(payload: dict[str, Any]) -> str:
         what = "paid" if row["expected"] == Expect.ZERO.value else "not paid in full"
         tag = "control  " if row["control"] else ""
         lines.append(f"  {tag}{row['probe']} {row['name']}/{row['variant']}: {what} on {row['failed']} of {row['tasks']} "
-                     f"(full reward {row['full_reward']}, errors {row['errors']}, mean {row['mean_reward']:.3f})")  # fmt: skip
+                     f"(full reward {row['full_reward']}, errors {row['errors']}, mean {row['mean_reward']:.3f}"
+                     + (f"; {row['same_as_good']} identical to the reference reply, not counted" if row["same_as_good"] else "")
+                     + ")")  # fmt: skip
     lines.append(f"written to {payload['file']}")
     return "\n".join(lines)
 

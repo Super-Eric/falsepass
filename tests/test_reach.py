@@ -48,3 +48,24 @@ def test_reach_says_what_can_be_asked_for(tmp_path: Path):
     with pytest.raises(RuntimeError, match="--tasks N"):
         reach.run(folder, ["P15"], tasks=None, out=tmp_path / "x")
     assert probes.ONLY == set()
+
+
+def test_a_known_bad_reply_identical_to_the_known_good_one_is_not_a_false_pass():
+    from falsepass.model import Expect, Policy, ProbeResult
+    from falsepass.report import headline
+
+    probes.STORE.clear()
+    solver, echo = Policy("solver", lambda m: "a b c"), Policy("echo", lambda m: "a b c")
+    good = probes.remember_episode(solver, {"script": ["a b c"]})
+    same = probes.remember_episode(echo, {"script": ["a b c"]})
+    other = probes.remember_episode(echo, {"script": ["c b a"]})
+    rows = [
+        ProbeResult("X1", "policy", "solver", "row-1", Expect.FULL, 1.0, True, completion_id=good),
+        ProbeResult("X1", "policy", "echo", "row-1", Expect.ZERO, 1.0, False, completion_id=same),  # already sorted
+        ProbeResult("X1", "policy", "echo", "row-2", Expect.ZERO, 1.0, False, completion_id=other),  # no solver row here
+    ]
+    assert good != same  # different policies, so different ids: the replies are what is compared
+    assert probes.mark_same_as_good(rows) == 1
+    assert rows[1].same_as_good and rows[1].passed and not rows[2].same_as_good and not rows[2].passed
+    head = headline([r.to_dict() for r in rows])
+    assert head["same_as_good"] == 1 and head["known_bad"] == 1 and head["false_pass_ceiling"] == 1.0

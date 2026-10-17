@@ -160,6 +160,7 @@ falsepass scan path/to/source [--json]    # static pre-scan only, nothing is ins
 falsepass discover --days 90 --limit 160  # recently maintained Hub environments and what each needs
 falsepass reach environment --probe P15/denied   # how many tasks one failing probe row reaches (every task by default)
 falsepass repro environment               # stand-alone script that re-scores the exact failing completions
+falsepass repro environment --run         # ...and run it twice in fresh virtualenvs, compare, store the first run
 falsepass rollout environment -n 20       # what a local model's own replies earn (Ollama)
 falsepass propose environment -n 5        # a local model writes wrong answers and climbs on the reward
 falsepass draft environment               # REPORT.draft.md: candidate findings for manual review

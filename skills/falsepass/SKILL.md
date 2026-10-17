@@ -53,7 +53,8 @@ Q&A environment whose answer format can't be inferred, `--manual` writes a simpl
 For each lead:
 
 1. `falsepass repro environment --probe P5` writes `repro_auto.py`. Run it twice from a
-   clean virtualenv (the command is in its docstring). Identical output, or it does not count.
+   clean virtualenv (the command is in its docstring), or add `--run` to have falsepass do
+   that and compare. Identical output, or it does not count.
 2. Open the reward code and find the line that causes it. Explain the mechanism in one
    or two sentences.
 3. Decide defect or design. Partial credit in a similarity grader, a deliberately

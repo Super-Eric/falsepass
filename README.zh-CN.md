@@ -120,6 +120,7 @@ falsepass scan path/to/source [--json]    # 只做静态扫描，不安装也不
 falsepass discover --days 90 --limit 160  # 最近有人维护的 Hub 环境，以及每个需要什么条件
 falsepass reach environment --probe P15/denied   # 统计某一条没通过的探针在多少道题上成立（默认全部题目）
 falsepass repro environment               # 生成独立脚本，给那些没通过的回答重新打分
+falsepass repro environment --run         # 再在两个全新的虚拟环境里各跑一遍，比较输出，保存第一遍的结果
 falsepass rollout environment -n 20       # 看本地模型（Ollama）自己答题实际拿多少分
 falsepass propose environment -n 5        # 让本地模型写错误回答，并根据得分反复改写
 falsepass draft environment               # REPORT.draft.md：待人工审核的候选问题

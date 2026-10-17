@@ -55,6 +55,7 @@ def _run(args: list[str], workdir: str, timeout: int = 3600) -> dict[str, Any]:
 # The job is recorded in audits/<env>/job.json and its output in audits/<env>/job.log, so a
 # restarted server (or a person) can still see it.
 _jobs: dict[str, subprocess.Popen] = {}
+RESULT_FILE = {"audit": "probe-results.json", "reach": "reach/latest.json", "repro": "repro-run.json"}
 
 
 def _audit_dir(workdir: str, env: str) -> Path:
@@ -88,7 +89,7 @@ def _job_state(workdir: str, env: str) -> dict[str, Any] | None:
     elif _alive(job["pid"]):
         return job
     else:  # started by an earlier server; it wrote its results file if it got that far
-        results = path.parent / ("reach/latest.json" if job.get("command") == "reach" else "probe-results.json")
+        results = path.parent / RESULT_FILE[job.get("command", "audit")]
         ok = results.is_file() and results.stat().st_mtime >= job["started"]
         job.update(state="finished" if ok else "failed", exit_code=0 if ok else None)
     job["ended"] = time.time()
@@ -136,6 +137,11 @@ def _await_audit(env: str, workdir: str, wait: float) -> dict[str, Any]:
     if job["state"] == "running":
         return {"status": "running", "env": env, "elapsed_s": elapsed, "log_tail": _log_tail(workdir, env),
                 "next": f"The {job.get('command', 'audit')} job continues in the background. Call falsepass_audit_status(env={env!r}) to wait for it."}  # fmt: skip
+    ran = _audit_dir(workdir, env) / "repro-run.json"
+    if job.get("command") == "repro" and ran.is_file() and ran.stat().st_mtime >= job["started"]:
+        digest = json.loads(ran.read_text())  # runs that differ exit 1 but are a result, not a failure
+        digest.update(status="finished", elapsed_s=elapsed)
+        return digest
     if job["state"] == "failed":
         tail = "\n".join(_log_tail(workdir, env, 30))
         raise RuntimeError(f"the {job.get('command', 'audit')} job of {env} failed after {elapsed} s (exit code {job.get('exit_code')}). End of "
@@ -265,7 +271,7 @@ def build():
         if started.get("status") == "error":
             raise RuntimeError(f"{started['error']}. {started['next']}")
         if started.get("command", "audit") != "audit":
-            raise RuntimeError(f"a {started['command']} job of {env} is still running; wait for it with falsepass_audit_status first")
+            raise RuntimeError(f"a {started.get('command', 'audit')} job of {env} is still running; wait for it with falsepass_audit_status first")
         return _await_audit(env, workdir, wait)
 
     @tool
@@ -291,15 +297,25 @@ def build():
         return {"completion_id": completion_id, "text": _ok(_run(["results", env, "--completion", completion_id], workdir, timeout=60))["stdout"]}
 
     @tool
-    def falsepass_repro(env: str, probe: list[str] | None = None, workdir: str = ".") -> Any:
+    def falsepass_repro(env: str, probe: list[str] | None = None, run: bool = False, script: str = "",
+                        wait: int = 45, workdir: str = ".") -> Any:  # fmt: skip
         """Write audits/<env>/repro_auto.py: a script that depends only on the environment's
         own packages and re-scores the exact failing completions. `probe` limits it to some
-        probe codes, e.g. ["P5"]. Run it twice from a clean virtualenv (the command is in its
-        docstring); identical output is what makes a lead reproducible."""
-        args = ["repro", env]
-        for code in probe or []:
-            args += ["--probe", code]
-        return {"message": _ok(_run(args, workdir, timeout=120))["stdout"].strip()}
+        probe codes, e.g. ["P5"]. Identical output from two clean runs is what makes a lead
+        reproducible: with `run`=true the script is also run twice, each in a fresh
+        virtualenv, in the background like an audit (status "running": call
+        falsepass_audit_status). The result says whether the runs were identical, where the
+        first is stored (headed by its command), and how many cases still fail. `script`
+        runs an existing script in the audit folder instead (e.g. a hand-written repro.py)."""
+        args = [a for code in probe or [] for a in ("--probe", code)] + (["--script", script] if script else [])
+        if not run:
+            return {"message": _ok(_run(["repro", env, *args], workdir, timeout=120))["stdout"].strip()}
+        started = _start_audit(env, ["--run", *args], workdir, command="repro")
+        if started.get("status") == "error":
+            raise RuntimeError(f"{started['error']}. {started['next']}")
+        if started.get("command", "audit") != "repro":
+            raise RuntimeError(f"a {started.get('command', 'audit')} job of {env} is still running; wait for it with falsepass_audit_status first")
+        return _await_audit(env, workdir, wait)
 
     @tool
     def falsepass_reach(env: str, probe: list[str], tasks: int = 0, wait: int = 45, workdir: str = ".") -> Any:
@@ -317,7 +333,7 @@ def build():
         if started.get("status") == "error":
             raise RuntimeError(f"{started['error']}. {started['next']}")
         if started.get("command", "audit") != "reach":
-            raise RuntimeError(f"an audit of {env} is still running; wait for it with falsepass_audit_status first")
+            raise RuntimeError(f"a {started.get('command', 'audit')} job of {env} is still running; wait for it with falsepass_audit_status first")
         return _await_audit(env, workdir, wait)
 
     @tool

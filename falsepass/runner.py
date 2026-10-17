@@ -122,6 +122,7 @@ def run(
             from falsepass import search
 
             run_probes([search.make_probe(search_calls, seed)], examples[:search_examples], "mutation search")
+        probes.mark_same_as_good(results)
         hygiene_results = hygiene.check_dataset(adapter.hygiene_examples(100)) if adapter.hygiene_examples(1) else []
         if getattr(adapter, "answer_free", False):  # no references were given, so none is "empty"
             hygiene_results = [r for r in hygiene_results if r.variant != "empty_answer"]

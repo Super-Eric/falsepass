@@ -46,7 +46,7 @@ For clients configured with JSON (Cursor, Claude Desktop, and others):
 | `falsepass_results` | `env` | the digest of the last run (progress instead while one is running) |
 | `falsepass_completion` | `env`, `completion_id` | the full text of one completion; the digest shows only its start and end |
 | `falsepass_reach` | `env`, `probe` (e.g. `["P15/denied"]`), `tasks` (0 = every task), `wait` | per probe row and for the reference (P1) as a control: tasks counted, how many failed, full-reward and error counts, the failing task keys, up to three failing completions; runs in the background like an audit |
-| `falsepass_repro` | `env`, `probe` (e.g. `["P5"]`) | where the stand-alone repro script was written |
+| `falsepass_repro` | `env`, `probe` (e.g. `["P5"]`); `run` (true: also run it twice), `script` (run an existing script instead), `wait` | where the stand-alone repro script was written; with `run`, whether the two runs were identical, where the first is stored, and how many cases still fail (in the background like an audit) |
 | `falsepass_discover` | `days`, `limit` | recently maintained Hub environments and what each needs |
 
 Every tool takes `workdir`; audits are created in `workdir/audits/<name>/`.
@@ -162,7 +162,9 @@ The output is a list of leads. Before an agent reports anything:
 1. Read the whole completion if the preview isn't enough: `falsepass_completion` (or
    `falsepass results <env> --completion <id>`).
 2. Reproduce it: `falsepass repro <env> --probe P5` writes a script that depends only on
-   the environment's own packages. Run it twice from a clean virtualenv.
+   the environment's own packages. Run it twice from a clean virtualenv, or add `--run`
+   (MCP: `run=true`): falsepass runs it twice, each in a fresh virtualenv, compares the
+   output and stores the first run headed by its command and the comparison.
 3. Find the line in the reward code that causes it.
 4. Decide whether it is a defect or a design choice. A grader that is exploitable on
    purpose, or strictness the prompt asks for, is not a bug.

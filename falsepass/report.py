@@ -12,10 +12,11 @@ def headline(results: list[dict[str, Any]]) -> dict[str, Any]:
     """Two numbers that describe a verifier:
     false-pass ceiling — the most reward any known-bad completion received;
     false-fail rate — the share of known-good completions denied full reward."""
-    bad = [r for r in results if r["expected"] == KNOWN_BAD and r["score"] is not None]
-    good = [r for r in results if r["expected"] == KNOWN_GOOD]
+    counted = [r for r in results if not r.get("same_as_good")]  # see ProbeResult.same_as_good
+    bad = [r for r in counted if r["expected"] == KNOWN_BAD and r["score"] is not None]
+    good = [r for r in counted if r["expected"] == KNOWN_GOOD]
     worst = max(bad, key=lambda r: r["score"], default=None)
-    lazy_value, lazy_via = lazy_policy([r for r in results if r.get("answer_free") and r["score"] is not None])
+    lazy_value, lazy_via = lazy_policy([r for r in counted if r.get("answer_free") and r["score"] is not None])
     return {
         "lazy_policy_reward": lazy_value,
         "lazy_policy_via": lazy_via,
@@ -25,6 +26,7 @@ def headline(results: list[dict[str, Any]]) -> dict[str, Any]:
         "known_good": len(good),
         "known_bad": len(bad),
         "scoring_errors": sum(bool(r["errors"]) for r in results),
+        "same_as_good": sum(bool(r.get("same_as_good")) for r in results),
     }
 
 
@@ -112,6 +114,8 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
             "detail": first.get("detail"), "example": first.get("example"),
             "completion": completion[:example_chars] if isinstance(completion, str) and full is None else completion,
             "completion_id": first.get("completion_id") or None,
+            **({} if first.get("completion_id") else {"completion_note": "not kept: completions over 60,000 characters "
+                "(generated payloads such as P10's 2 MB reply) are stored as a preview only; the probe code rebuilds them"}),
             "answer_free": bool(first.get("answer_free")),
             **({"errors": first["errors"][:2]} if first.get("errors") else {}),
         })  # fmt: skip
@@ -209,6 +213,8 @@ def summary(payload: dict[str, Any]) -> str:
         f"- **False-fail rate:** {_fmt(head['false_fail_rate'])} "
         f"({head['known_good']} known-good completions)",
         f"- **Completions on which reward code raised or timed out:** {head['scoring_errors']}",
+        *([f"- **Known-bad rows not counted:** {head['same_as_good']} said exactly what a known-good completion said "
+           "on the same task (marked passed; left out of the numbers above)"] if head.get("same_as_good") else []),
         "",
         "| Probe | Variant | Expect | Runs | Failed | Score min / mean / max | First failure |",
         "|---|---|---|---|---|---|---|",

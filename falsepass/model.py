@@ -75,6 +75,10 @@ class ProbeResult:
     # the strategy is available to a policy that knows nothing about the task.
     answer_free: bool = False
     completion_id: str = ""  # key into completions.json, where the full completion is kept
+    # A known-bad row whose completion (or a policy's replies) is identical to a known-good
+    # one on the same task: e.g. an "unsorted echo" on a row that is already sorted. It is
+    # kept, marked passed, and left out of the headline numbers.
+    same_as_good: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)

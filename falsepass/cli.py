@@ -121,6 +121,10 @@ conversation so far (a list of {{"role", "content"}} dicts) to the next assistan
 a string, or {{"content": ..., "tool_calls": [{{"name": ..., "arguments": {{...}}}}]}}
 (`Policy(name, act, wants_tools=True)` also passes the tool schemas: `act(messages, tools)`).
 
+`example` is a falsepass Example: `key` (the row id, ending in its index), `prompt` (the
+task text the model sees), `answer` (the row's reference answer, possibly empty) and `raw`
+(the environment's own row, e.g. a dict with "prompt", "answer" and "info").
+
 Each policy runs through the environment's own rollout loop and rubric. Its episode
 (what it said, and the whole conversation) is kept, so `falsepass results <env>
 --completion <id>` shows it and `falsepass repro <env>` replays it turn by turn.
@@ -394,6 +398,12 @@ def main(argv: list[str] | None = None) -> int:
     repro.add_argument("env")
     repro.add_argument("--probe", action="append", help="only these probe codes, e.g. --probe P6 (repeatable)")
     repro.add_argument("--per-group", type=int, default=2, help="examples per failing probe variant")
+    repro.add_argument("--run", action="store_true",
+                       help="then run it twice, each in a fresh virtualenv, compare stdout and store the first run "
+                            "(<script>.output.txt, headed by the command and whether the second run was identical)")
+    repro.add_argument("--script", help="with --run: run this script in the audit folder (e.g. a hand-written repro.py) "
+                                        "instead of writing repro_auto.py")
+    repro.add_argument("--json", action="store_true", help="with --run: print the result as JSON")
     reach = sub.add_parser(
         "reach", help="count how many tasks a probe fails on: a sample of N or every task (after an audit)",
         epilog="Scores only the probe rows asked for, plus the reference (P1) as a control, in an isolated "
@@ -448,11 +458,20 @@ def main(argv: list[str] | None = None) -> int:
         if audit_dir is None:
             return missing_audit(args.env, "probe-results.json")
         if args.command == "repro":
-            path = repro.generate(audit_dir, args.probe, args.per_group)
+            if args.script and not (audit_dir / args.script).is_file():
+                print(f"falsepass: no {args.script} in {audit_dir}", file=sys.stderr)
+                return 2
+            path = audit_dir / args.script if args.script else repro.generate(audit_dir, args.probe, args.per_group)
+            if args.run:
+                from falsepass import verify
+
+                result = verify.twice(audit_dir, Path(path).name)
+                print(json.dumps(result, indent=1) if args.json else verify.describe_twice(result))
+                return 0 if result.get("identical") else 1
             env = tomllib.loads((audit_dir / "env.toml").read_text())["env"]
             command = ["uv", "run", "--isolated", "--no-project", "--python", env.get("python", "3.12"),
                        *install_args(env), "python", str(Path(path).resolve())]
-            print(f"wrote {path} — run it twice from a clean virtualenv and compare stdout:\n  {shlex.join(command)}")
+            print(f"wrote {path} — run it twice from a clean virtualenv and compare stdout (or use --run):\n  {shlex.join(command)}")
         else:
             print(f"wrote {draft.draft(audit_dir)} — candidates only, review before reporting")
         return 0
