@@ -60,9 +60,13 @@ def test_audit_runs_in_the_background_and_status_returns_the_results(tmp_path):
                 counted = await call(session, "falsepass_audit_status", env=init["name"], wait=600)
                 wrong = await call(session, "falsepass_reach", env=init["name"], probe=["P99"], wait=600)
                 twice = await call(session, "falsepass_repro", env=init["name"], run=True, wait=600)
-                return missing, init, first, during, again, done, full, asked, counted, wrong, twice
+                checked = await call(session, "falsepass_verify_fix", env=init["name"], source=str(tmp_path / "toy"),
+                                     known_good=0, wait=600)
+                return missing, init, first, during, again, done, full, asked, counted, wrong, twice, checked
 
-    missing, init, first, during, again, done, full, asked, counted, wrong, twice = asyncio.run(go())
+    missing, init, first, during, again, done, full, asked, counted, wrong, twice, checked = asyncio.run(go())
+    assert checked["status"] == "finished", checked
+    assert "no line changed" in checked["report"] and "stops paying no correct answer" in checked["report"]
     assert twice["status"] == "finished" and twice["identical"] is True, twice
     assert twice["cases"] >= 1 and twice["reproduced"] == twice["cases"]
     stored = (tmp_path / "audits" / "falsepass-toy-env" / "repro_auto.output.txt").read_text().splitlines()
@@ -78,7 +82,7 @@ def test_audit_runs_in_the_background_and_status_returns_the_results(tmp_path):
     assert done["headline"]["false_pass_ceiling"] == 1.0
     assert full["text"].strip() and len(full["text"]) >= len(done["failing"][0]["completion"].split(" … ")[0])
     job = json.loads((tmp_path / "audits" / "falsepass-toy-env" / "job.json").read_text())
-    assert (job["command"], job["state"]) == ("repro", "finished")
+    assert (job["command"], job["state"]) == ("verify-fix", "finished")
 
 
 def test_long_output_reaches_the_client_whole(tmp_path):

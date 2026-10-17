@@ -46,6 +46,11 @@ def test_init_refuses_to_overwrite_without_force(tmp_path, monkeypatch, capsys):
     source = cli.demo_source()
     assert cli.main(["init", str(source), "--json"]) == 0
     assert json.loads(capsys.readouterr().out)["name"] == "falsepass-toy-env"
+    assert cli.main(["init", str(source), "--json"]) == 0  # the same target again: nothing to do, not an error
+    again = json.loads(capsys.readouterr().out)
+    assert again["existing"] is True and again["name"] == "falsepass-toy-env"
+    env_toml = tmp_path / "audits" / "falsepass-toy-env" / "env.toml"
+    env_toml.write_text(env_toml.read_text().replace('id = "', 'id = "other/', 1))  # set up for something else
     assert cli.main(["init", str(source)]) == 1
     assert "--force" in capsys.readouterr().err
     assert cli.main(["init", str(source), "--force"]) == 0

@@ -134,12 +134,13 @@ def test_init_scaffolds_an_audit_folder(tmp_path, monkeypatch):
 
     info = {"id": "owner/Demo_Env", "package": "demo-env", "version": "0.1.0", "module": "demo_env",
             "index": "https://example.invalid/simple/", "verifiers": "0.3.1", "declared": "verifiers>=0.1.2"}
-    monkeypatch.setattr(hub, "describe", lambda env_id, version=None: dict(info))
+    monkeypatch.setattr(hub, "describe", lambda env_id, version=None: dict(info, **({"version": version} if version else {})))
     monkeypatch.chdir(tmp_path)
     assert cli.main(["init", "owner/Demo_Env"]) == 0
     assert 'module = "demo_env"' in (tmp_path / "audits/demo-env/env.toml").read_text()
     assert not (tmp_path / "audits/demo-env/adapter.py").exists()
-    assert cli.main(["init", "owner/Demo_Env"]) == 1  # refuses to overwrite
+    assert cli.main(["init", "owner/Demo_Env"]) == 0  # the same target again: kept as it is
+    assert cli.main(["init", "owner/Demo_Env", "--version", "0.0.1"]) == 1  # another version: refuses to overwrite
     assert cli.main(["init", "owner/Demo_Env", "--name", "manual", "--manual"]) == 0
     compile((tmp_path / "audits/manual/adapter.py").read_text(), "adapter.py", "exec")
 
@@ -496,7 +497,7 @@ def right_hand_side(text, answer):  # math-verify on `\boxed{W = R}`: keeps the 
 
 def test_hedges_inside_the_slot_are_caught():
     failed = {r.variant for r in run(probes.p15_hedged_in_slot, right_hand_side) if not r.passed}
-    assert failed == {"false_equation", "denied", "denied_latex", "not_answer", "either_or", "either_or_latex"}
+    assert failed == {"false_equation", "denied", "denied_latex", "not_answer", "either_or", "either_or_latex"}  # not the reversed ones
     assert all(r.passed for r in run(probes.p15_hedged_in_slot, strict))
 
 

@@ -147,6 +147,7 @@ def twice(audit_dir: Path, script: str) -> dict:
     import re
     from datetime import date
 
+    audit_dir = audit_dir.resolve()
     output = audit_dir / (Path(script).stem + ".output.txt")
     command = command_for(audit_dir, script, None)
     runs = [subprocess.run(command, capture_output=True, text=True, check=False) for _ in range(2)]

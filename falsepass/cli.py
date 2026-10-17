@@ -100,7 +100,7 @@ class Env(Adapter):
 
         self.env = vf.load_environment("{package}")
         self.rows = self.env.get_dataset()
-        picks = random.Random(seed).sample(range(len(self.rows)), n)
+        picks = random.Random(seed).sample(range(len(self.rows)), min(n, len(self.rows)))  # n may exceed it (reach)
         return V0RubricScorer(self.env), [self._example(i) for i in picks]
 
     def _example(self, i) -> Example:
@@ -283,6 +283,17 @@ def scaffold(args) -> int:
         info["extra"] = [*info.get("extra", []), *args.extra]
     name = args.name or info["id"].split("/")[-1].lower().replace("_", "-")
     audit_dir = Path("audits") / name
+    existing = audit_dir / "env.toml"
+    if existing.is_file() and not args.force and not (args.manual or args.policies):
+        old = tomllib.loads(existing.read_text())["env"]
+        if all(old.get(k) == info.get(k) for k in ("id", "version", "task", "source")):  # the same target: nothing to do
+            if args.json:
+                print(json.dumps({"name": name, "folder": str(audit_dir.resolve()), "framework": old.get("framework", "verifiers"),
+                                  "env": old, "manual": (audit_dir / "adapter.py").is_file(), "existing": True,
+                                  "others": info.get("others", []), "next": f"falsepass audit {name}"}, indent=1))  # fmt: skip
+            else:
+                print(f"{audit_dir} is already set up for {info['id']}; next: falsepass audit {name}")
+            return 0
     if audit_dir.exists() and not args.force:
         print(f"falsepass: {audit_dir} already exists. Pass --force to rewrite its env.toml (stored results are kept "
               "until the next audit), or --name to set up a second audit next to it.", file=sys.stderr)  # fmt: skip
@@ -599,7 +610,7 @@ def main(argv: list[str] | None = None) -> int:
         if code != 0:
             print(f"falsepass: the patched run exited {code}:\n{stderr}", file=sys.stderr)
             return 1
-        print(verify.describe(found))
+        report = [verify.describe(found)]
         if args.known_good:
             counts = {}
             for label, patch in (("release", None), ("patched", source)):
@@ -609,7 +620,9 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"falsepass: scoring the correct answers ({label}) exited {done.returncode}:\n{done.stderr[-2000:]}", file=sys.stderr)
                     return 1
                 counts[label] = json.loads(done.stdout)
-            print(verify.describe_known_good(counts["release"], counts["patched"]))
+            report.append(verify.describe_known_good(counts["release"], counts["patched"]))
+        print("\n".join(report))
+        (audit_dir / "verify-fix.txt").write_text("\n".join(report) + "\n")  # for the MCP tool
         return 0
 
     audit_dir = find_audit(args.env)

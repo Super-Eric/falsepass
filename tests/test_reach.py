@@ -45,8 +45,6 @@ def test_reach_says_what_can_be_asked_for(tmp_path: Path):
     folder = audit(tmp_path, "toy", safe=True)
     with pytest.raises(RuntimeError, match=r"P99.*this environment has: .*P15/"):
         reach.run(folder, ["P99"], tasks=3, out=tmp_path / "x")
-    with pytest.raises(RuntimeError, match="--tasks N"):
-        reach.run(folder, ["P15"], tasks=None, out=tmp_path / "x")
     assert probes.ONLY == set()
 
 
@@ -69,6 +67,26 @@ def test_a_known_bad_reply_identical_to_the_known_good_one_is_not_a_false_pass()
     assert rows[1].same_as_good and rows[1].passed and not rows[2].same_as_good and not rows[2].passed
     head = headline([r.to_dict() for r in rows])
     assert head["same_as_good"] == 1 and head["known_bad"] == 1 and head["false_pass_ceiling"] == 1.0
+    assert "false_pass_note" not in head
+
+
+def test_a_policy_whose_last_reply_is_the_right_one_is_labelled_not_hidden():
+    from falsepass.model import Expect, Policy, ProbeResult
+    from falsepass.report import headline
+
+    probes.STORE.clear()
+    good = probes.remember_episode(Policy("solver", None), {"script": ["a b c"]})
+    ladder = probes.remember_episode(Policy("ladder", None), {"script": ["c b a", "a b c"]})
+    weak = probes.remember_episode(Policy("reverse", None), {"script": ["c b a"]})
+    rows = [
+        ProbeResult("X1", "policy", "solver", "row-1", Expect.FULL, 1.0, True, completion_id=good),
+        ProbeResult("X1", "policy", "ladder", "row-1", Expect.ZERO, 1.0, False, completion_id=ladder, answer_free=True),
+        ProbeResult("X1", "policy", "reverse", "row-1", Expect.ZERO, 0.3, False, completion_id=weak, answer_free=True),
+    ]
+    assert probes.mark_same_as_good(rows) == 0
+    assert rows[1].final_as_good and not rows[1].passed and not rows[2].final_as_good
+    head = headline([r.to_dict() for r in rows])
+    assert head["false_pass_ceiling"] == 1.0 and head["false_pass_ceiling_other"] == 0.3 and "by chance" in head["false_pass_note"]
 
 
 def test_known_good_counts_every_correct_answer_row_and_a_patch_that_refuses_one_is_shown(tmp_path: Path):

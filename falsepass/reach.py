@@ -46,15 +46,14 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
     """Score the probes in `wanted` ("P15" or "P15/denied") on `tasks` tasks (None: all)."""
     adapter = load_adapter(audit_dir)
     hand_written = (audit_dir / "adapter.py").is_file()
-    if tasks is None and hand_written:
-        raise RuntimeError("this audit uses a hand-written adapter, which may not know its dataset's size: "
-                           "give a number of tasks (--tasks N)")  # fmt: skip
     if not hand_written:
         from falsepass import auto
 
         auto.MAX_ROWS = ALL  # the audit samples from the first 2000 rows; reach counts or samples from all of them
     probes.STORE.clear()
+    # A hand-written adapter's `load(n)` returns min(n, rows) tasks, as the skeletons do.
     scorer, examples = adapter.load(tasks or ALL, seed)
+    everything = tasks is None or len(examples) < tasks  # asked for more than there are: every task was counted
     loop = asyncio.new_event_loop()
     try:
         if hasattr(adapter, "prepare"):
@@ -85,6 +84,15 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
     for r in results:
         if r.detail != probes.SKIPPED:
             rows[r.probe, r.name, r.variant].append(r)
+
+    def asked_order(key: tuple[str, str, str]) -> tuple[int, int]:
+        probe, _, variant = key
+        for i, w in enumerate(wanted):
+            if w in (probe, f"{probe}/{variant}"):
+                return (1, i)
+        return (0, 0)  # the control first
+
+    rows = dict(sorted(rows.items(), key=lambda kv: asked_order(kv[0])))
     counted = []
     for (probe, name, variant), group in rows.items():
         failing = [r for r in group if not r.passed]
@@ -108,8 +116,9 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
     payload = {
         "meta": {
             "environment": adapter.name, "date": date.today().isoformat(), "falsepass": falsepass.__version__,
-            "asked": wanted, "tasks_counted": len(examples), "tasks_in_dataset": len(pool) if pool is not None else None,
-            "all_tasks": tasks is None, "seed": seed, "jobs": jobs if parallel else 1,
+            "asked": wanted, "tasks_counted": len(examples),
+            "tasks_in_dataset": len(pool) if pool is not None else (len(examples) if everything else None),
+            "all_tasks": everything, "seed": seed, "jobs": jobs if parallel else 1,
             "max_reward": adapter.max_reward, "bad_tolerance": adapter.bad_tolerance,
             "format": fmt, "audit_format": audited,
             "note": f"the answer format inferred here ({fmt}) differs from the audit's ({audited}): the counts "

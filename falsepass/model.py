@@ -79,6 +79,11 @@ class ProbeResult:
     # one on the same task: e.g. an "unsorted echo" on a row that is already sorted. It is
     # kept, marked passed, and left out of the headline numbers.
     same_as_good: bool = False
+    # A known-bad row whose last reply equals a known-good row's last reply on the same task,
+    # but which said other things first: correct by chance (a sorted echo of an already
+    # sorted list) or a real multi-attempt exploit (wrong tries, then the right one). Kept
+    # in the numbers; the headline says when its ceiling rests on such a row.
+    final_as_good: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)

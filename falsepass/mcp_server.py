@@ -55,7 +55,8 @@ def _run(args: list[str], workdir: str, timeout: int = 3600) -> dict[str, Any]:
 # The job is recorded in audits/<env>/job.json and its output in audits/<env>/job.log, so a
 # restarted server (or a person) can still see it.
 _jobs: dict[str, subprocess.Popen] = {}
-RESULT_FILE = {"audit": "probe-results.json", "reach": "reach/latest.json", "repro": "repro-run.json"}
+RESULT_FILE = {"audit": "probe-results.json", "reach": "reach/latest.json", "repro": "repro-run.json",
+               "verify-fix": "verify-fix.txt"}
 
 
 def _audit_dir(workdir: str, env: str) -> Path:
@@ -144,10 +145,14 @@ def _await_audit(env: str, workdir: str, wait: float) -> dict[str, Any]:
         return digest
     if job["state"] == "failed":
         tail = "\n".join(_log_tail(workdir, env, 30))
-        raise RuntimeError(f"the {job.get('command', 'audit')} job of {env} failed after {elapsed} s (exit code {job.get('exit_code')}). End of "
-                           f"{_audit_dir(workdir, env) / 'job.log'}:\n{tail}\n\nCommon causes: a missing dependency "
-                           "(falsepass_init with `extra`), a dataset that needs a login, or an environment automatic "
-                           "mode cannot script (falsepass_init with manual=true writes an adapter skeleton).")  # fmt: skip
+        command = job.get("command", "audit")
+        hint = ("\n\nCommon causes: a missing dependency (falsepass_init with `extra`), a dataset that needs a login, or "
+                "an environment automatic mode cannot script (falsepass_init with manual=true writes an adapter skeleton)."
+                if command == "audit" else "")  # fmt: skip
+        raise RuntimeError(f"the {command} job of {env} failed after {elapsed} s (exit code {job.get('exit_code')}). End of "
+                           f"{_audit_dir(workdir, env) / 'job.log'}:\n{tail}{hint}")  # fmt: skip
+    if job.get("command") == "verify-fix":
+        return {"status": "finished", "elapsed_s": elapsed, "report": (_audit_dir(workdir, env) / "verify-fix.txt").read_text()}
     if job.get("command") == "reach":
         digest = json.loads((_audit_dir(workdir, env) / "reach" / "latest.json").read_text())
         for row in digest["rows"]:  # the file keeps every task; the reply stays short
@@ -333,6 +338,26 @@ def build():
         if started.get("status") == "error":
             raise RuntimeError(f"{started['error']}. {started['next']}")
         if started.get("command", "audit") != "reach":
+            raise RuntimeError(f"a {started.get('command', 'audit')} job of {env} is still running; wait for it with falsepass_audit_status first")
+        return _await_audit(env, workdir, wait)
+
+    @tool
+    def falsepass_verify_fix(env: str, source: str, known_good: int = -1, wait: int = 45, workdir: str = ".") -> Any:
+        """Check a patch: rerun the stored repro (repro.py, else repro_auto.py) with the
+        environment taken from `source` and list the lines that change (no stored output:
+        the unpatched script runs first and is stored as the baseline). `source` is a
+        patched package folder, or a patched copy of the audit's src/ without pyproject.toml,
+        which is laid over the release. `known_good` >= 0 also scores every correct-answer
+        row (P1, P2, P14) with and without the patch, on every task (0) or a sample, and
+        lists the tasks whose correct answer the patch stops paying. Runs in the background
+        like an audit (status "running": call falsepass_audit_status)."""
+        path = Path(source).expanduser()
+        path = path if path.is_absolute() else Path(workdir).expanduser() / path
+        args = ["--source", str(path.resolve())] + (["--known-good", str(known_good) if known_good > 0 else "all"] if known_good >= 0 else [])
+        started = _start_audit(env, args, workdir, command="verify-fix")
+        if started.get("status") == "error":
+            raise RuntimeError(f"{started['error']}. {started['next']}")
+        if started.get("command", "audit") != "verify-fix":
             raise RuntimeError(f"a {started.get('command', 'audit')} job of {env} is still running; wait for it with falsepass_audit_status first")
         return _await_audit(env, workdir, wait)
 

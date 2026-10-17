@@ -128,7 +128,7 @@ need a login or an API key at load time cannot be audited in CI without that sec
 ## For coding agents
 
 - **MCP server.** `falsepass mcp` serves the commands as tools (`falsepass_scan`,
-  `_init`, `_audit`, `_audit_status`, `_results`, `_completion`, `_reach`, `_repro`, `_discover`)
+  `_init`, `_audit`, `_audit_status`, `_results`, `_completion`, `_reach`, `_repro`, `_verify_fix`, `_discover`)
   over stdio. Audits run in the background, so a client's tool-call timeout never cuts
   one off; failures come back as tool errors with the reason. Any MCP client starts
   it with `uvx --from "falsepass[mcp]" falsepass mcp`;

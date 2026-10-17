@@ -16,7 +16,10 @@ def headline(results: list[dict[str, Any]]) -> dict[str, Any]:
     bad = [r for r in counted if r["expected"] == KNOWN_BAD and r["score"] is not None]
     good = [r for r in counted if r["expected"] == KNOWN_GOOD]
     worst = max(bad, key=lambda r: r["score"], default=None)
-    lazy_value, lazy_via = lazy_policy([r for r in counted if r.get("answer_free") and r["score"] is not None])
+    other = max((r for r in bad if not r.get("final_as_good")), key=lambda r: r["score"], default=None)
+    # A fixed strategy earns its reward on every task, including those where it happens to be
+    # right (same_as_good): the lazy number averages over all of them.
+    lazy_value, lazy_via = lazy_policy([r for r in results if r.get("answer_free") and r["score"] is not None])
     return {
         "lazy_policy_reward": lazy_value,
         "lazy_policy_via": lazy_via,
@@ -27,6 +30,11 @@ def headline(results: list[dict[str, Any]]) -> dict[str, Any]:
         "known_bad": len(bad),
         "scoring_errors": sum(bool(r["errors"]) for r in results),
         "same_as_good": sum(bool(r.get("same_as_good")) for r in results),
+        **({"false_pass_note": "the ceiling comes from a row whose last reply equals a known-good reply on that task: "
+                               "correct by chance, or wrong tries before the right one (read it)",
+            "false_pass_ceiling_other": other["score"] if other else None,
+            "false_pass_other_via": f'{other["probe"]} {other["name"]}/{other["variant"]}' if other else None}
+           if worst and worst.get("final_as_good") else {}),
     }
 
 
@@ -214,7 +222,10 @@ def summary(payload: dict[str, Any]) -> str:
         f"({head['known_good']} known-good completions)",
         f"- **Completions on which reward code raised or timed out:** {head['scoring_errors']}",
         *([f"- **Known-bad rows not counted:** {head['same_as_good']} said exactly what a known-good completion said "
-           "on the same task (marked passed; left out of the numbers above)"] if head.get("same_as_good") else []),
+           "on the same task (marked passed; left out of the ceiling, counted in the lazy-policy reward, which a fixed "
+           "strategy earns on every task)"] if head.get("same_as_good") else []),
+        *([f"- **Note on the ceiling:** {head['false_pass_note']}; without such rows it is "
+           f"{_fmt(head['false_pass_ceiling_other'])} (via {head['false_pass_other_via']})"] if head.get("false_pass_note") else []),
         "",
         "| Probe | Variant | Expect | Runs | Failed | Score min / mean / max | First failure |",
         "|---|---|---|---|---|---|---|",

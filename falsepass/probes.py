@@ -116,6 +116,15 @@ def _said(completion_id: str) -> Any:
     return stored["script"] if isinstance(stored, dict) and stored.get("script") else stored
 
 
+def _last(said: Any) -> Any:
+    """The last thing a completion said: the text, a policy's last reply, the last assistant message."""
+    if isinstance(said, list) and said:
+        replies = [m.get("content") if isinstance(m, dict) else m for m in said
+                   if not isinstance(m, dict) or m.get("role", "assistant") == "assistant"]  # fmt: skip
+        return replies[-1] if replies else None
+    return said
+
+
 def mark_same_as_good(results: list[ProbeResult]) -> int:
     """Known-bad rows that said exactly what a known-good row said on the same task are not
     false passes: mark them (see `ProbeResult.same_as_good`). Returns how many were."""
@@ -126,9 +135,13 @@ def mark_same_as_good(results: list[ProbeResult]) -> int:
     marked = 0
     for r in results:
         if r.expected is Expect.ZERO and r.completion_id and r.example in good:
-            if any(said is not None and said == _said(r.completion_id) for said in good[r.example]):
+            said = _said(r.completion_id)
+            if any(g is not None and g == said for g in good[r.example]):
                 r.same_as_good, r.passed, marked = True, True, marked + 1
                 r.detail = "identical to a known-good completion on this task: not counted as a false pass"
+            elif any(_last(g) is not None and _last(g) == _last(said) for g in good[r.example]):
+                r.final_as_good = True
+                r.detail = (r.detail + "; " if r.detail else "") + "its last reply equals a known-good one on this task"
     return marked
 
 
@@ -224,7 +237,8 @@ def hedged_in_slot(answer: str, wrong: str) -> dict[str, str]:
     content (math-verify reads `W = R` as an equation and keeps its right-hand side, and
     drops a trailing `\\text{}` whatever it says) can pay these in full. The LaTeX variants
     matter for boxed answers: a math-verify grader can pay `R \\text{ is wrong}` while
-    the plain `R (this is wrong)` scores 0."""
+    the plain `R (this is wrong)` scores 0. `W` is the adapter's wrong answer for the task.
+    """
     return {
         "false_equation": f"{wrong} = {answer}",
         "denied": f"{answer} (this is wrong)",
@@ -232,6 +246,11 @@ def hedged_in_slot(answer: str, wrong: str) -> dict[str, str]:
         "not_answer": f"not {answer}",
         "either_or": f"{wrong} or {answer}",
         "either_or_latex": f"{wrong} \\lor {answer}",
+        # The same with the reference first: a grader that keeps one side pays only one order,
+        # so a count over tasks depends on which side the reference is on.
+        "false_equation_reversed": f"{answer} = {wrong}",
+        "either_or_reversed": f"{answer} or {wrong}",
+        "either_or_latex_reversed": f"{answer} \\lor {wrong}",
     }
 
 

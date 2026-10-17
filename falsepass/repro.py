@@ -222,10 +222,10 @@ MAIN = '''
 async def main():
     for case in CASES:
         try:
-            observed = f"{await score(case['example'], case['completion']):.3f}"
+            observed = f"{await score(case['example'], case['completion']):.6f}"
         except Exception as exc:  # the reward code raising is itself the observation
             observed = f"raised {type(exc).__name__}"
-        print(f"{observed:>8}  expected {case['expected']:<5} {case['probe']} {case['name']}/{case['variant']} on {case['example']}")
+        print(f"{observed:>9}  expected {case['expected']:<5} {case['probe']} {case['name']}/{case['variant']} on {case['example']}")
 
 
 asyncio.run(main())

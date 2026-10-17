@@ -31,6 +31,21 @@
   `100 (this is wrong)` matches 100) and `inspect_choice_lenient` (`choice()` counts
   `ANSWER: A (this is wrong)` as A). Both are confirmed by P15.
 - Progress lines in `job.log` are capped at about 100 per stage.
+- From a newcomer trial (an agent using only the docs):
+  - The lazy-policy reward again averages over every task, including those where a
+    fixed strategy happens to be right. A known-bad row whose last reply equals a
+    known-good one (but said other things first) is labelled `final_as_good`; when the
+    ceiling rests on one, the headline says so and gives the ceiling without them.
+  - `reach` counts every task with a hand-written adapter too (its `load` returns at most
+    the rows there are; the `--manual` skeleton now does), and reports `all_tasks` when
+    everything was counted. Rows come back in the order asked for.
+  - P15 adds the reversed orders (`false_equation_reversed`, `either_or_reversed`,
+    `either_or_latex_reversed`): a grader that keeps one side pays only one order.
+  - `init` on a target that is already set up returns the existing audit instead of an
+    error (a different target under the same name still needs `--force`).
+  - MCP `falsepass_verify_fix`. Repro scripts print rewards with six decimals (a reward of
+    0.00002 printed as 0.000). `repro-run.json` paths are absolute. Errors from reach and
+    repro jobs no longer end with the audit's list of common causes.
 
 ## 0.6.0 — 2026-10-16
 

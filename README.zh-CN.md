@@ -100,7 +100,7 @@ jobs:
 
 ## 给 AI 编程代理
 
-- **MCP 服务**：`falsepass mcp` 通过 stdio 把各个命令提供为工具（`falsepass_scan`、`_init`、`_audit`、`_audit_status`、`_results`、`_completion`、`_reach`、`_repro`、`_discover`）。审计在后台运行，客户端单次调用的超时不会把它打断；出错时以工具错误返回，并写明原因。任何 MCP 客户端都可以用这条命令启动它：`uvx --from "falsepass[mcp]" falsepass mcp`。以 Claude Code 为例：`claude mcp add falsepass -- uvx --from "falsepass[mcp]" falsepass mcp`。
+- **MCP 服务**：`falsepass mcp` 通过 stdio 把各个命令提供为工具（`falsepass_scan`、`_init`、`_audit`、`_audit_status`、`_results`、`_completion`、`_reach`、`_repro`、`_verify_fix`、`_discover`）。审计在后台运行，客户端单次调用的超时不会把它打断；出错时以工具错误返回，并写明原因。任何 MCP 客户端都可以用这条命令启动它：`uvx --from "falsepass[mcp]" falsepass mcp`。以 Claude Code 为例：`claude mcp add falsepass -- uvx --from "falsepass[mcp]" falsepass mcp`。
 - **Skill**：`skills/falsepass/SKILL.md` 是一份写好的审计流程（Agent Skills 格式），内容包括怎么运行审计、怎么区分漏洞和有意的设计、怎么写给维护者。把这个文件夹复制到代理的 skills 目录即可（Claude Code 是 `~/.claude/skills/`）。
 - **普通命令行**：所有命令都不需要交互，结果写成文件；`init --json`、`results --json` 和 `scan --json` 输出 JSON；`results --completion ID` 输出某个回答的全文；`audit --fail-on ...` 在条件满足时以退出码 1 结束。输出格式见 `docs/OUTPUT.md`（英文）。
 

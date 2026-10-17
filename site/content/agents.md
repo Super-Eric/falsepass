@@ -47,6 +47,7 @@ For clients configured with JSON (Cursor, Claude Desktop, and others):
 | `falsepass_completion` | `env`, `completion_id` | the full text of one completion; the digest shows only its start and end |
 | `falsepass_reach` | `env`, `probe` (e.g. `["P15/denied"]`), `tasks` (0 = every task), `wait` | per probe row and for the reference (P1) as a control: tasks counted, how many failed, full-reward and error counts, the failing task keys, up to three failing completions; runs in the background like an audit |
 | `falsepass_repro` | `env`, `probe` (e.g. `["P5"]`); `run` (true: also run it twice), `script` (run an existing script instead), `wait` | where the stand-alone repro script was written; with `run`, whether the two runs were identical, where the first is stored, and how many cases still fail (in the background like an audit) |
+| `falsepass_verify_fix` | `env`, `source` (a patched package, or a patched copy of the audit's `src/`), `known_good` (-1 off, 0 every task, N a sample), `wait` | `report`: the repro lines the patch changes and, with `known_good`, the tasks whose correct answer it stops paying; in the background like an audit |
 | `falsepass_discover` | `days`, `limit` | recently maintained Hub environments and what each needs |
 
 Every tool takes `workdir`; audits are created in `workdir/audits/<name>/`.
@@ -172,10 +173,13 @@ The output is a list of leads. Before an agent reports anything:
    tasks by default; `falsepass reach <env> --probe P15/denied` (MCP `falsepass_reach`)
    scores that one row, and the reference as a control, on every task (`--tasks N` for a
    sample) and writes the counts and failing task keys to `audits/<env>/reach/`. It covers
-   the per-example probes (P1–P9, P13–P15, A1, X1). Confirm the count with your own script
-   before you quote it to a maintainer.
+   the per-example probes (P1–P9, P13–P15, A1, X1). A count is for the completion the
+   probe wrote, including the wrong value falsepass picked and where it put it: P15 has
+   both orders (`false_equation` and `false_equation_reversed`), because a grader that keeps
+   one side pays only one. Confirm the count with your own script before you quote it to
+   a maintainer.
 6. If you have a fix, check it: copy the audit's `src/` (or the package), patch the copy,
-   and run `falsepass verify-fix <env> --source <copy>` (CLI). It reruns the repro script
+   and run `falsepass verify-fix <env> --source <copy>` (MCP `falsepass_verify_fix`). It reruns the repro script
    (`repro.py`, else `repro_auto.py`) unpatched once if no output is stored yet, then with
    the patch, and prints the lines that changed. A folder without `pyproject.toml` is laid
    over the released package, so its dependencies stay as released. Add `--known-good`

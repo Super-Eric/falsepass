@@ -44,7 +44,12 @@ Everything an audit writes lives in `audits/<env>/` (or the folder given with `-
 - `completion_id`: key into `completions.json`; empty for completions over 60,000
   characters (generated payloads such as P10's 2 MB reply), which are kept as a preview.
 - `same_as_good`: a known-bad completion that is identical to a known-good one on the same
-  task (for a policy: the same replies). It is marked `passed` and left out of the headline.
+  task (for a policy: the same replies). It is marked `passed` and left out of the ceiling;
+  the lazy-policy reward still counts it, since a fixed strategy earns it on every task.
+- `final_as_good`: a known-bad completion whose last reply equals a known-good one's but
+  which said other things first: right by chance, or wrong tries before the right one (a
+  real exploit if the grader pays it). It is counted; the headline adds a note when the
+  ceiling rests on such a row, with the ceiling without them.
 
 ## falsepass results --json
 
@@ -59,6 +64,8 @@ A digest of the same run, small enough to hand to a model (numbers from `falsepa
                "lazy_policy_reward": 0.0, "lazy_policy_via": "P3 empty/empty",
                "false_fail_rate": 0.108, "known_good": 93, "known_bad": 233, "scoring_errors": 0,
                "same_as_good": 0},
+  "…": "when the ceiling rests on a row whose last reply equals a known-good one, the headline
+        also has false_pass_note, false_pass_ceiling_other and false_pass_other_via",
   "failing": [ {"probe": "P5", "name": "shotgun", "variant": "all_in_one_slot", "expected": "zero",
                 "runs": 10, "failed": 10, "scores": [1.0, 1.0, 1.0, 1.0, 1.0], "detail": "…", "example": "row-98",
                 "completion": "start … [316 chars] … end", "completion_id": "da79bcea66a8",
