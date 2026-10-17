@@ -212,22 +212,7 @@ class AutoAdapter(Adapter):
         return scorer, pool, (f"{system}\n{first}", getattr(env, "parser", None))
 
     def _load_v1(self) -> tuple[Scorer, list[Example], tuple[str, Any]]:
-        import verifiers.v1 as vf
-        from verifiers.v1.utils.loaders import taskset_class
-
-        try:
-            cls, config = taskset_class(self.module), vf.taskset_config_type(self.module)
-        except (AttributeError, TypeError) as not_exported:
-            found = submodule_taskset(self.module, vf.Taskset)
-            if found is None:
-                raise
-            cls, config = found, taskset_config_of(found, vf)
-            self.load_notes.append(
-                f"verifiers' own loader cannot load this taskset by its module ({not_exported}); falsepass found "
-                f"{cls.__name__} in {cls.__module__} and audits that. A run addressed by the Hub id may not start: "
-                "worth telling the maintainer"
-            )
-        taskset = cls(config(id=self.module, **self.load_args))
+        taskset = open_taskset(self.module, self.load_args, self.load_notes)
         tasks = list(itertools.islice(iter(taskset.load()), MAX_ROWS))
         if tasks and type(tasks[0]).NEEDS_CONTAINER:
             # Graded on what is left in a box, not on text: text probes would all score 0
@@ -310,6 +295,12 @@ class AutoAdapter(Adapter):
                 "(a game, a simulation, a judge), or it pays regardless of the answer. Automatic mode "
                 "cannot tell which; the probe results below are not evidence either way"
             )
+            if not self.multi_turn and sum(_json_object(ex.answer) for ex in trial) > len(trial) / 2:
+                validity += (
+                    ". The `answer` field holds a JSON object: if it is a grading record rather than the reply the "
+                    "prompt asks for, write an adapter whose reference is that reply (`falsepass init <target> "
+                    "--manual --force`)"
+                )
         else:
             validity = "ok"
         notes = list(self.load_notes)
@@ -412,6 +403,29 @@ async def other_task_reference(adapter: AutoAdapter, scorer: Scorer, ex: Example
     }, adapter, scorer, ex, answer_free=("other_task_reference",))  # fmt: skip
 
 
+def open_taskset(module: str, load_args: dict[str, Any] | None = None, notes: list[str] | None = None) -> Any:
+    """A v1 taskset by its module, as verifiers loads it; failing that, the one Taskset
+    subclass defined in a submodule (`pkg/taskset.py`), with a note in `notes`. For
+    hand-written adapters too: `open_taskset("my_env").load()` gives the tasks."""
+    import verifiers.v1 as vf
+    from verifiers.v1.utils.loaders import taskset_class
+
+    try:
+        cls, config = taskset_class(module), vf.taskset_config_type(module)
+    except (AttributeError, TypeError) as not_exported:
+        found = submodule_taskset(module, vf.Taskset)
+        if found is None:
+            raise
+        cls, config = found, taskset_config_of(found, vf)
+        if notes is not None:
+            notes.append(
+                f"verifiers' own loader cannot load this taskset by its module ({not_exported}); falsepass found "
+                f"{cls.__name__} in {cls.__module__} and audits that. A run addressed by the Hub id may not start: "
+                "worth telling the maintainer"
+            )
+    return cls(config(id=module, **(load_args or {})))
+
+
 def submodule_taskset(module: str, base: type) -> type | None:
     """The one Taskset subclass defined in a submodule of `module` (`pkg.taskset`), for a
     package whose top level does not export it. None when there is not exactly one."""
@@ -438,3 +452,12 @@ def taskset_config_of(cls: type, vf: Any) -> type:
         return concrete_type(cls, vf.TasksetConfig, origin=vf.Taskset) or vf.TasksetConfig
     except ImportError:
         return vf.TasksetConfig
+
+
+def _json_object(text: str) -> bool:
+    import json
+
+    try:
+        return isinstance(json.loads(text), dict)
+    except (ValueError, TypeError):
+        return False

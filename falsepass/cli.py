@@ -80,7 +80,7 @@ def source_command(audit_dir: Path, extra: list[str], module: str, source: Path 
     from falsepass import verify
 
     if verify.overlay(source):
-        return ["env", f"PYTHONPATH={source}", *uv_command(audit_dir, extra, module, None)]
+        return ["env", f"PYTHONPATH={verify.overlay_path(audit_dir, source)}", *uv_command(audit_dir, extra, module, None)]
     return uv_command(audit_dir, extra, module, source)
 
 
@@ -94,6 +94,8 @@ from falsepass.scorers import V0RubricScorer  # or V1TaskScorer / DevTasksetScor
 
 class Env(Adapter):
     name = "{id}"
+    # How `falsepass repro` loads the same rows without this file; keys must end in the row index.
+    loader = {{"kind": "v0", "module": "{package}", "load_args": {{}}, "getter": "get_dataset"}}
 
     def load(self, n, seed):
         import verifiers as vf
@@ -135,14 +137,13 @@ MODULE = "{package}"
 
 class Env(Adapter):
     name = "{id}"
+    # How `falsepass repro` loads the same tasks without this file; keys must end in the task index.
+    loader = {{"kind": "v1", "module": MODULE, "load_args": {{}}}}
 
     def _tasks(self):
-        import verifiers.v1 as vf
-        from verifiers.v1.utils.loaders import taskset_class
+        from falsepass.auto import open_taskset  # also finds a Taskset in a submodule
 
-        # A Taskset in a submodule that the top level does not export: import its class directly
-        # (e.g. `from {package}.taskset import MyTaskset`) and use `MyTaskset(MyConfig(id=MODULE))`.
-        return list(taskset_class(MODULE)(vf.taskset_config_type(MODULE)(id=MODULE)).load())
+        return list(open_taskset(MODULE).load())
 
     def _example(self, i, task) -> Example:
         # The reference: whichever field of task.data holds the correct reply, written the way
@@ -369,10 +370,15 @@ def scaffold(args) -> int:
         print(f"falsepass: kept the existing {audit_dir}/adapter.py (delete it first for a fresh skeleton)", file=sys.stderr)
     args.manual = args.manual or args.policies
     kind = hub.classify(info["sources"]) if info.get("sources") else None  # read from the wheel's source text
+    why = ""
+    if kind and not kind["automatic"]:
+        why = ", ".join([*kind["needs"], *([] if kind["has_reference"] else ["no reference answer found in the source"]),
+                         *([] if kind["turns"] != "unknown" else ["turn structure not recognised"])])  # fmt: skip
     if args.json:
         print(json.dumps({"name": name, "folder": str(audit_dir.resolve()), "framework": info.get("framework", "verifiers"),
                           "env": {k: info[k] for k in keys if info.get(k)}, "manual": bool(args.manual),
                           "automatic_likely": kind["automatic"] if kind else None,
+                          **({"automatic_unlikely_because": why} if why else {}),
                           "others": info.get("others", []), "next": f"falsepass audit {name}"}, indent=1))  # fmt: skip
         return 0
     if args.policies:
@@ -385,7 +391,6 @@ def scaffold(args) -> int:
     elif info.get("framework") == "inspect":
         print(f"created {audit_dir}/env.toml — each reply goes through the task's own solver chain and scorers:")
     elif kind and not kind["automatic"]:
-        why = ", ".join([*kind["needs"], *([] if kind["has_reference"] else ["no reference answer found in the source"])])
         print(f"created {audit_dir}/env.toml — automatic mode may not fit ({why or kind['turns']}); try it, and if it "
               f"stops, rerun with --force --manual (or --policies for a game, simulation or tool task):")
     else:
@@ -548,7 +553,11 @@ def main(argv: list[str] | None = None) -> int:
             if args.script and not (audit_dir / args.script).is_file():
                 print(f"falsepass: no {args.script} in {audit_dir}", file=sys.stderr)
                 return 2
-            path = audit_dir / args.script if args.script else repro.generate(audit_dir, args.probe, args.per_group)
+            try:
+                path = audit_dir / args.script if args.script else repro.generate(audit_dir, args.probe, args.per_group)
+            except RuntimeError as stop:  # no loader, nothing failing: a message, not a traceback
+                print(f"falsepass: {stop}", file=sys.stderr)
+                return 1
             if args.run:
                 from falsepass import verify
 

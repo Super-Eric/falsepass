@@ -40,7 +40,7 @@ For clients configured with JSON (Cursor, Claude Desktop, and others):
 | Tool | Arguments | Returns |
 |---|---|---|
 | `falsepass_scan` | `path` | static hints for a source folder or file; nothing is installed |
-| `falsepass_init` | `target` (Hub id, local folder, Inspect task, HUD folder); optional `name`, `version`, `framework`, `task`, `answers`, `extra`, `manual`, `force` | `{"name": ..., "folder": ..., "framework": ..., "env": {...}, "next": ...}`: `name` is what the other tools take |
+| `falsepass_init` | `target` (Hub id, local folder, Inspect task, HUD folder); optional `name`, `version`, `framework`, `task`, `answers`, `extra`, `manual`, `policies`, `force` | `{"name": ..., "folder": ..., "framework": ..., "env": {...}, "next": ...}`: `name` is what the other tools take |
 | `falsepass_audit` | `env`, `n` (tasks, default 25), `search` (mutation budget), `wait` (seconds, default 45) | the results digest below with `"status": "finished"`, or `"status": "running"` if the audit needs longer |
 | `falsepass_audit_status` | `env`, `wait` | the same, for an audit already started: results, or `"running"` with the latest progress lines |
 | `falsepass_results` | `env` | the digest of the last run (progress instead while one is running) |
@@ -145,6 +145,33 @@ Then run `falsepass audit <env>` as usual. Each policy's episode (what it said, 
 whole conversation) is kept: `falsepass_completion` shows it, and `falsepass repro`
 replays the policy's turns as a fixed script, so a lead found by a policy is reproduced
 without falsepass.
+
+## When the reference is not a reply
+
+Some Q&A environments store something other than a reply in their `answer` field: a
+grading record (a JSON object with the truth phrases and the source text), a list of
+accepted answers, or a placeholder. Automatic mode then writes that field into the reply,
+the reference scores below the maximum, and the run is inconclusive. Write an adapter whose
+reference is a complete reply:
+
+```bash
+falsepass init owner/environment --manual --force   # adds adapter.py (a v1 skeleton for v1 tasksets)
+```
+
+What the skeleton's parts mean:
+
+- `load(n, seed)` returns the scorer and `n` examples. Each is
+  `Example(key, prompt, answer, raw)`: `answer` is the correct reply's content, which the
+  probes render, vary and deny; `raw` is the environment's own row or task object, which
+  the scorer uses (the scorer never reads `answer`). Build `answer` from `raw` here, e.g.
+  the JSON object the prompt asks for, filled from the grading record.
+- `render(answer, example)` writes an answer the way the prompt asks for it, and
+  `wrong_answer(example)` returns one that is certainly wrong.
+- `equivalent_forms(example)` gives P2 its correct variants. The default is three
+  (whitespace, a sentence after, CRLF); override it to add forms the prompt allows.
+- `loader` tells `falsepass repro` how to load the same rows without the adapter: keep the
+  skeleton's line, and keep example keys that end in the row's index (`row-17`, `task-17`).
+- `max_reward` is what the reference earns when it is below 1.0 by design.
 
 ## Reading the output
 

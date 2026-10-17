@@ -50,8 +50,20 @@ class Adapter:
         return [self.wrong_answer(example), example.answer]
 
     def equivalent_forms(self, example: Example) -> dict[str, Completion]:
-        """Semantically identical ways to give the correct answer (P2)."""
-        return {}
+        """Semantically identical ways to give the correct answer (P2). By default three
+        forms around the rendered reference (whitespace, a sentence after it, CRLF line
+        endings); override to add the forms this environment's prompt allows."""
+        try:
+            correct = self.render(example.answer, example)
+        except NotImplementedError:  # a policy adapter: no reply to vary
+            return {}
+        if not isinstance(correct, str):
+            return {}
+        return {
+            "surrounding_whitespace": f"\n\n  {correct}  \n\n",
+            "sentence_after": f"{correct}\nThat is my final answer.",
+            "crlf_line_endings": correct.replace("\n", "\r\n"),
+        }
 
     def with_reference(self, example: Example, reference: str) -> Example | None:
         """A copy of `example` whose gold answer is `reference` (for rewardlint's

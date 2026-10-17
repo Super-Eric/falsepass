@@ -104,6 +104,43 @@ def overlay(source: Path | None) -> bool:
     return source is not None and source.is_dir() and not (source / "pyproject.toml").is_file()
 
 
+def overlay_path(audit_dir: Path, source: Path) -> Path:
+    """The PYTHONPATH folder for an overlay. `init` copies only source text into src/, so a
+    patched copy of it lacks the package's data files (a JSON task bank next to the
+    modules), and laid over the release it hides them. Those files are added from the
+    release wheel, in a temporary copy; `source` itself is not touched."""
+    import shutil
+    import tempfile
+
+    env = tomllib.loads((audit_dir / "env.toml").read_text())["env"]
+    if env.get("source") or "/" not in env.get("id", "") or not env.get("version"):
+        return source
+    from falsepass.hub import release_files
+
+    try:
+        files = release_files(env["id"], env["version"])
+    except Exception:  # noqa: BLE001 - offline: run the overlay as it is
+        return source
+    missing = {n: data for n, data in files.items()
+               if (source / n.split("/")[0]).is_dir() and not (source / n).exists()}  # fmt: skip
+    if not missing:
+        return source
+    merged = Path(tempfile.mkdtemp(prefix="falsepass-overlay-")) / source.name
+    shutil.copytree(source, merged)
+    for name, data in missing.items():
+        (merged / name).parent.mkdir(parents=True, exist_ok=True)
+        (merged / name).write_bytes(data)
+    return merged
+
+
+def _absolute_script(command: list[str], audit_dir: Path, script: str) -> list[str]:
+    """A stored command names the script as it was run (often relative to the repository
+    root); point it at the script in the audit folder so it runs from any directory."""
+    name = Path(script).name
+    return [str((audit_dir / script).resolve()) if part.endswith(name) and Path(part).name == name else part
+            for part in command]  # fmt: skip
+
+
 def command_for(audit_dir: Path, script: str, source: Path | None) -> list[str]:
     """The command that runs `script` with the environment taken from `source` (None: the
     release, unpatched)."""
@@ -114,7 +151,7 @@ def command_for(audit_dir: Path, script: str, source: Path | None) -> list[str]:
     stored = stored_command(output) if output.is_file() else None
     package = None if source is None or overlay(source) else source
     if stored:
-        command = patched(stored, env, package) if package else stored
+        command = _absolute_script(patched(stored, env, package) if package else stored, audit_dir, script)
     else:
         from falsepass.hub import newer
 
@@ -125,7 +162,7 @@ def command_for(audit_dir: Path, script: str, source: Path | None) -> list[str]:
             "uv", "run", "-q", "--isolated", "--no-project", "--python", env.get("python", "3.12"),
             *install_args(env, package), "python", str((audit_dir / script).resolve()),
         ]  # fmt: skip
-    return ["env", f"PYTHONPATH={source}", *command] if overlay(source) else command
+    return ["env", f"PYTHONPATH={overlay_path(audit_dir, source)}", *command] if overlay(source) else command
 
 
 def baseline(audit_dir: Path, script: str) -> tuple[Path, str, int]:

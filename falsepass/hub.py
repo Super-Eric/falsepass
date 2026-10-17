@@ -146,8 +146,8 @@ def local_module(path: Path, package: str) -> str:
     return name
 
 
-def describe(env_id: str, version: str | None = None) -> dict:
-    """Package name, version, importable module, verifiers pin and source files for `owner/environment`."""
+def _wheels(env_id: str) -> tuple[str, str, dict[str, str]]:
+    """The Hub index of `owner/environment`, its package name, and wheel URLs by version."""
     index = f"{HUB}/{env_id}/install/simple/"
     packages = re.findall(r'<a href="([^"]+)">([^<]+)</a>', _get(index).decode())
     if not packages:
@@ -159,6 +159,19 @@ def describe(env_id: str, version: str | None = None) -> dict:
     }
     if not wheels:
         raise RuntimeError(f"no wheels listed at {package_url}")
+    return index, package, wheels
+
+
+def release_files(env_id: str, version: str) -> dict[str, bytes]:
+    """Every file of a released wheel except its metadata, by path."""
+    _, _, wheels = _wheels(env_id)
+    archive = zipfile.ZipFile(io.BytesIO(_get(wheels[version])))
+    return {n: archive.read(n) for n in archive.namelist() if ".dist-info/" not in n and not n.endswith("/")}
+
+
+def describe(env_id: str, version: str | None = None) -> dict:
+    """Package name, version, importable module, verifiers pin and source files for `owner/environment`."""
+    index, package, wheels = _wheels(env_id)
     version = version or max(wheels, key=_version_key)
     if version not in wheels:
         raise RuntimeError(f"version {version} not found; available: {sorted(wheels, key=_version_key)}")

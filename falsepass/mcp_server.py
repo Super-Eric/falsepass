@@ -65,6 +65,34 @@ def _audit_dir(workdir: str, env: str) -> Path:
     return alias if not (audits / env).exists() and alias.exists() else audits / env
 
 
+def _write_job(path: Path, job: dict[str, Any]) -> None:
+    """Replace job.json in one step: another server process may be reading it."""
+    tmp = path.with_name(f".job.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(job, indent=2))
+    os.replace(tmp, path)
+
+
+class _JobLock:
+    """One job start per environment at a time, across server processes (a client may start
+    a server per call): without it two starts both saw no running job and the second
+    overwrote the first's job.json."""
+
+    def __init__(self, folder: Path) -> None:
+        self.path = folder / ".job.lock"
+
+    def __enter__(self) -> None:
+        self.handle = open(self.path, "w")
+        try:
+            import fcntl
+
+            fcntl.flock(self.handle, fcntl.LOCK_EX)
+        except ImportError:  # Windows: no flock; atomic writes still keep job.json readable
+            pass
+
+    def __exit__(self, *exc: Any) -> None:
+        self.handle.close()  # releases the lock
+
+
 def _alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
@@ -94,7 +122,7 @@ def _job_state(workdir: str, env: str) -> dict[str, Any] | None:
         ok = results.is_file() and results.stat().st_mtime >= job["started"]
         job.update(state="finished" if ok else "failed", exit_code=0 if ok else None)
     job["ended"] = time.time()
-    path.write_text(json.dumps(job, indent=2))
+    _write_job(path, job)
     _jobs.pop(str(path), None)
     return job
 
@@ -104,7 +132,8 @@ def _log_tail(workdir: str, env: str, lines: int = 12) -> list[str]:
     if not log.is_file():
         return []
     text = re.sub(r"[^\n]*\r", "", log.read_text(errors="replace"))  # progress bars redraw with \r
-    return [line for line in text.splitlines() if line.strip()][-lines:]
+    bar = re.compile(r"^[\w ./-]*:\s*\d+%\|")  # a finished progress bar ("Map: 100%|████| 72/72 ...")
+    return [line for line in text.splitlines() if line.strip() and not bar.match(line)][-lines:]
 
 
 def _start_audit(env: str, args: list[str], workdir: str, command: str = "audit") -> dict[str, Any]:
@@ -112,17 +141,18 @@ def _start_audit(env: str, args: list[str], workdir: str, command: str = "audit"
     if not (folder / "env.toml").is_file():
         return {"status": "error", "error": f"no audits/{env}/env.toml under {Path(workdir).expanduser().resolve()}",
                 "next": "Call falsepass_init with the environment first (or pass the workdir that holds audits/)."}  # fmt: skip
-    job = _job_state(workdir, env)
-    if job and job["state"] == "running":
+    with _JobLock(folder):
+        job = _job_state(workdir, env)
+        if job and job["state"] == "running":
+            return job
+        log = open(folder / "job.log", "w")  # the child process inherits it
+        proc = subprocess.Popen([sys.executable, "-m", "falsepass.cli", command, env, *args], cwd=Path(workdir).expanduser(),
+                                stdout=log, stderr=subprocess.STDOUT, start_new_session=True)  # fmt: skip
+        log.close()
+        job = {"env": env, "command": command, "args": args, "pid": proc.pid, "started": time.time(), "state": "running"}
+        _write_job(folder / "job.json", job)
+        _jobs[str(folder / "job.json")] = proc
         return job
-    log = open(folder / "job.log", "w")  # the child process inherits it
-    proc = subprocess.Popen([sys.executable, "-m", "falsepass.cli", command, env, *args], cwd=Path(workdir).expanduser(),
-                            stdout=log, stderr=subprocess.STDOUT, start_new_session=True)  # fmt: skip
-    log.close()
-    job = {"env": env, "command": command, "args": args, "pid": proc.pid, "started": time.time(), "state": "running"}
-    (folder / "job.json").write_text(json.dumps(job, indent=2))
-    _jobs[str(folder / "job.json")] = proc
-    return job
 
 
 def _await_audit(env: str, workdir: str, wait: float) -> dict[str, Any]:
@@ -256,8 +286,15 @@ def build():
         args += ["--manual"] * manual + ["--policies"] * policies + ["--force"] * force
         manual = manual or policies
         result = _json(_run(args, workdir, timeout=600))
-        result["next"] = (f"Fill in {result['folder']}/adapter.py, then call falsepass_audit(env={result['name']!r})" if manual
-                          else f"Call falsepass_audit(env={result['name']!r})")  # fmt: skip
+        if manual:
+            result["next"] = f"Fill in {result['folder']}/adapter.py, then call falsepass_audit(env={result['name']!r})"
+        elif result.get("automatic_likely") is False:
+            result["next"] = (f"Automatic mode will probably stop ({result.get('automatic_unlikely_because', 'see the source')}). "
+                              f"Call falsepass_init again with force=true and manual=true (a Q&A task whose reply you can "
+                              f"write) or policies=true (a game, simulation or tool task), fill in adapter.py, then "
+                              f"falsepass_audit(env={result['name']!r}). Or try falsepass_audit first: it says why it stops.")  # fmt: skip
+        else:
+            result["next"] = f"Call falsepass_audit(env={result['name']!r})"
         return result
 
     @tool

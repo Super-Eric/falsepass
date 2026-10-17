@@ -39,6 +39,26 @@
   v1 taskset; it wrote the v0 one (`vf.load_environment`) for every package.
 - `falsepass audit` prints its own stop messages (no reference answers, a failed control,
   a container task) as one line on stderr, without a Python traceback.
+- Hand-written adapters: the `--manual` skeletons declare a `loader`, so `falsepass repro`
+  works for them; the v1 skeleton loads its taskset with `falsepass.auto.open_taskset`, which
+  also finds a Taskset in a submodule (and so does the generated v1 repro script). An
+  adapter that does not override `equivalent_forms` now gets three P2 forms (whitespace, a
+  sentence after, CRLF) instead of none. The agents page gains "When the reference is not
+  a reply" (what `Example.answer` and `raw` are, which one the scorer reads, `loader`).
+- An inconclusive run whose `answer` field is a JSON object says it may be a grading record
+  and points to `--manual`; the digest's `next` names both `--manual` (Q&A) and `--policies`
+  (games, simulations, tool tasks) instead of policies only.
+- MCP: two jobs started on one environment at the same moment (a client that starts a
+  server per call) no longer overwrite each other's job.json: starts are serialised by a
+  file lock and job.json is replaced atomically.
+- `verify-fix` with a patched copy of `src/` (an overlay) fills in the package's data files
+  from the release wheel; `init` copies only source text, so a JSON task bank was missing
+  and the patched run failed. A stored command that names its script by a relative path now
+  runs from any directory (an absolute audit path failed with "can't open file").
+- `reach` rows gain `not_applicable` (tasks where the probe writes no such completion), and
+  `same_as_good` is documented. `init --json` gains `automatic_unlikely_because`, and the MCP
+  `next` then says to use `manual` or `policies`. `repro` without a loader prints one line,
+  not a traceback; job log tails drop finished progress bars.
 - "no reference answers found" now names the command to run next (`init <id> --force
   --manual`, or `--policies` for games, simulations and tool tasks).
 

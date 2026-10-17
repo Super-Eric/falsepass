@@ -122,6 +122,7 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
         counted.append({
             "probe": probe, "name": name, "variant": variant, **written, "control": probe in control and probe not in wanted and f"{probe}/{variant}" not in wanted,
             "expected": group[0].expected.value, "tasks": len(group),
+            "not_applicable": len(examples) - len(group),  # tasks where this probe writes no such completion
             "failed": len(failing),  # expected 0: paid more than the tolerance; expected full: paid less
             "full_reward": sum(1 for r in group if r.score is not None and r.score >= adapter.max_reward - probes.EPS),
             "errors": sum(1 for r in group if r.score is None),
@@ -174,6 +175,7 @@ def describe(payload: dict[str, Any]) -> str:
         lines.append(f"  {tag}{row['probe']} {row['name']}/{row['variant']}{text}: {what} on {row['failed']} of {row['tasks']} "
                      f"(full reward {row['full_reward']}, errors {row['errors']}, mean {row['mean_reward']:.3f}"
                      + (f"; {row['same_as_good']} identical to the reference reply, not counted" if row["same_as_good"] else "")
+                     + (f"; {row['not_applicable']} tasks have no such completion" if row.get("not_applicable") else "")
                      + ")")  # fmt: skip
     lines.append(f"written to {payload['file']}")
     return "\n".join(lines)

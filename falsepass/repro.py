@@ -151,7 +151,20 @@ from verifiers.v1.runtimes.subprocess import SubprocessConfig, SubprocessRuntime
 from verifiers.v1.trace import AgentInfo, TraceTask
 from verifiers.v1.utils.loaders import taskset_class
 
-taskset = taskset_class(MODULE)(vf.taskset_config_type(MODULE)(id=MODULE, **LOAD_ARGS))
+try:
+    taskset_type, config_type = taskset_class(MODULE), vf.taskset_config_type(MODULE)
+except (AttributeError, TypeError):  # a Taskset in a submodule that the package does not export
+    import importlib
+    import pkgutil
+
+    from verifiers.v1.utils.loaders import concrete_type
+
+    found = [obj for info in pkgutil.walk_packages(importlib.import_module(MODULE).__path__, MODULE + ".")
+             for obj in vars(importlib.import_module(info.name)).values()
+             if isinstance(obj, type) and issubclass(obj, vf.Taskset) and obj is not vf.Taskset and obj.__module__ == info.name]
+    taskset_type = found[0]
+    config_type = concrete_type(taskset_type, vf.TasksetConfig, origin=vf.Taskset) or vf.TasksetConfig
+taskset = taskset_type(config_type(id=MODULE, **LOAD_ARGS))
 tasks = list(itertools.islice(iter(taskset.load()), {last} + 1))
 runtime = SubprocessRuntime(SubprocessConfig())
 
@@ -304,7 +317,11 @@ def generate(audit_dir: Path, probes: list[str] | None = None, per_group: int = 
     if not loader:
         raise RuntimeError(
             f"{audit_dir.name} was audited with a hand-written adapter that declares no `loader` (or before loaders "
-            "were recorded): add a `loader` attribute to the adapter and re-run `falsepass audit`, or write the repro by hand"
+            "were recorded). Add one to the adapter class and re-run the audit, e.g. "
+            '`loader = {"kind": "v0", "module": "my_env", "load_args": {}, "getter": "get_dataset"}` for a legacy '
+            'environment or `loader = {"kind": "v1", "module": "my_env", "load_args": {}}` for a v1 taskset, with example '
+            "keys that end in the row's index (`row-17`, `task-17`); or write the repro by hand and run it with "
+            "`repro --script`"
         )
     completions = json.loads((audit_dir / "completions.json").read_text())
     cases = select(payload["results"], completions, probes, per_group)

@@ -142,9 +142,11 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
             "facts_that_hold": [f"{f['probe']} {f['name']}/{f['variant']}: expected {f['expected']}, got "
                                 f"{', '.join(_fmt(x) for x in f['scores'][:3])} on {f['failed']} of {f['runs']} tasks" for f in holds[:8]],
             "failing_omitted": len(failing),
-            "next": "Automatic mode could not tell a correct completion from an empty one here (a game, a simulation, a "
-                    "tool task, or a reward that ignores the answer). Write policies for it: `falsepass init <target> --policies --force` "
-                    "(MCP: falsepass_init with policies=true, force=true) and "
+            "next": "Automatic mode could not tell a correct completion from an empty one here. For a Q&A task whose "
+                    "`answer` field is not the reply the prompt asks for (a grading record, a list of accepted answers), "
+                    "write an adapter whose reference is that reply: `falsepass init <target> --manual --force` (MCP: "
+                    "manual=true, force=true), https://super-eric.github.io/falsepass/docs/agents/#when-the-reference-is-not-a-reply. "
+                    "For a game, a simulation or a tool task, write policies: `--policies --force` (MCP: policies=true), "
                     "https://super-eric.github.io/falsepass/docs/agents/#games-simulations-and-tool-tasks",
         }  # fmt: skip
         failing = []

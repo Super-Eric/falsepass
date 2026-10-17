@@ -114,17 +114,22 @@ and `stderr` instead, and nothing is stored.
           "max_reward": 1.0, "bad_tolerance": 0.0, "format": "reasoning+boxed",
           "audit_format": "reasoning+boxed", "note": "", "versions": {"verifiers": "…"}},
  "rows": [{"probe": "P1", "name": "ground_truth", "variant": "reference", "control": true,
-           "expected": "full", "tasks": 500, "failed": 0, "full_reward": 500, "errors": 0,
-           "mean_reward": 1.0, "failed_tasks": [], "examples": []},
+           "expected": "full", "tasks": 500, "not_applicable": 0, "failed": 0, "full_reward": 500,
+           "errors": 0, "same_as_good": 0, "mean_reward": 1.0, "failed_tasks": [], "examples": []},
           {"probe": "P15", "name": "hedged_in_slot", "variant": "denied", "control": false,
-           "expected": "zero", "tasks": 500, "failed": 7, "full_reward": 7, "errors": 0,
-           "mean_reward": 0.014, "failed_tasks": ["test-17", "…"],
+           "expected": "zero", "tasks": 500, "not_applicable": 0, "failed": 7, "full_reward": 7,
+           "errors": 0, "same_as_good": 0, "mean_reward": 0.014, "failed_tasks": ["test-17", "…"],
            "examples": [{"task": "test-17", "score": 1.0, "completion_id": "…", "completion": "…"}]}]}
 ```
 
 `failed` counts rows that missed their expectation: for `expected` zero, paid more than
 `bad_tolerance`; for `expected` full, paid less than `max_reward`. `errors` are calls that
-returned no score. The answer format is inferred again for this run; `note` says so when
+returned no score. `same_as_good` counts tasks where the known-bad completion came out
+identical to the reference reply (a wrong value that happens to equal the answer, a
+template that reduces to it): paid, but not counted in `failed`, so `full_reward` can
+exceed `failed`. `not_applicable` counts tasks where the probe writes no such completion
+(P16 on a task with no free-text field, for example), so `tasks` can be smaller than
+`tasks_counted`. The answer format is inferred again for this run; `note` says so when
 it differs from the audit's. `latest.json` is the same document plus `file`, its path.
 
 With `--template`, `meta` also has `templates` and `template_expect`, and each template
@@ -144,7 +149,9 @@ named `<probes>+template-<hash>.json`.
 `automatic_likely` is read from the package source (single- or multi-turn, a reference
 answer in the data, no sandbox, tools, judge or API key): `false` means the automatic run
 will probably stop and an adapter (`--manual` or `--policies`) is needed; `null` when there
-is no wheel to read (local folders, Inspect registry names).
+is no wheel to read (local folders, Inspect registry names). With `false`,
+`automatic_unlikely_because` says why (e.g. "sandbox, no reference answer found in the
+source").
 
 ## Exit codes
 

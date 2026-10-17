@@ -27,3 +27,24 @@ def test_the_stored_install_line_is_reused_with_the_package_swapped(tmp_path: Pa
     (audit / "repro.output.txt").write_text("A\n")  # no header: built from env.toml
     command = verify.command_for(audit, "repro.py", Path("/patched/demo"))
     assert command[-2:] == ["python", str(audit / "repro.py")] and "/patched/demo" in command
+
+
+def test_a_stored_relative_script_path_is_made_absolute(tmp_path):
+    from falsepass import verify
+
+    audit = tmp_path / "audits" / "demo"
+    audit.mkdir(parents=True)
+    command = ["uv", "run", "python", "-I", "audits/demo/repro.py"]
+    assert verify._absolute_script(command, audit, "repro.py")[-1] == str((audit / "repro.py").resolve())
+    assert verify._absolute_script(["python", "other.py"], audit, "repro.py") == ["python", "other.py"]
+
+
+def test_an_overlay_of_a_local_source_is_used_as_it_is(tmp_path):
+    from falsepass import verify
+
+    audit = tmp_path / "audits" / "demo"
+    audit.mkdir(parents=True)
+    (audit / "env.toml").write_text('[env]\nid = "local/demo"\nsource = "/somewhere"\n')
+    patched = tmp_path / "patched"
+    (patched / "demo").mkdir(parents=True)
+    assert verify.overlay_path(audit, patched) == patched  # nothing to fetch for a local environment

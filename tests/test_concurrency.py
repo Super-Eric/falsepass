@@ -79,3 +79,20 @@ def test_jobs_change_speed_not_results(tmp_path: Path, safe: bool):
         assert together < alone * 0.6 and most > 1
     else:
         assert most == 1  # a scorer that does not say it is safe is never run concurrently
+
+
+def test_two_job_starts_on_one_environment_start_one_job(tmp_path):
+    """Clients that start a server per call can start two jobs at once: one must win, and
+    the other must see it running instead of overwriting its job.json."""
+    from concurrent.futures import ProcessPoolExecutor
+
+    from falsepass import mcp_server
+
+    folder = tmp_path / "audits" / "toy"
+    folder.mkdir(parents=True)
+    (folder / "env.toml").write_text('[env]\nid = "local/toy"\n')
+    with ProcessPoolExecutor(2) as pool:
+        jobs = list(pool.map(mcp_server._start_audit, ["toy", "toy"], [["-n", "1"], ["-n", "1"]], [str(tmp_path)] * 2,
+                             ["audit", "reach"]))  # fmt: skip
+    assert jobs[0]["pid"] == jobs[1]["pid"]
+    assert json.loads((folder / "job.json").read_text())["pid"] == jobs[0]["pid"]
