@@ -93,7 +93,7 @@ class V0RubricScorer:
     async def score(self, example: Example, completion: Completion) -> Score:
         state = self.build_state(example, as_messages(completion))
         with captured_errors() as errors:
-            ok = await _guarded(self.env.rubric.score_rollout(state), errors)
+            ok = await _guarded(score_rollout(self.env.rubric, state), errors)
         if not ok:
             return Score(None, {}, list(errors))
         return Score(float(state["reward"]), dict(state.get("metrics") or {}), list(errors))
@@ -175,6 +175,9 @@ def policy_client(act: Any, wants_tools: bool = False) -> Any:
     import time
 
     import verifiers as vf
+
+    if not hasattr(vf, "Client"):
+        return _openai_style_client(act, wants_tools)
     from verifiers.types import Response, ResponseMessage, ToolCall
 
     class Scripted(vf.Client):
@@ -221,6 +224,69 @@ def policy_client(act: Any, wants_tools: bool = False) -> Any:
     return Scripted(object())
 
 
+def _openai_style_client(act: Any, wants_tools: bool = False) -> Any:
+    """`policy_client` for verifiers releases without `vf.Client` (0.1.8 and earlier): the
+    rollout calls `client.chat.completions.create(...)` and reads an OpenAI `ChatCompletion`."""
+    import json
+    import time
+
+    from openai.types.chat import ChatCompletion, ChatCompletionMessage
+    from openai.types.chat.chat_completion import Choice
+    from openai.types.chat.chat_completion_message_tool_call import ChatCompletionMessageToolCall, Function
+
+    class Completions:
+        def __init__(self, owner: Any) -> None:
+            self.owner = owner
+
+        async def create(self, model, messages, tools=None, **kwargs):
+            owner = self.owner
+            if owner.calls >= TURN_CAP:
+                raise RuntimeError(f"rollout did not stop after {TURN_CAP} model turns")
+            plain = [_plain(m) for m in messages]
+            entry = act(plain, [tool_schema(t) for t in tools or []]) if wants_tools else act(plain)
+            entry = {"content": entry} if isinstance(entry, str) else entry
+            owner.calls += 1
+            calls = [
+                ChatCompletionMessageToolCall(
+                    id=f"call-{owner.calls}-{i}", type="function",
+                    function=Function(name=call["name"], arguments=json.dumps(call.get("arguments", {}))),
+                )
+                for i, call in enumerate(entry.get("tool_calls") or [])
+            ]  # fmt: skip
+            message = ChatCompletionMessage(role="assistant", content=entry.get("content"), tool_calls=calls or None)
+            choice = Choice(index=0, message=message, finish_reason="tool_calls" if calls else "stop")
+            return ChatCompletion(
+                id=f"scripted-{owner.calls}", created=int(time.time()), model=model,
+                object="chat.completion", choices=[choice],
+            )  # fmt: skip
+
+    class Chat:
+        def __init__(self, owner: Any) -> None:
+            self.completions = Completions(owner)
+
+    class Scripted:
+        calls = 0
+
+        def __init__(self) -> None:
+            self.chat = Chat(self)
+
+    return Scripted()
+
+
+def score_rollout(rubric: Any, state: Any) -> Any:
+    """`rubric.score_rollout(state)`. Releases without `vf.Client` (0.1.8) also want a
+    semaphore, and timing fields that a real rollout would have set."""
+    import inspect
+
+    if "score_sem" not in inspect.signature(rubric.score_rollout).parameters:
+        return rubric.score_rollout(state)
+    if state.get("timing") is None:
+        state["timing"] = {}
+    for key in ("generation_ms", "scoring_ms", "total_ms"):
+        state["timing"].setdefault(key, 0.0)
+    return rubric.score_rollout(state, score_sem=asyncio.Semaphore(1))
+
+
 class V0RolloutScorer(V0RubricScorer):
     """Multi-turn legacy environments: run the env's own rollout loop with a scripted
     stand-in for the model, then score the resulting state. The assistant messages of
@@ -245,7 +311,7 @@ class V0RolloutScorer(V0RubricScorer):
             holder["state"] = state
             if state.get("error") is not None:
                 raise RuntimeError(f"rollout error: {state['error']}")
-            await self.env.rubric.score_rollout(state)
+            await score_rollout(self.env.rubric, state)
 
         with captured_errors() as errors:
             ok = await _guarded(run(), errors)

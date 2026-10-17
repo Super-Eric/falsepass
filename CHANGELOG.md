@@ -11,6 +11,19 @@
 - P14 (the answer wrapper named in prose) now also runs when the dataset stores the whole
   block, wrapper included, as the reference (for example `<answer>…</answer>` with a bare
   answer format). Before, such environments got no P14 rows.
+- Environments pinned to verifiers 0.1.8 or earlier (no `vf.Client`) can be audited
+  multi-turn: the scripted model is an OpenAI-style client there, and the rubric gets the
+  semaphore those releases ask for. Generated repro scripts do the same. Before, the run
+  stopped with `cannot import name 'Response' from 'verifiers.types'`.
+- `falsepass init` reads the package's `Requires-Python` and writes `python = "3.13"` (or
+  whichever version fits) to env.toml when 3.12 is ruled out; audit, repro and verify-fix
+  use it. Before, such packages failed to resolve.
+- `falsepass init` honours a verifiers ceiling: `>=0.1.14,<0.2` installs the newest release
+  under 0.2 (from PyPI's list, or the floor offline) instead of the default 0.3.1, which
+  could not resolve.
+- `falsepass init` picks the module named after the package when a wheel ships several
+  top-level modules (`cortifybench_env` for `cortifybench-env`), as verifiers does. Before,
+  it took the first in alphabetical order.
 
 ## 0.7.0 — 2026-10-17
 

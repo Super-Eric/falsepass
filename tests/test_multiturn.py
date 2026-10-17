@@ -222,3 +222,27 @@ def test_t8_repeats_what_the_environment_revealed(reward, pays):
     assert result.passed is not pays
     assert "revealed 'heron'" in result.detail
     assert probes.STORE[result.completion_id]["script"][-1]["content"] == "heron"  # the episode is kept for repro
+
+
+def test_releases_without_vf_client_get_an_openai_style_stand_in():
+    """verifiers 0.1.8 calls `client.chat.completions.create` and wants `score_sem`."""
+    from openai.types.chat import ChatCompletion
+
+    from falsepass.scorers import _openai_style_client, score_rollout
+
+    client = _openai_style_client(lambda messages: {"content": None, "tool_calls": [{"name": "deposit", "arguments": {"amount": 5}}]})
+    reply = asyncio.run(client.chat.completions.create(model="m", messages=[{"role": "user", "content": "hi"}]))
+    assert isinstance(reply, ChatCompletion) and client.calls == 1
+    call = reply.choices[0].message.tool_calls[0]
+    assert call.function.name == "deposit" and call.function.arguments == '{"amount": 5}'
+    assert reply.choices[0].finish_reason == "tool_calls"
+
+    class OldRubric:
+        async def score_rollout(self, state, score_sem):
+            async with score_sem:
+                state["timing"]["total_ms"] += 1.0
+                state["reward"] = 1.0
+
+    state = {"timing": None}
+    asyncio.run(score_rollout(OldRubric(), state))
+    assert state["reward"] == 1.0 and state["timing"]["total_ms"] == 1.0

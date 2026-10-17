@@ -303,7 +303,7 @@ def scaffold(args) -> int:
 
         shutil.rmtree(audit_dir / "src", ignore_errors=True)
     audit_dir.mkdir(parents=True, exist_ok=True)
-    keys = ("id", "framework", "task", "package", "version", "module", "index", "verifiers", "inspect_ai", "hud", "source", "answers", "extra")
+    keys = ("id", "framework", "task", "package", "version", "module", "index", "verifiers", "python", "inspect_ai", "hud", "source", "answers", "extra")
     required = ("index",) if info.get("framework", "verifiers") == "verifiers" else ()
     lines = [f"{key} = {json.dumps(info[key])}" for key in keys if info.get(key) or key in required]
     declared = f"# declared by the package: {info['declared']}\n" if info.get("declared") else ""

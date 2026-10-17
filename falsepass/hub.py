@@ -22,17 +22,63 @@ def _version_key(version: str) -> tuple:
     return tuple(int(p) if p.isdigit() else p for p in re.split(r"[.\-+]", version))
 
 
-def verifiers_pin(specifier: str) -> str:
+def verifiers_pin(specifier: str, releases: list[str] | None = None) -> str:
     """The verifiers version to install for a declared requirement such as `>=0.3.0`.
     An exact pin is the only version that installs. Environments built for a 0.1.15.dev
-    build do not import under 0.3.x: keep their own floor. Otherwise the default."""
+    build do not import under 0.3.x: keep their own floor. A ceiling below the default
+    (`>=0.1.14,<0.2`) takes the newest release under it (`releases`, else PyPI's list),
+    or the floor when the list cannot be read. Otherwise the default."""
     exact = re.search(r"==\s*([\w.]+)", specifier)
     bound = re.search(r">=\s*([\w.]+)", specifier)
+    ceiling = re.search(r"<(=?)\s*([\w.]+)", specifier)
     if exact:
         return exact.group(1)
     if bound and (".dev" in bound.group(1) or newer(bound.group(1), DEFAULT_VERIFIERS)):
         return bound.group(1)  # a floor above the default is the oldest version that installs
+    if ceiling and not _below(DEFAULT_VERIFIERS, ceiling.group(2), ceiling.group(1) == "="):
+        if releases is None:
+            try:
+                releases = pypi_releases("verifiers")
+            except Exception:  # noqa: BLE001 - offline: the floor is the best guess left
+                releases = []
+        floor = bound.group(1) if bound else "0"
+        fitting = [
+            r for r in releases
+            if re.fullmatch(r"[0-9.]+", r) and _below(r, ceiling.group(2), ceiling.group(1) == "=") and not newer(floor, r)
+        ]  # fmt: skip
+        if fitting:
+            return max(fitting, key=_version_key)
+        if bound:
+            return bound.group(1)
     return DEFAULT_VERIFIERS
+
+
+def _below(version: str, ceiling: str, inclusive: bool) -> bool:
+    return not newer(version, ceiling) and (inclusive or version != ceiling)
+
+
+def python_for(requires: str) -> str:
+    """The Python to run an environment with when its `Requires-Python` rules out 3.12
+    (e.g. `>=3.13,<3.14`); '' when 3.12 is fine."""
+    def allowed(minor: int) -> bool:
+        for op, version in re.findall(r"(>=|<=|==|!=|~=|>|<)\s*([0-9][0-9.*]*)", requires):
+            parts = [int(p) for p in version.split(".")[:2] if p.isdigit()] + [0]
+            want, have = (parts[0], parts[1]), (3, minor)
+            ok = {">=": have >= want, "<=": have <= want, ">": have > want, "<": have < want,
+                  "==": have == want, "!=": have != want, "~=": have >= want}[op]  # fmt: skip
+            if not ok:
+                return False
+        return True
+
+    if allowed(12):
+        return ""
+    return next((f"3.{m}" for m in (13, 11, 14, 10) if allowed(m)), "")
+
+
+def pypi_releases(package: str) -> list[str]:
+    import json
+
+    return list(json.loads(_get(f"https://pypi.org/pypi/{package}/json"))["releases"])
 
 
 def pypi_version(package: str) -> str:
@@ -70,9 +116,17 @@ def describe_local(path: Path) -> dict:
         "module": local_module(path, package),
         "index": "",
         "verifiers": verifiers_pin(re.sub(r"^verifiers\s*(\[[^\]]*\])?", "", requirement)),
+        "python": python_for(project.get("requires-python", "")),
         "declared": requirement,
         "source": str(path),
     }
+
+
+def wheel_module(top_level: list[str], package: str) -> str:
+    """The environment's module among a wheel's top-level modules: the one named after the
+    package (verifiers imports `cortifybench_env` for `cortifybench-env`), else the first."""
+    name = package.replace("-", "_").lower()
+    return name if name in top_level else top_level[0] if top_level else package
 
 
 def local_module(path: Path, package: str) -> str:
@@ -115,6 +169,7 @@ def describe(env_id: str, version: str | None = None) -> dict:
     top_level = sorted({n.split("/")[0].removesuffix(".py") for n in names if ".dist-info" not in n and n.endswith(".py")})
     requirement = re.search(r"^Requires-Dist: verifiers(\[[^\]]*\])?[ \t]*(.*)$", metadata, re.M)
     pin = verifiers_pin(requirement.group(2) if requirement else "")
+    requires_python = re.search(r"^Requires-Python:[ \t]*(.*)$", metadata, re.M)
     project_urls = re.findall(r"^Project-URL: (.+)$", metadata, re.M)
     sources = {n: archive.read(n) for n in names if ".dist-info" not in n and n.endswith((".py", ".toml", ".md"))}
     return {
@@ -124,9 +179,10 @@ def describe(env_id: str, version: str | None = None) -> dict:
         "id": env_id,
         "package": package,
         "version": version,
-        "module": top_level[0] if top_level else package,
+        "module": wheel_module(top_level, package),
         "index": index,
         "verifiers": pin,
+        "python": python_for(requires_python.group(1)) if requires_python else "",
         "declared": f"verifiers{requirement.group(1) or ''}{requirement.group(2)}".strip() if requirement else "",
     }
 

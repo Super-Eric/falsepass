@@ -110,3 +110,23 @@ def test_verify_fix_lays_a_plain_folder_over_the_release(tmp_path: Path):
     command = verify.command_for(audit, "repro.py", plain)
     assert command[:2] == ["env", f"PYTHONPATH={plain}"] and "my-env==0.2.0" in command
     assert verify.command_for(audit, "repro.py", None)[0] == "uv"  # the unpatched baseline
+
+
+def test_verifiers_pin_respects_a_ceiling_below_the_default():
+    releases = ["0.1.13", "0.1.14", "0.1.15", "0.1.15.dev3", "0.2.0", "0.3.1"]
+    assert hub.verifiers_pin(">=0.1.14,<0.2", releases) == "0.1.15"
+    assert hub.verifiers_pin("<0.2,>=0.1.14", []) == "0.1.14"  # offline: the floor
+    assert hub.verifiers_pin("<=0.2.0", releases) == "0.2.0"
+    assert hub.verifiers_pin(">=0.3.0,<0.5", releases) == hub.DEFAULT_VERIFIERS
+
+
+def test_python_follows_requires_python_only_when_it_rules_out_312():
+    assert hub.python_for(">=3.13,<3.14") == "3.13"
+    assert hub.python_for(">=3.10") == ""
+    assert hub.python_for("<3.12,>=3.10") == "3.11"
+    assert hub.python_for("") == ""
+
+
+def test_wheel_module_prefers_the_one_named_after_the_package():
+    assert hub.wheel_module(["cortifybench", "cortifybench_env"], "cortifybench-env") == "cortifybench_env"
+    assert hub.wheel_module(["aevion_chess_env"], "aevion-chess-mate") == "aevion_chess_env"
