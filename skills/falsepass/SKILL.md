@@ -62,7 +62,9 @@ For each lead:
    strictness the prompt asks for are design choices: report them as observations.
 4. Measure reach on the environment's own data: on how many tasks does it happen?
    `falsepass reach environment --probe P15/denied` counts one probe row on every task
-   (`--tasks N` for a sample), with the reference as a control.
+   (`--tasks N` for a sample), with the reference as a control. To count your own
+   completion, `--template '\boxed{{answer} \text{ is wrong}}'` fills `{answer}`, `{wrong}`,
+   `{answer_in_format}`, `{wrong_in_format}` per task; no counting script needed.
 5. If you have a fix, check it keeps every correct answer that is paid today and run the
    repro again; with a patched copy (of the audit's `src/` or the package),
    `falsepass verify-fix environment --source <folder> --known-good` shows which lines

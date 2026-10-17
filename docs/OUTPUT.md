@@ -127,6 +127,11 @@ and `stderr` instead, and nothing is stored.
 returned no score. The answer format is inferred again for this run; `note` says so when
 it differs from the audit's. `latest.json` is the same document plus `file`, its path.
 
+With `--template`, `meta` also has `templates` and `template_expect`, and each template
+is a row with `probe` "U1", `variant` "t1", "t2", ... in the order given, plus `template`
+(the text as given) and `first_completion` (what it became on the first task). The file is
+named `<probes>+template-<hash>.json`.
+
 ## falsepass init --json
 
 ```json

@@ -159,6 +159,7 @@ falsepass results environment --completion ID   # one completion in full (IDs ar
 falsepass scan path/to/source [--json]    # static pre-scan only, nothing is installed or run
 falsepass discover --days 90 --limit 160  # recently maintained Hub environments and what each needs
 falsepass reach environment --probe P15/denied   # how many tasks one failing probe row reaches (every task by default)
+falsepass reach environment --template '{wrong} or {answer}'   # ...or a completion of your own, filled per task
 falsepass repro environment               # stand-alone script that re-scores the exact failing completions
 falsepass repro environment --run         # ...and run it twice in fresh virtualenvs, compare, store the first run
 falsepass rollout environment -n 20       # what a local model's own replies earn (Ollama)

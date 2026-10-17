@@ -119,6 +119,7 @@ falsepass results environment --completion ID   # 某个回答的全文（ID 在
 falsepass scan path/to/source [--json]    # 只做静态扫描，不安装也不运行任何东西
 falsepass discover --days 90 --limit 160  # 最近有人维护的 Hub 环境，以及每个需要什么条件
 falsepass reach environment --probe P15/denied   # 统计某一条没通过的探针在多少道题上成立（默认全部题目）
+falsepass reach environment --template '{wrong} or {answer}'   # ……或者自己写的回答，每道题自动代入
 falsepass repro environment               # 生成独立脚本，给那些没通过的回答重新打分
 falsepass repro environment --run         # 再在两个全新的虚拟环境里各跑一遍，比较输出，保存第一遍的结果
 falsepass rollout environment -n 20       # 看本地模型（Ollama）自己答题实际拿多少分

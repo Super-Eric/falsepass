@@ -429,13 +429,19 @@ def main(argv: list[str] | None = None) -> int:
         "reach", help="count how many tasks a probe fails on: a sample of N or every task (after an audit)",
         epilog="Scores only the probe rows asked for, plus the reference (P1) as a control, in an isolated "
                "virtualenv like `audit`, and writes audits/<env>/reach/<probe>.json; the stored audit results are "
-               "not touched. Per-example probes only (P1-P9, P13-P15, A1, X1). Example: "
-               "falsepass reach my-env --probe P15/denied --tasks all",
+               "not touched. Per-example probes only (P1-P9, P13-P15, A1, X1). Examples: "
+               "falsepass reach my-env --probe P15/denied --tasks all; "
+               "falsepass reach my-env --template '\\boxed{{answer} \\text{ is wrong}}' --template '{wrong} or {answer}'",
     )  # fmt: skip
     reach.add_argument("env")
-    reach.add_argument("--probe", action="append", required=True, metavar="CODE[/VARIANT]",
+    reach.add_argument("--probe", action="append", default=[], metavar="CODE[/VARIANT]",
                        help="a probe code, or code/variant as in the results, e.g. P15/denied (repeatable); "
                             "`known-good` counts every correct-answer row (P1, P2, P14)")
+    reach.add_argument("--template", action="append", default=[], metavar="TEXT",
+                       help="count a completion of your own: {answer}, {wrong}, {answer_in_format}, {wrong_in_format} "
+                            "are filled per task, other braces stay (repeatable; rows U1/t1, t2, ...)")
+    reach.add_argument("--expect", choices=["zero", "full"], default="zero",
+                       help="what the templates should earn: zero (default; count where they are paid) or full")
     reach.add_argument("--tasks", default="all", help="how many tasks to sample, or 'all' (default)")
     reach.add_argument("--seed", default="0")
     reach.add_argument("--jobs", help="tasks scored at once where safe (default up to 8)")
@@ -629,7 +635,11 @@ def main(argv: list[str] | None = None) -> int:
     if audit_dir is None:
         return missing_audit(args.env)
     if args.command == "reach":
-        extra = [*extra, *(a for code in args.probe for a in ("--probe", code)), "--tasks", args.tasks, "--seed", args.seed,
+        if not args.probe and not args.template:
+            print("falsepass: reach needs --probe CODE[/VARIANT] or --template TEXT", file=sys.stderr)
+            return 2
+        extra = [*extra, *(a for code in args.probe for a in ("--probe", code)),
+                 *(a for text in args.template for a in ("--template", text)), "--expect", args.expect, "--tasks", args.tasks, "--seed", args.seed,
                  *(["--jobs", args.jobs] if args.jobs else []), *(["--json"] if args.json else [])]  # fmt: skip
     module = {"rollout": "falsepass.rollout", "propose": "falsepass.propose", "container": "falsepass.container_probe",
               "reach": "falsepass.reach"}.get(

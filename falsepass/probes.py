@@ -657,6 +657,32 @@ async def a2_determinism(adapter: Adapter, scorer: Scorer, ex: Example) -> list[
     return results
 
 
+# --- U1: completions written by the caller (`falsepass reach --template`) ----------------
+
+# Filled per task; braces that are not one of these four stay as written, so LaTeX works:
+# `\boxed{{answer} \text{ is wrong}}`.
+PLACEHOLDER = re.compile(r"\{(answer_in_format|wrong_in_format|answer|wrong)\}")
+TEMPLATES: list[str] = []
+TEMPLATE_EXPECT = Expect.ZERO
+
+
+def fill_template(template: str, adapter: Adapter, ex: Example) -> str:
+    def value(name: str) -> str:
+        answer = ex.answer if name.startswith("answer") else adapter.wrong_answer(ex)
+        return _text(adapter.render(answer, ex)) if name.endswith("_in_format") else str(answer)
+
+    return PLACEHOLDER.sub(lambda m: value(m.group(1)), template)
+
+
+async def u1_template(adapter: Adapter, scorer: Scorer, ex: Example) -> list[ProbeResult]:
+    """Each caller template, filled with this task's answer: t1, t2, ... in the order given."""
+    return [
+        await check("U1", "template", f"t{i}", TEMPLATE_EXPECT, fill_template(t, adapter, ex), adapter, scorer, ex,
+                    answer_free="{answer" not in t)  # fmt: skip
+        for i, t in enumerate(TEMPLATES, 1)
+    ]
+
+
 TOOL_MODE = [t5_turn_limit, t6_tool_policies]  # all that applies when the answer is given through tool calls
 # No reference answer (HUD templates keep it inside the grader): only what needs none.
 ANSWER_FREE = [p3_empty, p4_echo, a1_answer_free_spray]

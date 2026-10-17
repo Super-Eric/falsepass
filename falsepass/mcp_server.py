@@ -323,17 +323,28 @@ def build():
         return _await_audit(env, workdir, wait)
 
     @tool
-    def falsepass_reach(env: str, probe: list[str], tasks: int = 0, wait: int = 45, workdir: str = ".") -> Any:
+    def falsepass_reach(env: str, probe: list[str] | None = None, templates: list[str] | None = None,
+                        expect: str = "zero", tasks: int = 0, wait: int = 45, workdir: str = ".") -> Any:
         """After an audit: how many tasks a failing probe reaches. Scores only the rows asked
         for, e.g. probe=["P15/denied"] (a code, or code/variant as in the results), plus the
         reference (P1) as a control, on every task (`tasks`=0) or a sample of `tasks`.
+        `templates` counts completions of your own instead of writing a script (rows U1/t1,
+        t2, ...): "{answer}", "{wrong}", "{answer_in_format}" and "{wrong_in_format}" are
+        filled per task, other braces stay, e.g. "\\boxed{{answer} \\text{ is wrong}}";
+        `expect` "zero" counts where they are paid, "full" where they are not paid in full.
+        Each template row also returns `first_completion`, the text it became on the first task.
         Returns per row the tasks counted, how many failed (expected 0: paid; expected full:
         not paid in full), full-reward and error counts, the failing task keys and up to
         three failing completions. Per-example probes only (P1-P9, P13-P15, A1, X1).
         Runs in the background like falsepass_audit: status "running" means call
         falsepass_audit_status. Whole datasets whose reward starts a process per call
         (uv scripts) take minutes to an hour."""
-        args = [a for code in probe for a in ("--probe", code)] + ["--tasks", str(tasks) if tasks > 0 else "all"]
+        if not probe and not templates:
+            raise RuntimeError('nothing to count: give probe=["P15/denied"] or templates=["..."]')
+        if expect not in ("zero", "full"):
+            raise RuntimeError('expect is "zero" or "full"')
+        args = [a for code in probe or [] for a in ("--probe", code)] + [a for text in templates or [] for a in ("--template", text)]
+        args += ["--expect", expect, "--tasks", str(tasks) if tasks > 0 else "all"]
         started = _start_audit(env, args, workdir, command="reach")
         if started.get("status") == "error":
             raise RuntimeError(f"{started['error']}. {started['next']}")

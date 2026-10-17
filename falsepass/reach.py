@@ -5,6 +5,11 @@ of the whole dataset it fails on. `falsepass reach <env> --probe P15/denied --ta
 scores only what it was asked for, plus the reference (P1) as a control, and writes
 `audits/<env>/reach/<probe>.json`. The stored audit results are not touched.
 
+`--template TEXT` counts a completion of the caller's own instead (probe U1, rows t1, t2, ...):
+`{answer}` and `{wrong}` are replaced per task by the reference and by a wrong value,
+`{answer_in_format}` and `{wrong_in_format}` by the same written in the answer format the audit
+uses (`\\boxed{42}`, `#### 42`, ...). Every other brace stays as written.
+
 Per-example probes only (P1-P9, P13-P15, A1, X1): the slower probes that repeat or replay
 an episode (P10, P11, T4-T8) and tool-mode policies are not counted this way.
 """
@@ -12,6 +17,7 @@ an episode (P10, P11, T4-T8) and tool-mode policies are not counted this way.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 import sys
@@ -29,8 +35,11 @@ ALL = 10**9  # "every task": larger than any dataset; the loaders cap at the dat
 EXAMPLES_KEPT = 3  # full completions kept per variant, for reading and for a repro
 
 
-def _label(wanted: list[str]) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "_", "+".join(wanted))[:120]
+def _label(wanted: list[str], templates: list[str]) -> str:
+    named = [w for w in wanted if w != "U1"]
+    if templates:  # the texts make a poor file name; a short hash keeps runs of different templates apart
+        named.append("template-" + hashlib.sha1("\n".join(templates).encode()).hexdigest()[:8])
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", "+".join(named))[:120]
 
 
 def _probe_list(adapter: Any) -> list:
@@ -42,9 +51,18 @@ def _probe_list(adapter: Any) -> list:
 
 
 def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int = 0, jobs: int = DEFAULT_JOBS,
-        out: Path | None = None) -> dict[str, Any]:  # fmt: skip
-    """Score the probes in `wanted` ("P15" or "P15/denied") on `tasks` tasks (None: all)."""
+        out: Path | None = None, templates: list[str] | None = None, expect: str = "zero") -> dict[str, Any]:  # fmt: skip
+    """Score the probes in `wanted` ("P15" or "P15/denied") and the completion `templates`
+    (expected to earn `expect`: "zero" or "full") on `tasks` tasks (None: all)."""
+    templates = list(templates or [])
+    if not wanted and not templates:
+        raise RuntimeError("nothing to count: give a probe (e.g. P15/denied) or a completion template")
+    if templates:
+        wanted = [*wanted, "U1"]
     adapter = load_adapter(audit_dir)
+    if templates and getattr(adapter, "answer_free", False) and any(probes.PLACEHOLDER.search(t) for t in templates):
+        raise RuntimeError("this environment has no reference answer to fill {answer} or {wrong} with; "
+                           "use a fixed text instead")  # fmt: skip
     hand_written = (audit_dir / "adapter.py").is_file()
     if not hand_written:
         from falsepass import auto
@@ -58,7 +76,8 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
     try:
         if hasattr(adapter, "prepare"):
             loop.run_until_complete(adapter.prepare(scorer, examples))
-        probe_list = _probe_list(adapter)
+        probe_list = _probe_list(adapter) + ([probes.u1_template] if templates else [])
+        probes.TEMPLATES, probes.TEMPLATE_EXPECT = templates, Expect(expect)
         # What can be asked for: run the probes on one task with nothing scored.
         probes.ONLY = {"(none)"}
         catalog = score_examples(adapter, scorer, loop, probe_list, examples[:1], 1, "catalog")
@@ -75,7 +94,7 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
         parallel = jobs > 1 and concurrent_ok(adapter, scorer)
         results = score_examples(adapter, scorer, loop, probe_list, examples, jobs if parallel else 1, "reach")
     finally:
-        probes.ONLY = set()
+        probes.ONLY, probes.TEMPLATES, probes.TEMPLATE_EXPECT = set(), [], Expect.ZERO
         loop.run_until_complete(scorer.close())
         loop.close()
 
@@ -96,8 +115,12 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
     counted = []
     for (probe, name, variant), group in rows.items():
         failing = [r for r in group if not r.passed]
+        written = {}
+        if probe == "U1":  # what was asked for and what it became on the first task, to catch a typo in a placeholder
+            written = {"template": templates[int(variant[1:]) - 1],
+                       "first_completion": probes.STORE.get(group[0].completion_id, group[0].completion)}  # fmt: skip
         counted.append({
-            "probe": probe, "name": name, "variant": variant, "control": probe in control and probe not in wanted and f"{probe}/{variant}" not in wanted,
+            "probe": probe, "name": name, "variant": variant, **written, "control": probe in control and probe not in wanted and f"{probe}/{variant}" not in wanted,
             "expected": group[0].expected.value, "tasks": len(group),
             "failed": len(failing),  # expected 0: paid more than the tolerance; expected full: paid less
             "full_reward": sum(1 for r in group if r.score is not None and r.score >= adapter.max_reward - probes.EPS),
@@ -116,7 +139,8 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
     payload = {
         "meta": {
             "environment": adapter.name, "date": date.today().isoformat(), "falsepass": falsepass.__version__,
-            "asked": wanted, "tasks_counted": len(examples),
+            "asked": wanted, "templates": templates, "template_expect": expect if templates else None,
+            "tasks_counted": len(examples),
             "tasks_in_dataset": len(pool) if pool is not None else (len(examples) if everything else None),
             "all_tasks": everything, "seed": seed, "jobs": jobs if parallel else 1,
             "max_reward": adapter.max_reward, "bad_tolerance": adapter.bad_tolerance,
@@ -129,7 +153,7 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
     }
     out = out or audit_dir / "reach"
     out.mkdir(parents=True, exist_ok=True)
-    path = out / f"{_label(wanted)}.json"
+    path = out / f"{_label(wanted, templates)}.json"
     path.write_text(json.dumps(payload, indent=1, ensure_ascii=True))
     (out / "latest.json").write_text(json.dumps({**payload, "file": str(path)}, indent=1, ensure_ascii=True))
     payload["file"] = str(path)
@@ -146,7 +170,8 @@ def describe(payload: dict[str, Any]) -> str:
     for row in payload["rows"]:
         what = "paid" if row["expected"] == Expect.ZERO.value else "not paid in full"
         tag = "control  " if row["control"] else ""
-        lines.append(f"  {tag}{row['probe']} {row['name']}/{row['variant']}: {what} on {row['failed']} of {row['tasks']} "
+        text = ' "' + row["template"].replace("\n", "\\n") + '"' if "template" in row else ""  # as typed, not JSON-escaped
+        lines.append(f"  {tag}{row['probe']} {row['name']}/{row['variant']}{text}: {what} on {row['failed']} of {row['tasks']} "
                      f"(full reward {row['full_reward']}, errors {row['errors']}, mean {row['mean_reward']:.3f}"
                      + (f"; {row['same_as_good']} identical to the reference reply, not counted" if row["same_as_good"] else "")
                      + ")")  # fmt: skip
@@ -159,8 +184,13 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(prog="python -m falsepass.reach")
     parser.add_argument("audit_dir", type=Path)
-    parser.add_argument("--probe", action="append", required=True, metavar="CODE[/VARIANT]",
+    parser.add_argument("--probe", action="append", default=[], metavar="CODE[/VARIANT]",
                         help="what to count, e.g. P15 or P15/denied (repeatable); known-good: every correct-answer row")
+    parser.add_argument("--template", action="append", default=[], metavar="TEXT",
+                        help="a completion to count, with {answer}, {wrong}, {answer_in_format} or {wrong_in_format} "
+                             "filled per task (repeatable)")  # fmt: skip
+    parser.add_argument("--expect", choices=["zero", "full"], default="zero",
+                        help="what the templates should earn: zero (count where they are paid) or full")
     parser.add_argument("--tasks", default="all", help="number of tasks to sample, or 'all' (default)")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--jobs", type=int, default=DEFAULT_JOBS)
@@ -172,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--tasks takes a number or 'all'")
     try:
         payload = run(args.audit_dir.resolve(), args.probe, None if args.tasks == "all" else int(args.tasks), args.seed,
-                      max(1, args.jobs), args.out.resolve() if args.out else None)  # fmt: skip
+                      max(1, args.jobs), args.out.resolve() if args.out else None, args.template, args.expect)  # fmt: skip
     except RuntimeError as problem:
         print(f"falsepass: {problem}", file=sys.stderr)
         return 2

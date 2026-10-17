@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- `falsepass reach <env> --template TEXT` (MCP `falsepass_reach` with `templates`): count a
+  completion of your own on every task or a sample, without writing a script. `{answer}`,
+  `{wrong}`, `{answer_in_format}` and `{wrong_in_format}` are filled per task; other braces
+  stay, so LaTeX can be typed as is. Each template is a row `U1/t1`, `t2`, ... with the text
+  it became on the first task. `--expect full` counts where a template is not paid in full.
+  `--probe` is no longer required when a template is given.
+
 ## 0.7.0 — 2026-10-17
 
 - `falsepass reach <env> --probe P15/denied [--tasks N]` (MCP `falsepass_reach`): after an

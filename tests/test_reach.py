@@ -101,3 +101,24 @@ def test_known_good_counts_every_correct_answer_row_and_a_patch_that_refuses_one
     text = verify.describe_known_good(release, patched)
     assert "0 -> 1 of 6  now refused on ex-3" in text and "refuses correct answers the release pays, in 1 row(s)" in text
     assert "stops paying no correct answer" in verify.describe_known_good(release, release)
+
+
+def test_templates_are_filled_per_task_and_counted(tmp_path: Path):
+    from tests import test_concurrency
+
+    folder = test_concurrency.audit(tmp_path, "strict", safe=True)  # pays only a last `#### N` line equal to the answer
+    templates = ["#### {wrong}\n#### {answer}", "#### {answer}\n#### {wrong}", "{answer_in_format}", r"\boxed{{answer}}"]
+    counted = reach.run(folder, [], tasks=5, jobs=1, out=tmp_path / "t", templates=templates)
+    rows = {r["variant"]: r for r in counted["rows"] if r["probe"] == "U1"}
+    assert [rows[f"t{i}"]["template"] for i in range(1, 5)] == templates
+    assert rows["t1"]["failed"] == 5 and rows["t1"]["first_completion"] == "#### 8\n#### 1"  # ex-0: answer 1, wrong 8
+    assert rows["t2"]["failed"] == 0
+    assert rows["t3"]["failed"] == 0 and rows["t3"]["same_as_good"] == 5  # the reference itself, not a false pass
+    assert rows["t4"]["first_completion"] == r"\boxed{1}" and rows["t4"]["full_reward"] == 0  # other braces stay
+    assert counted["meta"]["templates"] == templates and counted["file"].endswith(".json") and "template-" in counted["file"]
+    assert 'U1 template/t1 "#### {wrong}\\n#### {answer}": paid on 5 of 5' in reach.describe(counted)
+    full = reach.run(folder, [], tasks=5, jobs=1, out=tmp_path / "f", templates=["#### {answer}"], expect="full")
+    assert [r["failed"] for r in full["rows"] if r["probe"] == "U1"] == [0]
+    assert probes.TEMPLATES == [] and probes.ONLY == set()
+    with pytest.raises(RuntimeError, match="nothing to count"):
+        reach.run(folder, [], tasks=1, out=tmp_path / "x")

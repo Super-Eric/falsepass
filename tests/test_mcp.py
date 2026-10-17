@@ -59,12 +59,19 @@ def test_audit_runs_in_the_background_and_status_returns_the_results(tmp_path):
                 counted = await call(session, "falsepass_reach", env=init["name"], probe=[asked], wait=0)
                 counted = await call(session, "falsepass_audit_status", env=init["name"], wait=600)
                 wrong = await call(session, "falsepass_reach", env=init["name"], probe=["P99"], wait=600)
+                templated = await call(session, "falsepass_reach", env=init["name"], templates=["{wrong} or {answer}"], tasks=3, wait=600)
+                empty = await call(session, "falsepass_reach", env=init["name"], wait=0)
                 twice = await call(session, "falsepass_repro", env=init["name"], run=True, wait=600)
                 checked = await call(session, "falsepass_verify_fix", env=init["name"], source=str(tmp_path / "toy"),
                                      known_good=0, wait=600)
-                return missing, init, first, during, again, done, full, asked, counted, wrong, twice, checked
+                return missing, init, first, during, again, done, full, asked, counted, wrong, templated, empty, twice, checked
 
-    missing, init, first, during, again, done, full, asked, counted, wrong, twice, checked = asyncio.run(go())
+    missing, init, first, during, again, done, full, asked, counted, wrong, templated, empty, twice, checked = asyncio.run(go())
+    assert templated["status"] == "finished", templated
+    row = templated["rows"][-1]
+    assert (row["probe"], row["variant"], row["template"]) == ("U1", "t1", "{wrong} or {answer}") and row["tasks"] == 3
+    assert " or " in row["first_completion"] and "{" not in row["first_completion"]
+    assert empty["is_error"] and "nothing to count" in empty["text"]
     assert checked["status"] == "finished", checked
     assert "no line changed" in checked["report"] and "stops paying no correct answer" in checked["report"]
     assert twice["status"] == "finished" and twice["identical"] is True, twice
