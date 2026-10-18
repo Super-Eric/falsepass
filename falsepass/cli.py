@@ -361,15 +361,15 @@ def scaffold(args) -> int:
         if target.resolve().is_relative_to((audit_dir / "src").resolve()):
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content)
+    kind = hub.classify(info["sources"]) if info.get("sources") else info.get("kind")  # read from the source text
     kept_adapter = (args.manual or args.policies) and (audit_dir / "adapter.py").exists()
     if (args.manual or args.policies) and not kept_adapter:
-        v1 = bool(info.get("sources")) and hub.classify(info["sources"])["generation"] == "v1"
+        v1 = bool(kind) and kind["generation"] == "v1"
         template = POLICY_TEMPLATE if args.policies else V1_ADAPTER_TEMPLATE if v1 else ADAPTER_TEMPLATE
         (audit_dir / "adapter.py").write_text(template.format(id=info["id"], package=info.get("module") or info.get("task", "")))
     if kept_adapter:
         print(f"falsepass: kept the existing {audit_dir}/adapter.py (delete it first for a fresh skeleton)", file=sys.stderr)
     args.manual = args.manual or args.policies
-    kind = hub.classify(info["sources"]) if info.get("sources") else None  # read from the wheel's source text
     why = ""
     if kind and not kind["automatic"]:
         why = ", ".join([*kind["needs"], *([] if kind["has_reference"] else ["no reference answer found in the source"]),
@@ -423,14 +423,30 @@ def demo(target: Path) -> int:
     return subprocess.call(uv_command(audit_dir, ["-n", "10"]))
 
 
-def main(argv: list[str] | None = None) -> int:
+def build_version() -> str:
+    """`0.8.0`, or `0.8.0+<commit>` when falsepass runs from a git checkout rather than a
+    release (`+<commit>.dirty` with uncommitted changes), so a log says which build ran."""
     from falsepass import __version__
 
+    root = Path(__file__).resolve().parent.parent
+    if not (root / ".git").exists():
+        return __version__
+    try:
+        head = subprocess.run(["git", "-C", str(root), "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=5)
+        dirty = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return __version__
+    if head.returncode != 0 or not head.stdout.strip():
+        return __version__
+    return f"{__version__}+{head.stdout.strip()}{'.dirty' if dirty.stdout.strip() else ''}"
+
+
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="falsepass", description="Probe RL environment verifiers for false passes and false fails.",
         epilog="Results are leads to reproduce and read, not verdicts. Docs: https://github.com/Super-Eric/falsepass",
     )  # fmt: skip
-    parser.add_argument("--version", action="version", version=f"falsepass {__version__}")
+    parser.add_argument("--version", action="version", version=f"falsepass {build_version()}")
     sub = parser.add_subparsers(dest="command", required=True)
     audit = sub.add_parser(
         "audit", help="probe one environment in an isolated virtualenv",

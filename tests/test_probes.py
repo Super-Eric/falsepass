@@ -450,6 +450,37 @@ def test_tool_call_first_catches_turn_indexing():
     assert result.passed
 
 
+def test_static_scan_flags_empty_components_and_unread_prompts(tmp_path):
+    from falsepass import static
+
+    (tmp_path / "core.py").write_text('''
+def score_amounts(parsed, truth):
+    hits = [abs(parsed[k] - truth[k]) < 1 for k in truth if parsed.get(k) is not None]
+    return sum(hits) / len(hits) if hits else 0.0
+
+
+def score_periods(parsed, truth):
+    checks = [parsed.get(k) == v for k, v in truth.items()]
+    if not checks:
+        return 0.0
+    return sum(checks) / len(checks)
+
+
+def score_flag(parsed, truth):
+    return 1.0 if parsed.get("flag") == truth["flag"] else 0.0
+''')
+    (tmp_path / "prompts.py").write_text(
+        'SYSTEM_PROMPT = """' + "Answer with a JSON object. " * 8 + '"""\n'
+        'USED_PROMPT = """' + "Be brief. " * 12 + '"""\n'
+        'SHORT_PROMPT = "hi"\n'
+    )
+    (tmp_path / "env.py").write_text("from prompts import USED_PROMPT\n\n\ndef load_environment():\n    return USED_PROMPT\n")
+    hints = static.scan(tmp_path)
+    assert sorted(h.where for h in hints if h.rule == "empty_component_scores_zero") == ["score_amounts", "score_periods"]
+    assert [h.where for h in hints if h.rule == "unreferenced_prompt_constant"] == ["SYSTEM_PROMPT"]
+    assert [h.where for h in static.scan(tmp_path / "prompts.py") if h.rule == "unreferenced_prompt_constant"] == ["SYSTEM_PROMPT", "USED_PROMPT"]
+
+
 def test_static_rules_from_the_pull_requests(tmp_path):
     from falsepass import static
 

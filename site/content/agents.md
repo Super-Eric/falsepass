@@ -48,6 +48,8 @@ For clients configured with JSON (Cursor, Claude Desktop, and others):
 | `falsepass_reach` | `env`, `probe` (e.g. `["P15/denied"]`) and/or `templates` (completions of your own, e.g. `["\\boxed{{answer} \\text{ is wrong}}"]`), `expect` (`zero` or `full`, for templates), `tasks` (0 = every task), `wait` | per probe row, per template and for the reference (P1) as a control: tasks counted, how many failed, full-reward and error counts, the failing task keys, up to three failing completions, and for a template the text it became on the first task; runs in the background like an audit |
 | `falsepass_repro` | `env`, `probe` (e.g. `["P5"]`); `run` (true: also run it twice), `script` (run an existing script instead), `wait` | where the stand-alone repro script was written; with `run`, whether the two runs were identical, where the first is stored, and how many cases still fail (in the background like an audit) |
 | `falsepass_verify_fix` | `env`, `source` (a patched package, or a patched copy of the audit's `src/`), `known_good` (-1 off, 0 every task, N a sample), `wait` | `report`: the repro lines the patch changes and, with `known_good`, the tasks whose correct answer it stops paying; in the background like an audit |
+| `falsepass_draft` | `env` | writes `REPORT.draft.md` (each failing probe group as a candidate finding, confirmed static hints attached, judgement calls marked) and returns its text |
+| `falsepass_upstream` | `env`, optional `repo` (owner/name), `limit` | the environment's source repository on GitHub, a file-by-file comparison with the audited version, default branch, licence, last push, open PRs (needs the `gh` CLI) |
 | `falsepass_discover` | `days`, `limit` | recently maintained Hub environments and what each needs |
 
 Every tool takes `workdir`; audits are created in `workdir/audits/<name>/`.
@@ -214,7 +216,8 @@ The output is a list of leads. Before an agent reports anything:
 6. If you have a fix, check it: copy the audit's `src/` (or the package), patch the copy,
    and run `falsepass verify-fix <env> --source <copy>` (MCP `falsepass_verify_fix`). It reruns the repro script
    (`repro.py`, else `repro_auto.py`) unpatched once if no output is stored yet, then with
-   the patch, and prints the lines that changed. A folder without `pyproject.toml` is laid
+   the patch, and prints the lines that changed (the repro only: `falsepass audit <env>
+   --source <copy>` runs the whole probe suite on the patch). A folder without `pyproject.toml` is laid
    over the released package, so its dependencies stay as released. Add `--known-good`
    to also score every correct-answer row (P1, P2, P14) on every task with and without the
    patch (`--known-good 500` for a sample): it lists the tasks whose correct answer the

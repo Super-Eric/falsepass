@@ -29,7 +29,9 @@ denied, ...) with the environment's own grader and reports every disagreement.
 
 Typical flow: falsepass_init (Hub slug or local folder) -> falsepass_audit -> read
 `failing` and `headline` -> falsepass_repro for anything worth confirming -> read the
-reward code. Start with falsepass_scan when you only have source code.
+reward code -> falsepass_draft for a report skeleton -> falsepass_upstream and
+falsepass_verify_fix when a fix is going upstream. Start with falsepass_scan when you
+only have source code.
 
 An audit can take several minutes (it installs the environment first). falsepass_audit
 waits up to `wait` seconds; if the audit is still running it returns
@@ -408,6 +410,28 @@ def build():
         if started.get("command", "audit") != "verify-fix":
             raise RuntimeError(f"a {started.get('command', 'audit')} job of {env} is still running; wait for it with falsepass_audit_status first")
         return _await_audit(env, workdir, wait)
+
+    @tool
+    def falsepass_draft(env: str, workdir: str = ".") -> Any:
+        """Write audits/<env>/REPORT.draft.md from the last run: each failing probe group as a
+        candidate finding with the confirmed static hints attached, and the places marked
+        where a person has to judge (defect or design choice, severity). Returns the file
+        path and its text. A draft is not a report: confirm each candidate with
+        falsepass_repro and the reward code first."""
+        _ok(_run(["draft", env], workdir, timeout=300))
+        path = _audit_dir(workdir, env) / "REPORT.draft.md"
+        return {"file": str(path), "text": path.read_text()}
+
+    @tool
+    def falsepass_upstream(env: str, repo: str = "", limit: int = 5, workdir: str = ".") -> Any:
+        """Find the environment's source repository on GitHub (code search for the package
+        name, then for its most distinctive class and function names), compare every audited
+        file with the repository's default branch, and report what a contributor needs:
+        default branch, licence, last push, open pull requests, how many recent merges came
+        from outside. `repo` (owner/name) checks one repository instead of searching. Needs
+        the `gh` CLI, logged in."""
+        args = ["upstream", env] + (["--repo", repo] if repo else []) + ["--limit", str(limit)]
+        return {"report": _ok(_run(args, workdir, timeout=600))["stdout"]}
 
     @tool
     def falsepass_discover(days: int = 90, limit: int = 40, workdir: str = ".") -> Any:

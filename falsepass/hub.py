@@ -22,34 +22,38 @@ def _version_key(version: str) -> tuple:
     return tuple(int(p) if p.isdigit() else p for p in re.split(r"[.\-+]", version))
 
 
-def verifiers_pin(specifier: str, releases: list[str] | None = None) -> str:
+def verifiers_pin(specifier: str, releases: list[str] | None = None, newest: bool = False) -> str:
     """The verifiers version to install for a declared requirement such as `>=0.3.0`.
     An exact pin is the only version that installs. Environments built for a 0.1.15.dev
     build do not import under 0.3.x: keep their own floor. A ceiling below the default
     (`>=0.1.14,<0.2`) takes the newest release under it (`releases`, else PyPI's list),
-    or the floor when the list cannot be read. Otherwise the default."""
+    or the floor when the list cannot be read. With `newest` (v1 tasksets, written for
+    the current API) the newest release the requirement allows is taken instead of the
+    default. Otherwise the default."""
     exact = re.search(r"==\s*([\w.]+)", specifier)
     bound = re.search(r">=\s*([\w.]+)", specifier)
     ceiling = re.search(r"<(=?)\s*([\w.]+)", specifier)
     if exact:
         return exact.group(1)
-    if bound and (".dev" in bound.group(1) or newer(bound.group(1), DEFAULT_VERIFIERS)):
-        return bound.group(1)  # a floor above the default is the oldest version that installs
-    if ceiling and not _below(DEFAULT_VERIFIERS, ceiling.group(2), ceiling.group(1) == "="):
+    under_default = bool(ceiling) and not _below(DEFAULT_VERIFIERS, ceiling.group(2), ceiling.group(1) == "=")
+    if under_default or newest:
         if releases is None:
             try:
                 releases = pypi_releases("verifiers")
-            except Exception:  # noqa: BLE001 - offline: the floor is the best guess left
+            except Exception:  # noqa: BLE001 - offline: the floor or the default is the best guess left
                 releases = []
         floor = bound.group(1) if bound else "0"
         fitting = [
             r for r in releases
-            if re.fullmatch(r"[0-9.]+", r) and _below(r, ceiling.group(2), ceiling.group(1) == "=") and not newer(floor, r)
+            if re.fullmatch(r"[0-9.]+", r) and not newer(floor, r)
+            and (not ceiling or _below(r, ceiling.group(2), ceiling.group(1) == "="))
         ]  # fmt: skip
         if fitting:
             return max(fitting, key=_version_key)
-        if bound:
-            return bound.group(1)
+    if bound and (".dev" in bound.group(1) or newer(bound.group(1), DEFAULT_VERIFIERS)):
+        return bound.group(1)  # a floor above the default is the oldest version that installs
+    if under_default and bound:
+        return bound.group(1)
     return DEFAULT_VERIFIERS
 
 
@@ -109,17 +113,34 @@ def describe_local(path: Path) -> dict:
     project = tomllib.loads((path / "pyproject.toml").read_text()).get("project", {})
     package = project.get("name") or path.name
     requirement = declared_verifiers(project.get("dependencies", []))
+    code = local_sources(path)
+    kind = classify(code) if code else None
     return {
         "id": f"local/{package}",
         "package": package,
         "version": project.get("version", "0"),
         "module": local_module(path, package),
         "index": "",
-        "verifiers": verifiers_pin(re.sub(r"^verifiers\s*(\[[^\]]*\])?", "", requirement)),
+        "verifiers": verifiers_pin(re.sub(r"^verifiers\s*(\[[^\]]*\])?", "", requirement), newest=bool(kind) and kind["generation"] == "v1"),
         "python": python_for(project.get("requires-python", "")),
         "declared": requirement,
         "source": str(path),
+        "kind": kind,
     }
+
+
+def local_sources(path: Path, limit: int = 200) -> dict[str, bytes]:
+    """The Python files of a local environment folder (tests, builds and hidden folders left
+    out), by relative path, for `classify`."""
+    found: dict[str, bytes] = {}
+    for file in sorted(path.rglob("*.py")):
+        parts = file.relative_to(path).parts
+        if any(p.startswith(".") or p in ("tests", "test", "build", "dist", "__pycache__") for p in parts):
+            continue
+        found[str(file.relative_to(path))] = file.read_bytes()
+        if len(found) >= limit:
+            break
+    return found
 
 
 def wheel_module(top_level: list[str], package: str) -> str:
@@ -162,6 +183,28 @@ def _wheels(env_id: str) -> tuple[str, str, dict[str, str]]:
     return index, package, wheels
 
 
+SOURCE_SUFFIXES = (".py", ".toml", ".md")
+DATA_SUFFIXES = (".json", ".jsonl", ".csv", ".tsv", ".yaml", ".yml", ".txt")
+DATA_FILE_CAP = 8 * 1024 * 1024  # one data file
+DATA_TOTAL_CAP = 32 * 1024 * 1024  # all of them together
+
+
+def data_files(archive: zipfile.ZipFile, names: list[str]) -> dict[str, bytes]:
+    """The wheel's data files (task banks, answer keys, prompt texts) for `src/`, smallest
+    first, up to the caps: a patched copy of `src/` then runs without the release's data
+    being filled in, and a reviewer can read what the grader compares against."""
+    infos = sorted((archive.getinfo(n) for n in names if ".dist-info" not in n and n.endswith(DATA_SUFFIXES)),
+                   key=lambda i: i.file_size)  # fmt: skip
+    found: dict[str, bytes] = {}
+    total = 0
+    for info in infos:
+        if info.file_size > DATA_FILE_CAP or total + info.file_size > DATA_TOTAL_CAP:
+            break
+        found[info.filename] = archive.read(info.filename)
+        total += info.file_size
+    return found
+
+
 def release_files(env_id: str, version: str) -> dict[str, bytes]:
     """Every file of a released wheel except its metadata, by path."""
     _, _, wheels = _wheels(env_id)
@@ -181,10 +224,11 @@ def describe(env_id: str, version: str | None = None) -> dict:
     metadata = archive.read(next(n for n in names if n.endswith(".dist-info/METADATA"))).decode()
     top_level = sorted({n.split("/")[0].removesuffix(".py") for n in names if ".dist-info" not in n and n.endswith(".py")})
     requirement = re.search(r"^Requires-Dist: verifiers(\[[^\]]*\])?[ \t]*(.*)$", metadata, re.M)
-    pin = verifiers_pin(requirement.group(2) if requirement else "")
     requires_python = re.search(r"^Requires-Python:[ \t]*(.*)$", metadata, re.M)
     project_urls = re.findall(r"^Project-URL: (.+)$", metadata, re.M)
-    sources = {n: archive.read(n) for n in names if ".dist-info" not in n and n.endswith((".py", ".toml", ".md"))}
+    sources = {n: archive.read(n) for n in names if ".dist-info" not in n and n.endswith(SOURCE_SUFFIXES)}
+    sources.update(data_files(archive, names))
+    pin = verifiers_pin(requirement.group(2) if requirement else "", newest=classify(sources)["generation"] == "v1")
     return {
         "sources": sources,
         "releases": sorted(wheels, key=_version_key),

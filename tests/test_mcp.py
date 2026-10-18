@@ -26,7 +26,7 @@ def test_tools_are_listed_and_scan_answers():
                 return names, json.loads(result.content[0].text)
 
     names, scanned = asyncio.run(go())
-    assert {"falsepass_scan", "falsepass_init", "falsepass_audit", "falsepass_results"} <= set(names)
+    assert {"falsepass_scan", "falsepass_init", "falsepass_audit", "falsepass_results", "falsepass_draft", "falsepass_upstream"} <= set(names)
     assert [h["rule"] for h in scanned["hints"]] == ["reference_substring_match"]
 
 

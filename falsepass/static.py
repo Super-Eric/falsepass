@@ -42,7 +42,11 @@ RULES: dict[str, tuple[tuple[str, ...], str]] = {
     "inspect_includes_scorer": (("P5", "P9"), "Inspect's `includes()` scorer passes when the target appears anywhere in the output, so a reply that lists several answers, or names the right one and rejects it, passes"),
     "inspect_match_end": (("P15", "P9"), "Inspect's `match()` reads only the end of the output (the default `location=\"end\"`; with `numeric=True`, the last number in it) and ignores what comes before: `not 100` matches 100, and with `numeric=True` so does `100 (this is wrong)`. Documented inspect_ai behaviour: a design choice unless the task asks for more"),
     "inspect_choice_lenient": (("P15",), "Inspect's `choice()` scorer takes the letters `multiple_choice()` parsed, and that parser falls back to the letters right after `ANSWER:` when the line goes on, so `ANSWER: A (this is wrong)` counts as A. Documented inspect_ai behaviour: a design choice unless the task asks for more"),
+    "empty_component_scores_zero": ((), "a per-item average that returns 0.0 when there are no items (`... if hits else 0.0`), so a component whose items were all excluded on purpose (for example after a correct abstention) counts as a failure instead of being skipped"),
+    "unreferenced_prompt_constant": ((), "a module-level *_PROMPT string that nothing in the package reads: the instructions in it (answer format, when to abstain) never reach the model, while the grader may still expect them to be followed"),
 }
+
+PROMPT_NAME = re.compile(r"(^|_)PROMPT(_|$)")
 
 WANT_WORD = re.compile(r"want|expect|answer|gold|truth|target|reference|key", re.IGNORECASE)
 TAG_PATTERN = re.compile(r"<[A-Za-z_][\w-]*>.*\(.*\).*</")
@@ -231,7 +235,20 @@ class _Scanner(ast.NodeVisitor):
             for n in ast.walk(scope) if isinstance(n, ast.Assign) and isinstance(n.value, ast.Call)
             and _call_name(n.value) == "len" for t in n.targets if isinstance(t, ast.Name)
         }  # fmt: skip
+        averaged: set[str] = set()  # names divided by their own length, or passed to a mean: per-item averages
+        for n in ast.walk(scope):
+            if isinstance(n, ast.BinOp) and isinstance(n.op, ast.Div) and isinstance(n.right, ast.Call) and _call_name(n.right) == "len":
+                if n.right.args and isinstance(n.right.args[0], ast.Name):
+                    averaged.add(n.right.args[0].id)
+            elif isinstance(n, ast.Call) and _call_name(n) in ("mean", "fmean") and n.args and isinstance(n.args[0], ast.Name):
+                averaged.add(n.args[0].id)
         for node in ast.walk(scope):
+            if isinstance(node, ast.IfExp) and isinstance(node.test, ast.Name) and node.test.id in averaged and _is_zero(node.orelse):
+                self.hint("empty_component_scores_zero", node, where)
+            if (isinstance(node, ast.If) and isinstance(node.test, ast.UnaryOp) and isinstance(node.test.op, ast.Not)
+                    and isinstance(node.test.operand, ast.Name) and node.test.operand.id in averaged and len(node.body) == 1
+                    and isinstance(node.body[0], ast.Return) and _is_zero(node.body[0].value)):  # fmt: skip
+                self.hint("empty_component_scores_zero", node, where)
             if isinstance(node, ast.Compare):
                 sides = [node.left, *node.comparators]
                 measures = any(
@@ -299,6 +316,45 @@ class _Scanner(ast.NodeVisitor):
                     if broad and isinstance(value, ast.Constant) and value.value not in (0, 0.0, False, None, ""):
                         if isinstance(value.value, (int, float, bool)):
                             self.hint("except_returns_reward", ret, where)
+
+
+def _is_zero(node: ast.AST | None) -> bool:
+    return isinstance(node, ast.Constant) and not isinstance(node.value, bool) and node.value in (0, 0.0)
+
+
+def _prompt_constants(path: Path, root: Path | None) -> list[Hint]:
+    """Module-level `SYSTEM_PROMPT = "..."` style constants (a string of 80 characters or more)."""
+    source = path.read_text(errors="replace")
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    shown = str(path.relative_to(root)) if root else str(path)
+    found = []
+    for node in tree.body:
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target] if isinstance(node, ast.AnnAssign) else []
+        value = getattr(node, "value", None)
+        # one literal, pieces joined with `+` or `.join(...)`, an f-string: 80 characters of text in all
+        text = sum(len(c.value) for c in ast.walk(value) if isinstance(c, ast.Constant) and isinstance(c.value, str)) if value else 0
+        long_text = text >= 80 or isinstance(value, ast.JoinedStr)
+        for target in targets:
+            if long_text and isinstance(target, ast.Name) and target.id.isupper() and PROMPT_NAME.search(target.id):
+                found.append(Hint("unreferenced_prompt_constant", shown, node.lineno, target.id, source.splitlines()[node.lineno - 1].strip()[:140]))
+    return found
+
+
+def _scan_prompt_constants(files: list[Path], root: Path | None) -> list[Hint]:
+    """Prompt constants that no file of the package names anywhere else (code, `__all__`,
+    a config file): the definition line itself does not count."""
+    texts = {f: f.read_text(errors="replace") for f in files if f.stat().st_size < 2_000_000}
+    hints = []
+    for path in (f for f in files if f.suffix == ".py"):
+        for hint in _prompt_constants(path, root):
+            pattern = re.compile(rf"\b{re.escape(hint.where)}\b")
+            if not any(pattern.search(line) for f, text in texts.items() for i, line in enumerate(text.splitlines(), 1)
+                       if not (f == path and i == hint.line)):  # fmt: skip
+                hints.append(hint)
+    return hints
 
 
 def _scan_dependencies(path: Path, source: str) -> list[Hint]:
@@ -395,14 +451,17 @@ def scan_file(path: Path, root: Path | None = None) -> list[Hint]:
 def scan(root: Path) -> list[Hint]:
     """Scan one file or every Python file under a directory (tests and hidden folders skipped)."""
     if root.is_file():
-        return scan_file(root)
+        return scan_file(root) + _scan_prompt_constants([root], None)
     hints: list[Hint] = []
-    for path in sorted(root.rglob("*.py")):
+    files = []
+    for path in sorted(p for p in root.rglob("*") if p.is_file()):
         parts = path.relative_to(root).parts
         if any(p.startswith(".") or p in ("tests", "test", "outputs", "__pycache__") for p in parts):
             continue
-        hints.extend(scan_file(path, root))
-    return hints
+        files.append(path)
+        if path.suffix == ".py":
+            hints.extend(scan_file(path, root))
+    return hints + _scan_prompt_constants(files, root)
 
 
 def cross_check(hints: list[dict[str, Any]], results: list[dict[str, Any]]) -> list[dict[str, Any]]:

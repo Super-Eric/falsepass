@@ -128,7 +128,7 @@ need a login or an API key at load time cannot be audited in CI without that sec
 ## For coding agents
 
 - **MCP server.** `falsepass mcp` serves the commands as tools (`falsepass_scan`,
-  `_init`, `_audit`, `_audit_status`, `_results`, `_completion`, `_reach`, `_repro`, `_verify_fix`, `_discover`)
+  `_init`, `_audit`, `_audit_status`, `_results`, `_completion`, `_reach`, `_repro`, `_draft`, `_upstream`, `_verify_fix`, `_discover`)
   over stdio. Audits run in the background, so a client's tool-call timeout never cuts
   one off; failures come back as tool errors with the reason. Any MCP client starts
   it with `uvx --from "falsepass[mcp]" falsepass mcp`;
@@ -289,7 +289,9 @@ a contributor needs: default branch, licence, last push, open pull requests, how
 recent merges came from outside. `falsepass verify-fix <env> --source <patched folder>`
 reruns the stored repro with the patched package (or a patched copy of the audit's `src/`,
 laid over the release) and prints the lines that changed, storing an unpatched baseline
-first if there is none; a fix is ready when only the finding's lines move.
+first if there is none; a fix is ready when only the finding's lines move. It reruns the
+repro script only; `falsepass audit <env> --source <patched folder>` runs the whole probe
+suite on the patch.
 
 ## Adding an environment
 

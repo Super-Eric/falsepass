@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- `falsepass init` keeps a Hub package's data files (JSON, JSONL, CSV, TSV, YAML, text; up to
+  8 MB each and 32 MB in all) in `audits/<env>/src/` next to the source, so a reviewer can read
+  the task bank the grader compares against and a patched copy of `src/` carries its own data.
+- For a v1 taskset, `init` pins the newest verifiers release the package allows (`>=0.3` gives
+  0.4.0 today) instead of the 0.3.1 default, which a package built against 0.4 may not import
+  under; v0 environments keep the default. Local folders are classified too, so `init --json`
+  reports `automatic_likely` for them as well.
+- Two static rules: `empty_component_scores_zero` (a per-item average that returns 0.0 when
+  there are no items, so a component emptied on purpose counts as a failure) and
+  `unreferenced_prompt_constant` (a module-level `*_PROMPT` string nothing in the package reads).
+- MCP: `falsepass_draft` (the report draft) and `falsepass_upstream` (the source repository
+  and a file comparison), which were CLI-only.
+- `falsepass --version` names the commit (`0.8.0+abc1234`, `.dirty` with local changes) when
+  run from a git checkout, so a log tells a release from a development build.
+- Docs: `verify-fix` reruns the repro script only; `audit --source` runs the whole probe
+  suite on a patch.
+
 ## 0.8.0 — 2026-10-17
 
 - `falsepass reach <env> --template TEXT` (MCP `falsepass_reach` with `templates`): count a

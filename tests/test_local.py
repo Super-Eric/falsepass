@@ -120,6 +120,38 @@ def test_verifiers_pin_respects_a_ceiling_below_the_default():
     assert hub.verifiers_pin(">=0.3.0,<0.5", releases) == hub.DEFAULT_VERIFIERS
 
 
+def test_verifiers_pin_takes_the_newest_release_for_v1_tasksets():
+    releases = ["0.2.1", "0.3.0", "0.3.1", "0.4.0", "0.4.1.dev3"]
+    assert hub.verifiers_pin(">=0.3", releases, newest=True) == "0.4.0"  # built against 0.4: may not import under 0.3.1
+    assert hub.verifiers_pin(">=0.3,<0.4", releases, newest=True) == "0.3.1"
+    assert hub.verifiers_pin(">=0.3", releases) == hub.DEFAULT_VERIFIERS  # v0 keeps the known default
+    assert hub.verifiers_pin("==0.3.1", releases, newest=True) == "0.3.1"
+    assert hub.verifiers_pin(">=0.3", [], newest=True) == hub.DEFAULT_VERIFIERS  # offline
+
+
+def test_wheel_data_files_are_kept_for_src_up_to_the_caps(monkeypatch):
+    import io
+    import zipfile
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("pkg/__init__.py", "x = 1")
+        archive.writestr("pkg/data/tasks.jsonl", '{"a": 1}\n')
+        archive.writestr("pkg/data/big.json", "0" * 100)
+        archive.writestr("pkg-1.0.dist-info/METADATA", "Name: pkg")
+    opened = zipfile.ZipFile(io.BytesIO(buffer.getvalue()))
+    monkeypatch.setattr(hub, "DATA_FILE_CAP", 50)
+    assert set(hub.data_files(opened, opened.namelist())) == {"pkg/data/tasks.jsonl"}
+
+
+def test_local_folders_are_classified_and_the_build_version_names_the_checkout(tmp_path):
+    from falsepass import __version__
+
+    info = hub.describe_local(write_env(tmp_path / "env"))
+    assert info["kind"]["generation"] in ("v0", "v1") and "automatic" in info["kind"]
+    assert cli.build_version().split("+")[0] == __version__
+
+
 def test_python_follows_requires_python_only_when_it_rules_out_312():
     assert hub.python_for(">=3.13,<3.14") == "3.13"
     assert hub.python_for(">=3.10") == ""
