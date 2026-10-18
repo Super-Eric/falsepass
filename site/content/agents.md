@@ -174,6 +174,24 @@ whole conversation) is kept: `falsepass_completion` shows it, and `falsepass rep
 replays the policy's turns as a fixed script, so a lead found by a policy is reproduced
 without falsepass.
 
+**v1 tool tasksets** (`verifiers.v1`, tools served over MCP, a scripted user): the policy
+skeleton above is for environments built with `vf.load_environment`, and `init --policies`
+says so instead of writing it. Until falsepass plays policies against v1 tasksets itself,
+the route that works is verifiers' own evaluation loop with a stand-in model: a small local
+OpenAI-compatible server (streaming chat completions) that answers with your scripted
+policy, chosen by model name, then
+
+```bash
+vf-eval owner-environment -m <policy-name> --client.base-url http://127.0.0.1:PORT/v1 \
+    --env.agent.runtime.type subprocess --no-push
+```
+
+`--env.agent.runtime.type subprocess` keeps the harness local (the default is a hosted
+sandbox that needs a Prime login), and `--no-push` keeps the results off the Hub. Each
+episode then runs through the taskset's own tools, scripted user and reward. Numbers a
+policy puts in tool arguments as JSON `NaN` or `Infinity` arrive as `null`; send them as
+strings (`"nan"`, `"1e999"`) to test the tools' parsing.
+
 ## When the reference is not a reply
 
 Some Q&A environments store something other than a reply in their `answer` field: a

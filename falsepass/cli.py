@@ -416,6 +416,14 @@ def scaffold(args) -> int:
             target.write_bytes(content)
     kind = hub.classify(info["sources"]) if info.get("sources") else info.get("kind")  # read from the source text
     kept_adapter = (args.manual or args.policies) and (audit_dir / "adapter.py").exists()
+    if args.policies and not kept_adapter and kind and kind["generation"] == "v1":
+        print("falsepass: --policies writes a skeleton for verifiers environments built with vf.load_environment (v0); this is a "
+              "v1 taskset, which falsepass cannot play policies against yet. Two ways on: --manual writes a v1 adapter for a task "
+              "whose reply can be written from the task data; for a tool or multi-turn v1 taskset, serve scripted policies from a "
+              "local OpenAI-compatible endpoint and play them with verifiers' own `vf-eval <env> -m <policy> --client.base-url "
+              "http://127.0.0.1:PORT/v1 --env.agent.runtime.type subprocess --no-push` (the agents page, \"Games, simulations "
+              "and tool tasks\")", file=sys.stderr)  # fmt: skip
+        return 1
     if (args.manual or args.policies) and not kept_adapter:
         v1 = bool(kind) and kind["generation"] == "v1"
         template = POLICY_TEMPLATE if args.policies else V1_ADAPTER_TEMPLATE if v1 else ADAPTER_TEMPLATE

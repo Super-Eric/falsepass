@@ -42,6 +42,10 @@
   is a candidate format. A failed import of a `--path` package lists every missing import of
   the package at once, with the versions its own setup.py or pyproject.toml pins (extras
   dropped).
+- `init --policies` on a v1 taskset says that the policy skeleton is for v0 environments and
+  names the routes that work (`--manual`, or verifiers' `vf-eval` with a local stand-in model
+  serving scripted policies, documented on the agents page), instead of writing a skeleton
+  that fails under verifiers 0.4.
 - New probe P17 (JSON answers): one short string field (a label, a date, an ID) followed by
   "(this is wrong)" everywhere it occurs, one field at a time; it must earn less than the
   reference (`expected: below_reference`). Found a grader that reads only the first ten
