@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.10.0 — 2026-10-19
 
 - **Reward functions without an environment**: `falsepass init rewards.py --dataset data.jsonl`
   (or a module name such as `trl.rewards` with `--framework reward`) audits functions written
