@@ -18,6 +18,13 @@
   `examples/reward-toy/` has a planted defect.
 - The static scan treats a function that takes `completions` as a reward term, and knows
   `solution`, `ground_truth`, `target`, `label` as reference names.
+- When the reference earns clearly different amounts on different tasks (a clamp at 0.99 on
+  one, the first of two steps on another), correct-answer variants (P2, P14, T7) are judged
+  against the reference's own reward on their task instead of the average, and the note says
+  so; P1 still shows the tasks where a full answer earns less. Before, a two-task OpenEnv
+  audit reported a false-fail rate of 0.5 that was only this averaging.
+- Reward functions that return None for the reference itself (TRL's `accuracy_reward` on a gold
+  it cannot parse) mark tasks the trainer skips: those are left out of the run, with a note.
 - rewardlint's reference swap is skipped for HUD and OpenEnv audits, where the expected answer
   lives inside the environment (its numbers there were meaningless).
 

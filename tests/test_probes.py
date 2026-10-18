@@ -563,3 +563,28 @@ def test_field_echo_replaces_prose_values_with_the_prompt():
     assert echoed == {"label": "hack", "why": pasted, "quote": "the result file", "ids": ["E1"], "n": 3}  # quotes kept
     assert probes.field_echoes(json.dumps({"label": "hack", "n": 3}), prompt) == {}  # no prose: no row
     assert probes.field_echoes("42", prompt) == {}
+
+
+def test_correct_variants_are_judged_against_their_own_tasks_reference():
+    import asyncio
+
+    from falsepass.auto import AutoAdapter
+    from falsepass.model import Example, Expect, Score
+    from falsepass.probes import check
+
+    class TwoTiers:
+        """A full answer earns 0.99 on easy tasks and 0.5 (the first of two steps) on hard ones."""
+
+        async def score(self, example, completion):
+            top = 0.99 if example.key.startswith("easy") else 0.5
+            return Score(top if completion.strip() == example.answer else 0.0)
+
+    adapter = AutoAdapter({"id": "t", "framework": "verifiers"})
+    adapter.format = lambda a: a
+    adapter.max_reward = 0.745
+    examples = [Example("easy-0", "q", "7"), Example("hard-0", "q", "9")]
+    note = asyncio.run(adapter._task_maxima(TwoTiers(), examples))
+    assert adapter.task_max == {"easy-0": 0.99, "hard-0": 0.5} and "between 0.5 and 0.99" in note
+    p2 = asyncio.run(check("P2", "equivalent_forms", "surrounding_whitespace", Expect.FULL, " 9 ", adapter, TwoTiers(), examples[1]))
+    p1 = asyncio.run(check("P1", "ground_truth", "reference", Expect.FULL, "9", adapter, TwoTiers(), examples[1]))
+    assert p2.passed and not p1.passed  # P1 still shows that a full answer earns less on this task

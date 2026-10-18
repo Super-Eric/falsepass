@@ -20,6 +20,11 @@ ExtraProbe = Callable[["Adapter", "Scorer", Example], Awaitable[list[ProbeResult
 class Adapter:
     name: str = ""
     max_reward: float = 1.0
+    # Per task: what the reference itself earns, when tasks differ in what a full answer can
+    # earn (one step of a two-step task, a clamp at 0.99). Correct-answer variants (P2, P14,
+    # T7) are judged against it; P1 itself against `max_reward`, so a reference paid less on
+    # some tasks still shows.
+    task_max: dict[str, float] = {}
     # Reward a known-bad completion may receive before it counts as a false pass.
     # Leave at 0 unless the env grades by similarity and partial credit is by design.
     bad_tolerance: float = 0.0

@@ -376,6 +376,8 @@ class AutoAdapter(Adapter):
             notes.append(f"the reference did not score exactly 1.0; the best format averaged {table[best]:.3f} and is used as the maximum")
         if floor_note := self._floor_note(max(empty), table[best]):
             notes.append(floor_note)
+        if validity == "ok" and (spread_note := await self._task_maxima(scorer, examples)):
+            notes.append(spread_note)
         if sum(own_markup(ex.answer) for ex in trial) > len(trial) / 2:
             # Seen in curvebench: wrapping such a reference again, or a wrong value next to it,
             # leaves the grader reading the reference's own tags.
@@ -392,6 +394,19 @@ class AutoAdapter(Adapter):
             if self.multi_turn else "single-turn",
             "note": "; ".join(notes),
         }
+
+    async def _task_maxima(self, scorer: Scorer, examples: list[Example]) -> str:
+        """When the reference earns clearly different amounts on different tasks (a clamp at
+        0.99 on one, the first of two steps on another), judge correct-answer variants against
+        what the reference earns on their own task rather than the average."""
+        earned = {ex.key: (await scorer.score(ex, self.format(ex.answer))).reward for ex in examples}
+        values = [v for v in earned.values() if v is not None and v > 0]
+        if len(values) < 2 or max(values) - min(values) <= 0.05 * max(values):
+            return ""
+        self.task_max = {k: v for k, v in earned.items() if v is not None and v > 0}
+        return (f"the reference earns between {min(values):g} and {max(values):g} depending on the task: correct-answer "
+                "variants (P2, P14, T7) are judged against the reference's own reward on their task; P1 rows below the "
+                "maximum are tasks where a full answer earns less")  # fmt: skip
 
     async def _drop_skipped_tasks(self, scorer: Scorer, examples: list[Example]) -> None:
         """Reward functions return None to have the trainer skip a task (TRL's accuracy_reward
