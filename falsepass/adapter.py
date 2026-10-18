@@ -25,6 +25,11 @@ class Adapter:
     # T7) are judged against it; P1 itself against `max_reward`, so a reference paid less on
     # some tasks still shows.
     task_max: dict[str, float] = {}
+    # What a wrong answer in perfect format earns from format terms alone (several reward
+    # functions summed, one of them a format reward). Known-bad rows other than P6 are judged
+    # above it, so a format payout does not bury the rows that are paid for more; P6 itself and
+    # the lazy-policy reward still show it.
+    format_floor: float = 0.0
     # Reward a known-bad completion may receive before it counts as a false pass.
     # Leave at 0 unless the env grades by similarity and partial credit is by design.
     bad_tolerance: float = 0.0

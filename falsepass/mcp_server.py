@@ -267,6 +267,7 @@ def build():
         without: list[str] | None = None, env_class: str | None = None, action_class: str | None = None,
         dataset: str | None = None, functions: list[str] | None = None, weights: list[float] | None = None,
         split: str | None = None, answer_column: str | None = None, prompt_column: str | None = None,
+        dataset_config: str | None = None, map: str | None = None, path: list[str] | None = None,
         manual: bool = False, policies: bool = False, force: bool = False, workdir: str = ".",
     ) -> Any:  # fmt: skip
         """Set up audits/<name>/ for an environment and return the name to audit it with.
@@ -275,7 +276,9 @@ def build():
         written for TRL's GRPOTrainer (`def accuracy_reward(completions, solution, **kwargs)`;
         or a module name such as `trl.rewards` with framework "reward") together with
         `dataset` (a .jsonl/.json/.csv/.parquet file, `hf:owner/name`, or `call:function` in
-        the file; optional `functions`, `weights`, `split`, `answer_column`, `prompt_column`),
+        the file; optional `functions`, `weights`, `split`, `dataset_config`, `answer_column`,
+        `prompt_column`, `map` (a row mapper in the file), `path` (folders put on sys.path for a
+        package that is imported rather than installed, e.g. a clone's `src`)),
         an OpenEnv Space (`hf:owner/space`,
         cloned next to the audit) or folder (openenv.yaml), a local folder with a
         pyproject.toml (verifiers or Inspect project), an Inspect task file, an Inspect
@@ -296,7 +299,8 @@ def build():
         args = ["init", target, "--json"]
         for flag, value in (("--name", name), ("--version", version), ("--framework", framework), ("--task", task), ("--answers", answers),
                             ("--env-class", env_class), ("--action-class", action_class), ("--dataset", dataset), ("--split", split),
-                            ("--answer-column", answer_column), ("--prompt-column", prompt_column)):  # fmt: skip
+                            ("--answer-column", answer_column), ("--prompt-column", prompt_column),
+                            ("--dataset-config", dataset_config), ("--map", map)):  # fmt: skip
             if value:
                 args += [flag, value]
         for requirement in extra or []:
@@ -305,6 +309,8 @@ def build():
             args += ["--without", requirement]
         for function in functions or []:
             args += ["--func", function]
+        for folder in path or []:
+            args += ["--path", folder]
         for weight in weights or []:
             args += ["--weight", str(weight)]
         args += ["--manual"] * manual + ["--policies"] * policies + ["--force"] * force

@@ -114,12 +114,19 @@ def resolve_target(spec: str) -> Path | None:
     return original.resolve()
 
 
-def import_target(spec: str) -> types.ModuleType:
+def import_target(spec: str, pythonpath: list[str] | None = None) -> types.ModuleType:
     """The module holding the reward functions: a file (its folder goes on sys.path), or an
-    importable module name (`trl.rewards`, `open_r1.rewards`)."""
+    importable module name (`trl.rewards`, `open_r1.rewards`), found through `pythonpath`
+    (folders put on sys.path, for a package that is not installed) when given."""
+    for folder in reversed(pythonpath or []):
+        if folder not in sys.path:
+            sys.path.insert(0, folder)
     path = resolve_target(spec)
     if path is None:
-        return importlib.import_module(spec)
+        try:
+            return importlib.import_module(spec)
+        except ImportError as missing:
+            raise RuntimeError(import_advice(spec, missing, pythonpath or [])) from missing
     if str(path.parent) not in sys.path:
         sys.path.insert(0, str(path.parent))
     name = "falsepass_rewards_" + re.sub(r"\W", "_", path.stem)
@@ -134,11 +141,83 @@ def import_target(spec: str) -> types.ModuleType:
         relative = "attempted relative import" in str(missing)
         raise RuntimeError(
             f"importing {path.name} failed: {missing}. "
-            + ("It is part of a package: give the module name instead (e.g. `falsepass init my_pkg.rewards --framework reward "
-               "--with ./path/to/the/package`)." if relative else
+            + ("It is part of a package: give the module name and the folder that holds the package, e.g. `falsepass init "
+               "my_pkg.rewards --framework reward --path ./src --dataset ...` (the package is imported from there, its "
+               "dependencies come from --with)." if relative else
                "Add the missing package with `falsepass init ... --with <package> --force`.")
         ) from missing
     return module
+
+
+def import_advice(spec: str, missing: ImportError, pythonpath: list[str]) -> str:
+    """One message for a failed import: the package to add, or the version the package's own
+    setup.py / pyproject.toml pins when a name could not be imported from an installed one."""
+    package = getattr(missing, "name", None) or ""
+    if not package:  # "cannot import name 'x' from 'trl' (...)": the installed version differs
+        found = re.search(r"from '([\w.]+)'", str(missing))
+        package = found.group(1) if found else ""
+    top = package.split(".")[0]
+    pip = PIP_NAMES.get(top, top.replace("_", "-"))
+    pinned = ""
+    for folder in pythonpath:
+        for manifest in (Path(folder).parent / "setup.py", Path(folder).parent / "pyproject.toml", Path(folder) / "pyproject.toml"):
+            if manifest.is_file():
+                pin = re.search(rf"[\"']({re.escape(pip)}\s*(?:\[[^\]]*\])?\s*[=<>~!][^\"']*)[\"']", manifest.read_text(errors="replace"), re.I)
+                if pin:  # extras dropped: `trl[vllm]` pulls GPU-only wheels a grader does not need
+                    pinned = re.sub(r"\[[^\]]*\]", "", pin.group(1).replace(" ", ""))
+                    break
+        if pinned:
+            break
+    wanted = pinned or pip
+    also = [m for m in _missing_imports(pythonpath, spec.split(".")[0]) if m not in (pip, wanted.split("=")[0].split(">")[0].split("<")[0])]
+    if also:  # every import of the package that would fail next, so one more init fixes them all
+        extra = [f'--with "{_pinned(m, pythonpath) or m}"' for m in also[:12]]
+        return (f"importing {spec} failed: {missing}. The package imports modules that are not installed here: add "
+                f'`--with "{wanted}" {" ".join(extra)}` to `falsepass init ... --force` (versions from the package\'s own '
+                "manifest where it pins one), or --path for a folder that holds them")
+    why = "the installed version is not the one the package was written for" if isinstance(missing, ImportError) and not getattr(missing, "name", None) else "it is not installed"
+    return (f"importing {spec} failed: {missing}. {why[0].upper() + why[1:]}: add `--with \"{wanted}\"` to `falsepass init ... --force`"
+            + (f" (the package's own manifest pins {pinned})" if pinned else "") + ", or --path for a folder that holds it")
+
+
+def _pinned(pip: str, pythonpath: list[str]) -> str:
+    for folder in pythonpath:
+        for manifest in (Path(folder).parent / "setup.py", Path(folder).parent / "pyproject.toml", Path(folder) / "pyproject.toml"):
+            if manifest.is_file():
+                pin = re.search(rf"[\"']({re.escape(pip)}\s*(?:\[[^\]]*\])?\s*[=<>~!][^\"']*)[\"']", manifest.read_text(errors="replace"), re.I)
+                if pin:
+                    return re.sub(r"\[[^\]]*\]", "", pin.group(1).replace(" ", ""))
+    return ""
+
+
+def _missing_imports(pythonpath: list[str], package: str) -> list[str]:
+    """pip names of the top-level imports anywhere in `package` (under the pythonpath folders)
+    that cannot be found in this environment."""
+    import ast
+
+    names: list[str] = []
+    for folder in pythonpath:
+        for file in sorted((Path(folder) / package).rglob("*.py")):
+            try:
+                tree = ast.parse(file.read_text(errors="replace"))
+            except SyntaxError:
+                continue
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    names += [a.name.split(".")[0] for a in node.names]
+                elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                    names.append(node.module.split(".")[0])
+    missing = []
+    for name in dict.fromkeys(names):
+        if name in STDLIB or name == package:
+            continue
+        try:
+            found = importlib.util.find_spec(name) is not None
+        except (ImportError, ValueError):
+            found = False
+        if not found:
+            missing.append(PIP_NAMES.get(name, name.replace("_", "-")))
+    return missing
 
 
 def reward_functions(module: types.ModuleType) -> list[str]:
@@ -178,6 +257,38 @@ def reads_message_content(func: Any) -> bool:
     except (OSError, TypeError):
         return False
     return bool(re.search(r"\[0\]\s*\[\s*[\"']content[\"']\s*\]", source))
+
+
+def format_hints(funcs: dict[str, Any]) -> str:
+    """The answer markup the functions look for, from their string constants and the module
+    patterns they use (`<think>`, `<reasoning>`, `<answer>`, `\\boxed`, `####`), written as a
+    short text the format inference reads next to the prompt: a format reward that wants tags
+    the prompt never names still shapes the best-paid reference format."""
+    texts: list[str] = []
+    for func in funcs.values():
+        target = func.func if isinstance(func, functools.partial) else func
+        stack = [getattr(target, "__code__", None)]
+        while stack:  # the function and the code nested in it (comprehensions, helpers defined inside)
+            code = stack.pop()
+            if code is None:
+                continue
+            texts += [c for c in code.co_consts if isinstance(c, str)]
+            texts += [t for c in code.co_consts if isinstance(c, tuple) for t in c if isinstance(t, str)]  # keyword names
+            stack += [c for c in code.co_consts if hasattr(c, "co_consts")]
+            for name in code.co_names:
+                value = getattr(target, "__globals__", {}).get(name)
+                if isinstance(value, str):
+                    texts.append(value)
+                elif isinstance(value, re.Pattern):
+                    texts.append(value.pattern)
+    joined = "\n".join(texts)
+    tags = list(dict.fromkeys(re.findall(r"<([A-Za-z_][\w-]*)>", joined)))
+    parts = [f"<{t}></{t}>" for t in tags[:6]]
+    if "boxed" in joined:
+        parts.append("\\boxed{}")
+    if "####" in joined:
+        parts.append("####")
+    return " ".join(parts)
 
 
 class _TrainerState(types.SimpleNamespace):
@@ -343,9 +454,10 @@ def answer_column(rows: list[dict[str, Any]], funcs: dict[str, Any], given: str 
 
 def load(spec: str, max_rows: int, dataset: str, functions: list[str] | None = None, weights: list[float] | None = None,
          split: str = "", config: str = "", answer: str = "", prompt: str = "", mapper: str = "",
-         conversational: bool | None = None) -> tuple[RewardFunctionScorer, list[Example], dict[str, Any]]:  # fmt: skip
+         conversational: bool | None = None, pythonpath: list[str] | None = None,
+         ) -> tuple[RewardFunctionScorer, list[Example], dict[str, Any]]:  # fmt: skip
     """The scorer and the rows for the reward functions in `spec` (a file or a module name)."""
-    module = import_target(spec)
+    module = import_target(spec, pythonpath)
     path = resolve_target(spec)
     if path is not None:
         os.chdir(path.parent)  # relative data paths in the file
@@ -389,16 +501,33 @@ def load(spec: str, max_rows: int, dataset: str, functions: list[str] | None = N
         notes.append(f"completions are passed as message lists because {', '.join(message_readers) or 'the settings'} read "
                      "`completion[0][\"content\"]`; the dataset's prompts are text, so GRPOTrainer would pass text and "
                      "these functions would fail there: wrap the prompts as conversations in training")  # fmt: skip
+    probe_column = reference
+    if reference and not answer:
+        # A column of worked solutions without a marked final answer cannot give the probes a value;
+        # a short answer column next to it can (OpenR1-Math: `solution` and `answer`).
+        sample = [final_answer(r.get(reference)) for r in rows[:200]]
+        unmarked = sum(1 for value, how in sample if not how and (len(value) > 60 or "\n" in value))
+        alternative = next((c for c in ANSWER_COLUMNS if c in rows[0] and c != reference), "")
+        if unmarked > len(sample) / 2 and alternative:
+            probe_column = alternative
+            notes.append(f"`{reference}` holds worked solutions without a marked final answer in {unmarked} of {len(sample)} rows, "
+                         f"so the probes take their reference from `{alternative}`; the functions still receive `{reference}`. "
+                         f"If the functions read a value out of `{reference}` that differs from `{alternative}`, P1 shows it")  # fmt: skip
+        elif unmarked > len(sample) / 2:
+            notes.append(f"`{reference}` holds worked solutions without a marked final answer in {unmarked} of {len(sample)} rows "
+                         "and no short answer column was found: the probes' reference is the whole solution, so expect the "
+                         "control to fail; name a column of final answers with --answer-column")  # fmt: skip
     pool, how = [], ""
     for i, row in enumerate(rows):
-        value, method = final_answer(row.get(reference)) if reference else ("", "")
+        value, method = final_answer(row.get(probe_column)) if probe_column else ("", "")
         how = how or method
         pool.append(Example(f"row-{i}", prompt_text(row.get(prompt_column)), value, {"row": row}))
     if how:
-        notes.append(f"the probes' reference is the {how} in `{reference}`; the functions receive the column as it is")
+        notes.append(f"the probes' reference is the {how} in `{probe_column}`; the functions receive the column as it is")
     scorer = RewardFunctionScorer(funcs, func_weights, prompt_column, conversational)
     found = {"notes": notes, "functions": chosen, "weights": [func_weights[n] for n in chosen], "conversational": conversational,
-             "prompt_column": prompt_column, "answer_column": reference, "available": available}  # fmt: skip
+             "prompt_column": prompt_column, "answer_column": reference if probe_column == reference else "",
+             "available": available, "format_hints": format_hints(funcs)}  # fmt: skip
     return scorer, pool, found
 
 
@@ -437,7 +566,8 @@ def third_party_imports(path: Path) -> list[str]:
 
 
 def describe(target: str, dataset: str, functions: list[str] | None = None, weights: list[float] | None = None,
-             split: str = "", config: str = "", answer: str = "", prompt: str = "", mapper: str = "") -> dict[str, Any]:  # fmt: skip
+             split: str = "", config: str = "", answer: str = "", prompt: str = "", mapper: str = "",
+             pythonpath: list[str] | None = None) -> dict[str, Any]:  # fmt: skip
     """What `falsepass init` writes for reward functions: the file (or module), the dataset
     and what the audit virtualenv needs (the file's own imports; `datasets` for a Hub dataset)."""
     path = Path(target)
@@ -446,6 +576,15 @@ def describe(target: str, dataset: str, functions: list[str] | None = None, weig
     others: list[str] = []
     if is_file:
         path = path.resolve()
+        if re.search(r"^\s*from\s+\.", path.read_text(errors="replace"), re.M):
+            package = path.parent
+            while (package.parent / "__init__.py").is_file():
+                package = package.parent
+            module = ".".join([*path.relative_to(package.parent).with_suffix("").parts])
+            raise RuntimeError(f"{path.name} uses relative imports (`from .x import y`): it is part of a package and cannot be "
+                               f"imported on its own. Give the module name and the folder that holds the package: "
+                               f"`falsepass init {module} --framework reward --path {package.parent} --dataset ...`, plus "
+                               "--with for the package's own third-party imports")  # fmt: skip
         found = declared_functions(path)
         if functions:
             unknown = [f for f in functions if f not in found and not re.search(rf"^{re.escape(f)}\s*=", path.read_text(), re.M)]
@@ -473,14 +612,16 @@ def describe(target: str, dataset: str, functions: list[str] | None = None, weig
             extra.insert(0, name)
         except Exception:  # noqa: BLE001 - not on PyPI (a local package: add it with --with ./path), or offline
             pass
-    stem = path.stem if is_file else target.split(".")[-1]
+    stem = path.stem if is_file else target.replace(".", "-")  # `trl.rewards` and `open_r1.rewards` stay apart
     info: dict[str, Any] = {
         "id": f"local/{stem.replace('_', '-').lower()}", "framework": "reward", "task": str(path) if is_file else target,
         "package": "", "version": "", "declared": "", "extra": extra, "others": others,
         "dataset": str(Path(dataset).resolve()) if dataset and Path(dataset).exists() else dataset,
     }  # fmt: skip
+    if pythonpath:
+        pythonpath = [str(Path(p).resolve()) for p in pythonpath]
     for key, value in (("functions", functions), ("weights", weights), ("split", split), ("dataset_config", config),
-                       ("answer_column", answer), ("prompt_column", prompt), ("map", mapper)):  # fmt: skip
+                       ("answer_column", answer), ("prompt_column", prompt), ("map", mapper), ("pythonpath", pythonpath)):  # fmt: skip
         if value:
             info[key] = value
     return info

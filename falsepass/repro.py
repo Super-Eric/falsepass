@@ -370,6 +370,7 @@ import sys
 import types
 from pathlib import Path
 
+sys.path[:0] = [p for p in PYTHONPATH if p not in sys.path]
 if MODULE.endswith(".py"):
     PATH = Path(os.environ.get("FALSEPASS_SOURCE") or MODULE).resolve()
     if PATH.is_dir():  # a patched copy of the folder: the file of the same name in it
@@ -496,6 +497,7 @@ def generate(audit_dir: Path, probes: list[str] | None = None, per_group: int = 
     elif loader["kind"] == "reward":
         keys = {c["example"] for c in cases}
         settings = {"FUNCTIONS": loader["functions"], "WEIGHTS": loader["weights"], "CONVERSATIONAL": loader["conversational"],
+                    "PYTHONPATH": loader.get("pythonpath", []),
                     "PROMPT_COLUMN": loader["prompt_column"], "ROWS": {k: v for k, v in loader.get("rows", {}).items() if k in keys}}  # fmt: skip
         script += "".join(f"{name} = json.loads({json.dumps(json.dumps(value, ensure_ascii=True, default=str))})\n"
                           for name, value in settings.items()) + LOAD_REWARD  # fmt: skip

@@ -75,6 +75,10 @@ def uv_command(audit_dir: Path, extra: list[str], module: str = "falsepass.runne
         *self_install_args(), "--with", "rewardlint", *install_args(env, source),
     ]  # fmt: skip
     package = ["--package", env["package"]] if env.get("package") else []
+    if env.get("framework") == "reward":  # the graders' own libraries decide the result (math-verify 0.5 and 0.9 parse differently)
+        from falsepass.openenv_support import requirement_name
+
+        package = [arg for requirement in env.get("extra", []) for arg in ("--package", requirement_name(requirement))]
     return [*command, "python", "-m", module, str(audit_dir), *package, *extra]
 
 
@@ -339,7 +343,8 @@ def scaffold(args) -> int:
                                          and not inspect_support.uses_inspect(local)):
         try:
             info = reward_support.describe(args.env_id, args.dataset or "", args.func or None, args.weight or None, args.split or "",
-                                           args.dataset_config or "", args.answer_column or "", args.prompt_column or "", args.map or "")
+                                           args.dataset_config or "", args.answer_column or "", args.prompt_column or "", args.map or "",
+                                           args.path or None)
         except (RuntimeError, SyntaxError) as stop:
             print(f"falsepass: {stop}", file=sys.stderr)
             return 1
@@ -399,7 +404,7 @@ def scaffold(args) -> int:
     audit_dir.mkdir(parents=True, exist_ok=True)
     keys = ("id", "framework", "task", "package", "version", "module", "index", "verifiers", "python", "inspect_ai", "hud",
             "openenv", "app", "env_class", "action_class", "factory", "dataset", "split", "dataset_config", "functions", "weights",
-            "answer_column", "prompt_column", "map", "source", "answers", "extra")  # fmt: skip
+            "answer_column", "prompt_column", "map", "pythonpath", "source", "answers", "extra")  # fmt: skip
     required = ("index",) if info.get("framework", "verifiers") == "verifiers" else ()
     lines = [f"{key} = {json.dumps(info[key])}" for key in keys if info.get(key) or key in required]
     declared = f"# declared by the package: {info['declared']}\n" if info.get("declared") else ""
@@ -529,6 +534,8 @@ def main(argv: list[str] | None = None) -> int:
     init.add_argument("--answer-column", dest="answer_column", help="reward functions: the reference column (default: guessed)")
     init.add_argument("--prompt-column", dest="prompt_column", help="reward functions: the prompt column (default: prompt, question, ...)")
     init.add_argument("--map", help="reward functions: a function in the reward file applied to every row first")
+    init.add_argument("--path", action="append", metavar="DIR", help="reward functions: a folder put on sys.path, for a package "
+                                                                     "that is imported rather than installed (repeatable)")
     init.add_argument("--answers", help="HUD: a JSON file with reference answers, either an object from task slug to "
                                         'answer ({"add-2-3": "5"}) or a list in task order (["5", "12"])')
     init.add_argument("--force", action="store_true", help="rewrite the env.toml of an existing audit folder (adapter.py is kept)")

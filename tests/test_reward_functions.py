@@ -44,7 +44,7 @@ def test_imports_become_requirements_and_hub_datasets_add_datasets(tmp_path: Pat
 
     monkeypatch.setattr(hub, "pypi_version", lambda name: "1.0" if name == "trl" else (_ for _ in ()).throw(RuntimeError(name)))
     module = reward_support.describe("trl.rewards", "data.jsonl")
-    assert module["task"] == "trl.rewards" and module["id"] == "local/rewards" and module["extra"] == ["trl"]
+    assert module["task"] == "trl.rewards" and module["id"] == "local/trl-rewards" and module["extra"] == ["trl"]
     assert reward_support.describe("my_private.rewards", "data.jsonl")["extra"] == []
 
 
@@ -154,6 +154,50 @@ def test_source_files_of_installed_functions(monkeypatch):
     scorer, _, _ = _load(monkeypatch, functions=["correctness_reward"])
     files = reward_support.source_files(scorer.funcs)
     assert list(files.values()) == [TOY / "rewards.py"]
+
+
+def test_relative_imports_are_caught_at_init(tmp_path: Path):
+    package = tmp_path / "src" / "pkg"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("")
+    (package / "rewards.py").write_text("from .utils import x\n\ndef r(completions, **kw):\n    return [0.0]\n")
+    with pytest.raises(RuntimeError, match="init pkg.rewards --framework reward --path .*src"):
+        reward_support.describe(str(package / "rewards.py"), "d.jsonl")
+    assert reward_support.describe("pkg.rewards", "d.jsonl", pythonpath=[str(tmp_path / "src")])["pythonpath"] == [str(tmp_path / "src")]
+
+
+def test_the_graders_markup_shapes_the_answer_format(tmp_path: Path, monkeypatch):
+    from falsepass.auto import candidate_formats
+
+    source = tmp_path / "fmt.py"
+    source.write_text('''import re
+PATTERN = re.compile(r"^<reasoning>.*?</reasoning>\\s*<answer>.*?</answer>$", re.DOTALL)
+
+
+def soft(completions, **kwargs):
+    return [0.5 if PATTERN.match(c[0]["content"]) else 0.0 for c in completions]
+
+
+def right(completions, answer, **kwargs):
+    return [2.0 if c[0]["content"].split("<answer>")[-1].split("</answer>")[0].strip() == a else 0.0 for c, a in zip(completions, answer)]
+''')
+    (tmp_path / "d.jsonl").write_text(json.dumps({"prompt": [{"role": "user", "content": "2+2?"}], "answer": "4"}) + "\n")
+    monkeypatch.chdir(tmp_path)
+    scorer, pool, found = reward_support.load(str(source), 10, str(tmp_path / "d.jsonl"))
+    assert "<reasoning></reasoning>" in found["format_hints"] and "<answer></answer>" in found["format_hints"]
+    formats = candidate_formats(pool[0].prompt + "\n" + found["format_hints"])
+    assert asyncio.run(scorer.score(pool[0], formats["<reasoning>+<answer>"]("4"))).reward == 2.5
+
+
+def test_worked_solutions_give_way_to_an_answer_column(tmp_path: Path, monkeypatch):
+    worked = "Let x be the speed.\nThen 3x = 12 so the speed is 4 km/h, and the river adds nothing here."
+    rows = [{"problem": f"p{i}", "solution": worked, "answer": "4"} for i in range(3)]
+    (tmp_path / "d.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    (tmp_path / "r.py").write_text("def acc(completions, solution, **kw):\n    return [0.0]\n")
+    monkeypatch.chdir(tmp_path)
+    _, pool, found = reward_support.load(str(tmp_path / "r.py"), 10, str(tmp_path / "d.jsonl"))
+    assert pool[0].answer == "4" and found["answer_column"] == ""
+    assert any("take their reference from `answer`" in n for n in found["notes"])
 
 
 def test_the_static_scan_treats_trainer_functions_as_reward_terms():

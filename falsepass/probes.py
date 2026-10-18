@@ -72,14 +72,14 @@ def wanted(probe: str, variant: str) -> bool:
     return not ONLY or probe in ONLY or f"{probe}/{variant}" in ONLY
 
 
-def judge(expected: Expect, score: float | None, adapter: Adapter, key: str = "") -> bool:
+def judge(expected: Expect, score: float | None, adapter: Adapter, key: str = "", floor: float = 0.0) -> bool:
     if score is None:
         return False
     if expected is Expect.LAZY:  # a fixed strategy: right on some tasks by chance; only its mean says anything
         return True
     if expected is Expect.FULL:
         return score >= (getattr(adapter, "task_max", {}) or {}).get(key, adapter.max_reward) - EPS
-    return score <= adapter.bad_tolerance + EPS
+    return score <= max(adapter.bad_tolerance, floor) + EPS
 
 
 async def check(
@@ -96,7 +96,8 @@ async def check(
     if not wanted(probe, variant):
         return ProbeResult(probe, name, variant, example.key, expected, None, True, SKIPPED, answer_free=answer_free)
     score = await scorer.score(example, completion)
-    passed = judge(expected, score.reward, adapter, "" if probe == "P1" else example.key)
+    passed = judge(expected, score.reward, adapter, "" if probe == "P1" else example.key,
+                   0.0 if probe == "P6" else getattr(adapter, "format_floor", 0.0))
     detail = "" if passed else f"expected {expected.value}, got {score.reward}"
     return ProbeResult(
         probe, name, variant, example.key, expected, score.reward, passed,

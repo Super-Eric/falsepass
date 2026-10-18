@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import re
 import sys
 from collections import defaultdict
@@ -76,6 +77,7 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
     try:
         if hasattr(adapter, "prepare"):
             loop.run_until_complete(adapter.prepare(scorer, examples))
+            _use_audit_format(audit_dir, adapter)
         probe_list = _probe_list(adapter) + ([probes.u1_template] if templates else [])
         probes.TEMPLATES, probes.TEMPLATE_EXPECT = templates, Expect(expect)
         # What can be asked for: run the probes on one task with nothing scored.
@@ -128,6 +130,10 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
             "errors": sum(1 for r in group if r.score is None),
             "same_as_good": sum(r.same_as_good for r in group),  # identical to the reference reply: not counted as failed
             "mean_reward": round(sum(r.score or 0.0 for r in group) / len(group), 6),
+            # each reward term's mean: a row paid "in full" by one term only shows here
+            "mean_terms": {term: round(sum(r.metrics.get(term, 0.0) for r in group) / len(group), 6)
+                           for term in sorted({t for r in group for t in r.metrics})},
+            "skipped": sum(1 for r in group if r.score is None and any("returned None" in e for e in r.errors)),
             "failed_tasks": [r.example for r in failing],
             "examples": [{"task": r.example, "score": r.score, "completion_id": r.completion_id,
                           "completion": probes.STORE.get(r.completion_id, r.completion)} for r in failing[:EXAMPLES_KEPT]],
@@ -212,5 +218,26 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _use_audit_format(audit_dir: Path, adapter: Any) -> None:
+    """Count in the answer format and against the maximum of the stored audit, so the numbers
+    of `audit`, `reach` and `draft` agree; reach infers its own only when the audit's does not apply."""
+    stored = audit_dir / "probe-results.json"
+    if not stored.is_file() or not hasattr(adapter, "hint"):
+        return
+    meta = json.loads(stored.read_text())["meta"]
+    audited = meta.get("adapter") if isinstance(meta.get("adapter"), dict) else {}
+    from falsepass.auto import candidate_formats
+
+    formats = candidate_formats(*adapter.hint)
+    if audited.get("format") in formats:
+        adapter.format_name, adapter.format = audited["format"], formats[audited["format"]]
+        adapter.inferred = {**(getattr(adapter, "inferred", None) or {}), "format": audited["format"]}
+        if isinstance(meta.get("max_reward"), (int, float)):
+            adapter.max_reward = meta["max_reward"]
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    code = main()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(code)  # a dataset streamed through `datasets` can leave threads that keep the process alive

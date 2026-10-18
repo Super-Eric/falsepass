@@ -16,6 +16,32 @@
   need; `verify-fix --source` takes a patched copy of the file. MCP `falsepass_init` gains
   `dataset`, `functions`, `weights`, `split`, `answer_column`, `prompt_column`.
   `examples/reward-toy/` has a planted defect.
+- From the seventh dogfood round (reward functions: TRL's built-ins, open-r1, a tutorial-style
+  GSM8K file): the answer format is inferred from the markup the reward functions themselves
+  look for, not only the prompt, so `max_reward` and the lazy-policy reward are what a
+  well-formatted reply earns (before, three of three targets reported a maximum below the true
+  one, and format-only payouts were missed); `<reasoning>` and `<thinking>` work as reasoning
+  tags like `<think>`, and the answer tag on lines of its own is a candidate format; `reach`
+  counts in the audit's own format and against its maximum, reports each reward term's mean
+  (`mean_terms`) and the rows every function skipped (`skipped`); the audit and reach processes
+  exit once their results are written (a streamed Hub dataset kept one alive); a column of
+  worked solutions without a marked final answer gives way to a short answer column for the
+  probes, with a note; a file with relative imports is caught at `init`, which names the
+  module form, and `--path DIR` (MCP `path`) imports a package from a folder instead of
+  installing it; module targets get distinct names (`trl-rewards`, `open-r1-rewards`); the
+  versions of the graders' own libraries are recorded in the results; hints inside reward
+  functions that were not selected are dropped; a wrong answer keeps the kind of the reference
+  (a number, not "Yes"); MCP `falsepass_init` gains `dataset_config`, `map` and `path`; the
+  agents page has a twenty-line MCP client.
+- Reward functions summed with a format reward: when a wrong answer in the right format earns
+  the same amount on every task tried (the format terms), that amount is the floor other
+  known-bad rows are judged above; P6 and the lazy-policy reward still show it. Before, every
+  formatted wrong reply failed and buried the rows paid for more (a denial inside the box).
+  When the reference earns different amounts on different tasks, `max_reward` is the most it
+  earns, not the average. The answer tag with a box inside (`<answer>\\boxed{...}</answer>`)
+  is a candidate format. A failed import of a `--path` package lists every missing import of
+  the package at once, with the versions its own setup.py or pyproject.toml pins (extras
+  dropped).
 - New probe P17 (JSON answers): one short string field (a label, a date, an ID) followed by
   "(this is wrong)" everywhere it occurs, one field at a time; it must earn less than the
   reference (`expected: below_reference`). Found a grader that reads only the first ten

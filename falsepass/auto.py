@@ -43,20 +43,29 @@ def candidate_formats(prompt_text: str, parser: Any = None) -> dict[str, Format]
     """Ways to write an answer, most specific first. Insertion order is the tie-break."""
     found: dict[str, Format] = {}
     wants_think = "<think>" in prompt_text or "think" in (getattr(parser, "fields", None) or [])
+    # the tag the reasoning goes in: <think>, or <reasoning> / <thinking> when the prompt or the graders use that
+    think_tag = "think" if wants_think else next((t for t in ("reasoning", "thinking") if f"<{t}>" in prompt_text), "")
+    wants_think = bool(think_tag)
     tags = [t for t in dict.fromkeys(re.findall(r"<([A-Za-z_][\w-]*)>", prompt_text))
-            if t != "think" and not wraps_input(prompt_text, t)]
+            if t != think_tag and not wraps_input(prompt_text, t)]
     answer_field = getattr(parser, "answer_field", None)
     if isinstance(answer_field, str) and answer_field not in tags:
         tags.insert(0, answer_field)
 
     def add(name: str, body: Format) -> None:
         if wants_think:
-            found[f"think+{name}"] = lambda a, body=body: f"<think>\n{REASONING}\n</think>\n{body(a)}"
+            prefix = "think" if think_tag == "think" else f"<{think_tag}>"  # "reasoning+" below is plain prose
+            found[f"{prefix}+{name}"] = lambda a, body=body: f"<{think_tag}>\n{REASONING}\n</{think_tag}>\n{body(a)}"
         found[f"reasoning+{name}"] = lambda a, body=body: f"{REASONING}\n{body(a)}"
         found[name] = body
 
     for tag in tags[:4]:
         add(f"<{tag}>", lambda a, tag=tag: f"<{tag}>{a}</{tag}>")
+    for tag in tags[:1]:  # the same on lines of its own, as some format rewards count "\n<answer>\n"
+        add(f"<{tag}>lines", lambda a, tag=tag: f"<{tag}>\n{a}\n</{tag}>\n")
+        if "boxed" in prompt_text:  # a format reward wants the tag, a math grader the box inside it
+            add(f"<{tag}>boxed", lambda a, tag=tag: f"<{tag}>\\boxed{{{a}}}</{tag}>")
+            add(f"<{tag}>boxed lines", lambda a, tag=tag: f"<{tag}>\n\\boxed{{{a}}}\n</{tag}>\n")
     if "boxed" in prompt_text:
         add("boxed", lambda a: f"\\boxed{{{a}}}")
     if "####" in prompt_text:
@@ -176,14 +185,17 @@ class AutoAdapter(Adapter):
             self.task_spec, MAX_ROWS, s.get("dataset", ""), functions=s.get("functions"), weights=s.get("weights"),
             split=s.get("split", ""), config=s.get("dataset_config", ""), answer=s.get("answer_column", ""),
             prompt=s.get("prompt_column", ""), mapper=s.get("map", ""), conversational=s.get("conversational"),
+            pythonpath=s.get("pythonpath"),
         )  # fmt: skip
         self.load_notes += found["notes"]
         self.answer_free = not any(e.answer.strip() for e in self.pool)
         self._classify_pool()
         sampled = random.Random(seed).sample(self.pool, min(n, len(self.pool)))
-        self.hint = (sampled[0].prompt, None)
+        # The format rewards' own patterns say what a reply should look like (`<think>`, `<reasoning>`).
+        self.hint = (sampled[0].prompt + "\n" + found["format_hints"], None)
         self.reward_answer_column = found["answer_column"]
         self.loader = {"kind": "reward", "task": self.task_spec, "conversational": found["conversational"],
+                       "pythonpath": s.get("pythonpath") or [],
                        "functions": found["functions"], "weights": found["weights"], "prompt_column": found["prompt_column"],
                        "rows": {e.key: e.raw["row"] for e in sampled}}  # fmt: skip
         return scorer, sampled
@@ -378,6 +390,13 @@ class AutoAdapter(Adapter):
             notes.append(floor_note)
         if validity == "ok" and (spread_note := await self._task_maxima(scorer, examples)):
             notes.append(spread_note)
+        if validity == "ok" and self.framework == "reward" and len(getattr(scorer, "funcs", {})) > 1:
+            formatted = [(await scorer.score(ex, self.format(self.wrong_answer(ex)))).reward for ex in trial]
+            if formatted and None not in formatted and len(set(formatted)) == 1 and 0 < formatted[0] < self.max_reward - 1e-9:
+                self.format_floor = formatted[0]
+                notes.append(f"a wrong answer in the right format earns {formatted[0]:g} from the format terms on every task tried: "
+                             "that is the lazy-policy reward's floor (P6 shows it); other known-bad rows count as failing only "
+                             "when paid more than that")  # fmt: skip
         if sum(own_markup(ex.answer) for ex in trial) > len(trial) / 2:
             # Seen in curvebench: wrapping such a reference again, or a wrong value next to it,
             # leaves the grader reading the reference's own tags.
@@ -404,9 +423,10 @@ class AutoAdapter(Adapter):
         if len(values) < 2 or max(values) - min(values) <= 0.05 * max(values):
             return ""
         self.task_max = {k: v for k, v in earned.items() if v is not None and v > 0}
-        return (f"the reference earns between {min(values):g} and {max(values):g} depending on the task: correct-answer "
-                "variants (P2, P14, T7) are judged against the reference's own reward on their task; P1 rows below the "
-                "maximum are tasks where a full answer earns less")  # fmt: skip
+        self.max_reward = round(max(values), 6)  # what a full answer can earn; the average would sit below some known-bad rows
+        return (f"the reference earns between {min(values):g} and {max(values):g} depending on the task, so the maximum is "
+                f"{max(values):g}: correct-answer variants (P2, P14, T7) are judged against the reference's own reward on their "
+                "task; P1 rows below the maximum are tasks where a full answer earns less")  # fmt: skip
 
     async def _drop_skipped_tasks(self, scorer: Scorer, examples: list[Example]) -> None:
         """Reward functions return None to have the trainer skip a task (TRL's accuracy_reward
@@ -462,9 +482,11 @@ class AutoAdapter(Adapter):
         if is_number(answer):
             value = float(answer.replace(",", "").replace("$", ""))
             return f"{value + 7:g}"
-        for other in self.pool:
-            if other.answer.strip().lower() != answer.lower():
-                return other.answer
+        has_digit = any(c.isdigit() for c in answer)
+        others = [o.answer for o in self.pool if o.answer.strip().lower() != answer.lower()]
+        alike = [o for o in others if any(c.isdigit() for c in o) == has_digit]  # "Yes" is no wrong value for "$47$"
+        if alike or others:
+            return (alike or others)[0]
         return "none of the above"
 
     def shotgun_answers(self, example: Example) -> list[str]:

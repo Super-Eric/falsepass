@@ -584,7 +584,7 @@ def test_correct_variants_are_judged_against_their_own_tasks_reference():
     adapter.max_reward = 0.745
     examples = [Example("easy-0", "q", "7"), Example("hard-0", "q", "9")]
     note = asyncio.run(adapter._task_maxima(TwoTiers(), examples))
-    assert adapter.task_max == {"easy-0": 0.99, "hard-0": 0.5} and "between 0.5 and 0.99" in note
+    assert adapter.task_max == {"easy-0": 0.99, "hard-0": 0.5} and "between 0.5 and 0.99" in note and adapter.max_reward == 0.99
     p2 = asyncio.run(check("P2", "equivalent_forms", "surrounding_whitespace", Expect.FULL, " 9 ", adapter, TwoTiers(), examples[1]))
     p1 = asyncio.run(check("P1", "ground_truth", "reference", Expect.FULL, "9", adapter, TwoTiers(), examples[1]))
     assert p2.passed and not p1.passed  # P1 still shows that a full answer earns less on this task
@@ -615,3 +615,13 @@ def test_p17_finds_a_field_read_only_to_its_start():
     by_variant = {r.variant: r.passed for r in rows}
     assert by_variant == {"items[].kind_denied": True, "items[].date_denied": False}
     assert field_hedges("42") == {} and field_hedges('{"note": "a long free text answer of many words"}') == {}
+
+
+def test_wrong_answers_keep_the_kind_of_the_reference():
+    from falsepass.auto import AutoAdapter
+    from falsepass.model import Example
+
+    adapter = AutoAdapter({"id": "t", "framework": "verifiers"})
+    adapter.pool = [Example("a", "q", "Yes"), Example("b", "q", "$47$"), Example("c", "q", "$12$")]
+    adapter.open_ended, adapter.closed = False, False
+    assert adapter.wrong_answer(adapter.pool[1]) == "$12$"  # not "Yes" for a numeric answer

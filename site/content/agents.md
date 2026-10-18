@@ -37,10 +37,36 @@ For clients configured with JSON (Cursor, Claude Desktop, and others):
 }
 ```
 
+Without an MCP client at hand (a script, a sandbox), twenty lines of Python drive it; this
+works with the `mcp` SDK 1.x and 2.x:
+
+```python
+import asyncio, json
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
+
+async def call(tool: str, **arguments):
+    server = StdioServerParameters(command="uvx", args=["--from", "falsepass[mcp]", "falsepass", "mcp"])
+    async with stdio_client(server) as (read, write):
+        async with ClientSession(read, write) as session:
+            await session.initialize()
+            result = await session.call_tool(tool, arguments)
+            text = result.content[0].text
+            if getattr(result, "isError", None) or getattr(result, "is_error", False):
+                raise RuntimeError(text)  # the reason and the next step, in one message
+            return json.loads(text)
+
+init = asyncio.run(call("falsepass_init", target="rewards.py", dataset="data.jsonl"))
+print(asyncio.run(call("falsepass_audit", env=init["name"], wait=120))["headline"])
+```
+
+Each call above starts a fresh server; that is fine, because state lives in `audits/` and a
+running audit is found again by `falsepass_audit_status`.
+
 | Tool | Arguments | Returns |
 |---|---|---|
 | `falsepass_scan` | `path` | static hints for a source folder or file; nothing is installed |
-| `falsepass_init` | `target` (Prime Hub id, OpenEnv Space `hf:owner/space` or folder, a file of reward functions with `dataset`, local folder, Inspect task, HUD folder); optional `name`, `version`, `framework`, `task`, `answers`, `extra`, `without`, `dataset`, `functions`, `weights`, `split`, `answer_column`, `prompt_column`, `env_class`, `action_class`, `manual`, `policies`, `force` | `{"name": ..., "folder": ..., "framework": ..., "env": {...}, "next": ...}`: `name` is what the other tools take |
+| `falsepass_init` | `target` (Prime Hub id, OpenEnv Space `hf:owner/space` or folder, a file of reward functions with `dataset`, local folder, Inspect task, HUD folder); optional `name`, `version`, `framework`, `task`, `answers`, `extra`, `without`, `dataset`, `functions`, `weights`, `split`, `dataset_config`, `answer_column`, `prompt_column`, `map`, `path`, `env_class`, `action_class`, `manual`, `policies`, `force` | `{"name": ..., "folder": ..., "framework": ..., "env": {...}, "next": ...}`: `name` is what the other tools take |
 | `falsepass_audit` | `env`, `n` (tasks, default 25), `search` (mutation budget), `wait` (seconds, default 45) | the results digest below with `"status": "finished"`, or `"status": "running"` if the audit needs longer |
 | `falsepass_audit_status` | `env`, `wait` | the same, for an audit already started: results, or `"running"` with the latest progress lines |
 | `falsepass_results` | `env` | the digest of the last run (progress instead while one is running) |
@@ -193,7 +219,23 @@ message lists, and, when the reference column is a worked solution, that the pro
 final answer. If the reference column is wrong, re-init with `answer_column`; if a function
 refuses one of the trainer's keywords (no `**kwargs`), it would raise `TypeError` under
 `GRPOTrainer` itself, which is worth telling its author. The file's third-party imports are
-installed for the audit; `extra` adds one, `without` drops one.
+installed for the audit; `extra` adds one, `without` drops one. A file that is part of a
+package (`from .utils import ...`) cannot be imported alone: give the module name and the
+folder that holds the package, `target="open_r1.rewards", framework="reward",
+path=["./open-r1/src"]`, with the package's third-party imports in `extra`; `init` says so
+when it sees relative imports.
+
+The answer format is inferred from the prompt and from the markup the functions themselves
+look for (`<think>`, `<reasoning>`, `<answer>`, `\boxed`), so the reference is written the
+way the format rewards pay it and `max_reward` is what a correct, well-formatted reply
+earns. `metrics` in each row (and `mean_terms` in a `falsepass_reach` row) holds every
+function's own value: a row paid by a format term alone shows there. A function that
+returns `None` for the reference itself marks a task the trainer skips: such tasks are left
+out of the audit (the note counts them) and counted as `skipped` by `falsepass_reach`. When
+the reference column holds worked solutions without a marked final answer and a short
+answer column exists, the probes take their value from that column and the note says so;
+the functions still receive the original column, so P1 failing then means the functions
+read a different value out of it than the answer column holds.
 
 ## OpenEnv environments
 

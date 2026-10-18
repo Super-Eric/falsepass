@@ -177,6 +177,19 @@ def run(
             task_file = str(Path(task_file).parent if task_file.endswith(".py") else task_file)
         source = Path(env.get("source") or (task_file if task_file.endswith(".py") or env.get("framework") == "hud" else "") or source)
     hints = [h.to_dict() for h in static.scan(source)] if source.exists() else []
+    if getattr(adapter, "framework", "") == "reward":  # hints inside reward functions that were not selected say nothing here
+        from falsepass import reward_support
+
+        selected = set((getattr(adapter, "loader", None) or {}).get("functions", []))
+        others: dict[str, set[str]] = {}
+        for h in hints:
+            file = source / h["file"] if source.is_dir() else source
+            if h["file"] not in others:
+                try:
+                    others[h["file"]] = set(reward_support.declared_functions(file)) - selected
+                except (OSError, SyntaxError):
+                    others[h["file"]] = set()
+        hints = [h for h in hints if h["where"].split(" ")[0] not in others.get(h["file"], set())]
     payload = {
         "static": static.cross_check(hints, [r.to_dict() for r in results]),
         "meta": {
@@ -243,4 +256,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    code = main()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(code)  # a dataset streamed through `datasets` can leave threads that keep the process alive
