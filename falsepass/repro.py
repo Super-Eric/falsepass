@@ -361,6 +361,66 @@ async def score(key, completion):
     return reward.get("value") if isinstance(reward, dict) else reward
 '''
 
+LOAD_REWARD = '''
+import importlib
+import importlib.util
+import inspect
+import os
+import sys
+import types
+from pathlib import Path
+
+if MODULE.endswith(".py"):
+    PATH = Path(os.environ.get("FALSEPASS_SOURCE") or MODULE).resolve()
+    if PATH.is_dir():  # a patched copy of the folder: the file of the same name in it
+        PATH = PATH / Path(MODULE).name
+    sys.path.insert(0, str(PATH.parent))
+    os.chdir(PATH.parent)
+    _spec = importlib.util.spec_from_file_location("rewards_under_test", PATH)
+    REWARDS = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(REWARDS)
+else:
+    REWARDS = importlib.import_module(MODULE)
+
+
+def _arguments(row, text):
+    """What GRPOTrainer passes a reward function for one completion."""
+    prompt = row.get(PROMPT_COLUMN)
+    if CONVERSATIONAL and not (isinstance(prompt, list) and prompt and isinstance(prompt[0], dict)):
+        prompt = [{"role": "user", "content": str(prompt)}]
+    completion = [{"role": "assistant", "content": text}] if CONVERSATIONAL else text
+    state = types.SimpleNamespace(global_step=0, epoch=0.0, max_steps=0, num_train_epochs=0, log_history=[])
+    kwargs = {"prompts": [prompt], "completions": [completion], "completion_ids": [[0] * max(1, round(len(text) / 4))],
+              "trainer_state": state, "log_extra": lambda *a, **k: None, "log_metric": lambda *a, **k: None}
+    kwargs.update({k: [v] for k, v in row.items() if k not in ("prompt", "completion", "completion_ids")})
+    return kwargs
+
+
+async def score(key, completion):
+    """The weighted sum of the reward functions, None and NaN counting as nothing (GRPOTrainer's nansum)."""
+    text = completion if isinstance(completion, str) else ([
+        m.get("content") or "" for m in completion if m.get("role") == "assistant" and not m.get("tool_calls")] or [""])[-1]
+    kwargs = _arguments(ROWS[key], text)
+    total, given = 0.0, 0
+    for name, weight in zip(FUNCTIONS, WEIGHTS):
+        func = getattr(REWARDS, name)
+        parameters = inspect.signature(func).parameters
+        if not any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()):
+            taken = {k: v for k, v in kwargs.items() if k in parameters}
+        else:
+            taken = kwargs
+        value = func(**taken)
+        if inspect.isawaitable(value):
+            value = await value
+        value = list(value)[0]
+        if value is not None and value == value:
+            total += weight * float(value)
+            given += 1
+    if not given:
+        raise RuntimeError("every reward function returned None")
+    return total
+'''
+
 MAIN = '''
 
 async def main():
@@ -421,7 +481,8 @@ def generate(audit_dir: Path, probes: list[str] | None = None, per_group: int = 
     env = tomllib.loads((audit_dir / "env.toml").read_text())["env"]
     path = audit_dir / "repro_auto.py"
     depends = {"inspect": "inspect_ai and the task's package", "hud": "the hud SDK and the environment's folder",
-               "openenv": "openenv and the environment folder with its own requirements"}  # fmt: skip
+               "openenv": "openenv and the environment folder with its own requirements",
+               "reward": "the reward file and its own imports; the dataset rows are inlined"}  # fmt: skip
     script = HEADER.format(
         env_id=env["id"], version=env.get("version", ""), install=" ".join(install_args(env)), python=env.get("python", "3.12"),
         falsepass=payload["meta"]["falsepass"], date=payload["meta"]["date"], path=path,
@@ -432,6 +493,12 @@ def generate(audit_dir: Path, probes: list[str] | None = None, per_group: int = 
         script += LOAD_INSPECT
     elif loader["kind"] == "hud":
         script += LOAD_HUD
+    elif loader["kind"] == "reward":
+        keys = {c["example"] for c in cases}
+        settings = {"FUNCTIONS": loader["functions"], "WEIGHTS": loader["weights"], "CONVERSATIONAL": loader["conversational"],
+                    "PROMPT_COLUMN": loader["prompt_column"], "ROWS": {k: v for k, v in loader.get("rows", {}).items() if k in keys}}  # fmt: skip
+        script += "".join(f"{name} = json.loads({json.dumps(json.dumps(value, ensure_ascii=True, default=str))})\n"
+                          for name, value in settings.items()) + LOAD_REWARD  # fmt: skip
     elif loader["kind"] == "openenv":
         keys = {c["example"] for c in cases}
         prompts = {k: " ".join(v.split()) for k, v in loader.get("prompts", {}).items() if k in keys}

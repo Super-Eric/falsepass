@@ -14,11 +14,12 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-REFERENCE_NAMES = {"answer", "answers", "info", "task", "state", "trace", "data", "entry", "reference", "gold", "kwargs"}
+REFERENCE_NAMES = {"answer", "answers", "info", "task", "state", "trace", "data", "entry", "reference", "gold", "kwargs",
+                   "solution", "solutions", "ground_truth", "target", "label", "expected"}
 MODEL_TEXT_NAMES = {"prediction", "pred", "completion", "response", "reply", "output", "text"}
 REWARD_NAME = re.compile(r"reward|score|verify|grade|correct", re.I)
 VALUE_WORD = re.compile(r"answer|expected|gold|truth|needle|target|reference|value", re.I)
-TEXT_WORD = re.compile(r"text|reply|response|completion|pred|output|generation|haystack|content|parsed|action|message", re.I)
+TEXT_WORD = re.compile(r"text|reply|response|completion|pred|output|generation|haystack|content|parsed|action|message|given|extracted|guess|candidate", re.I)
 PROCESS_CALLS = {"run_uv_script", "run", "Popen", "check_output", "check_call", "call"}
 
 # rule -> (probe codes that confirm it, one-line meaning)
@@ -175,7 +176,8 @@ class _Scanner(ast.NodeVisitor):
 
     def is_reward_term(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
         decorated = any("reward" in ast.unparse(d) for d in node.decorator_list)
-        return (node.name in self.weighted or decorated) and node.name not in self.metric_only
+        trainer = "completions" in {a.arg for a in [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]}  # GRPOTrainer's convention
+        return (node.name in self.weighted or decorated or trainer) and node.name not in self.metric_only
 
     # --- rules ----------------------------------------------------------------------------
     def visit_FunctionDef(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:

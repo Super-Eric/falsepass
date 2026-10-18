@@ -72,21 +72,27 @@ def write_inspect_sources(audit_dir: Path, adapter: Adapter, scorer: Any) -> Non
     import shutil
 
     spec = getattr(adapter, "task_spec", "") or ""
-    if getattr(adapter, "framework", "") != "inspect" or spec.partition("@")[0].endswith(".py"):
-        return  # not Inspect, or a local task file, which is scanned where it is
+    framework = getattr(adapter, "framework", "")
+    if framework not in ("inspect", "reward") or spec.partition("@")[0].endswith(".py"):
+        return  # another framework, or a local file, which is scanned where it is
     src = audit_dir / "src"
     if src.exists() and not (src / INSPECT_MARK).exists():
         return  # a src/ someone else put there
-    from falsepass import inspect_support
+    if framework == "reward":  # a module name (`trl.rewards`): the files that define the functions used
+        from falsepass import reward_support
 
-    files = inspect_support.source_files(spec, getattr(scorer, "scorers", []))
+        files = reward_support.source_files(getattr(scorer, "funcs", {}))
+    else:
+        from falsepass import inspect_support
+
+        files = inspect_support.source_files(spec, getattr(scorer, "scorers", []))
     if not files:
         return
     shutil.rmtree(src, ignore_errors=True)
     for relative, file in files.items():
         (src / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(file, src / relative)
-    (src / INSPECT_MARK).write_text("Copied by falsepass from the installed task and the scorers it uses; rewritten on every audit.\n")
+    (src / INSPECT_MARK).write_text("Copied by falsepass from the installed task or module and the grading code it uses; rewritten on every audit.\n")
 
 
 def load_adapter(audit_dir: Path) -> Adapter:

@@ -40,7 +40,7 @@ For clients configured with JSON (Cursor, Claude Desktop, and others):
 | Tool | Arguments | Returns |
 |---|---|---|
 | `falsepass_scan` | `path` | static hints for a source folder or file; nothing is installed |
-| `falsepass_init` | `target` (Prime Hub id, OpenEnv Space `hf:owner/space` or folder, local folder, Inspect task, HUD folder); optional `name`, `version`, `framework`, `task`, `answers`, `extra`, `manual`, `policies`, `force` | `{"name": ..., "folder": ..., "framework": ..., "env": {...}, "next": ...}`: `name` is what the other tools take |
+| `falsepass_init` | `target` (Prime Hub id, OpenEnv Space `hf:owner/space` or folder, a file of reward functions with `dataset`, local folder, Inspect task, HUD folder); optional `name`, `version`, `framework`, `task`, `answers`, `extra`, `without`, `dataset`, `functions`, `weights`, `split`, `answer_column`, `prompt_column`, `env_class`, `action_class`, `manual`, `policies`, `force` | `{"name": ..., "folder": ..., "framework": ..., "env": {...}, "next": ...}`: `name` is what the other tools take |
 | `falsepass_audit` | `env`, `n` (tasks, default 25), `search` (mutation budget), `wait` (seconds, default 45) | the results digest below with `"status": "finished"`, or `"status": "running"` if the audit needs longer |
 | `falsepass_audit_status` | `env`, `wait` | the same, for an audit already started: results, or `"running"` with the latest progress lines |
 | `falsepass_results` | `env` | the digest of the last run (progress instead while one is running) |
@@ -174,6 +174,26 @@ What the skeleton's parts mean:
 - `loader` tells `falsepass repro` how to load the same rows without the adapter: keep the
   skeleton's line, and keep example keys that end in the row's index (`row-17`, `task-17`).
 - `max_reward` is what the reference earns when it is below 1.0 by design.
+
+## Reward functions without an environment
+
+When the grader is a set of functions written for TRL's `GRPOTrainer` (`def
+accuracy_reward(completions, solution, **kwargs)`), point `falsepass_init` at the file (or
+at a module name such as `trl.rewards` with `framework="reward"`) and give the rows it is
+trained on as `dataset`: a `.jsonl`/`.json`/`.csv`/`.parquet` file, `hf:owner/name` (add
+`split`, and `dataset_config` on the CLI), or `call:function` for a loader defined in the
+same file. `functions` picks and orders the functions, `weights` gives the trainer's
+`reward_weights`. Each function is called as the trainer calls it (every column as a keyword,
+one completion per call) and the weighted sum is the reward; `metrics` in each row holds every
+function's own value, so the term that pays is visible.
+
+Read the digest's `note` first. It names the functions and weights used, the dataset's
+columns, the prompt and reference columns chosen, whether completions were passed as
+message lists, and, when the reference column is a worked solution, that the probes use its
+final answer. If the reference column is wrong, re-init with `answer_column`; if a function
+refuses one of the trainer's keywords (no `**kwargs`), it would raise `TypeError` under
+`GRPOTrainer` itself, which is worth telling its author. The file's third-party imports are
+installed for the audit; `extra` adds one, `without` drops one.
 
 ## OpenEnv environments
 

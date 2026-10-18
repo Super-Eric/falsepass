@@ -1,0 +1,12 @@
+{"prompt": [{"role": "system", "content": "Think inside <think></think>, then give only the final number inside <answer></answer>."}, {"role": "user", "content": "What is 2 + 3?"}], "answer": "5"}
+{"prompt": [{"role": "system", "content": "Think inside <think></think>, then give only the final number inside <answer></answer>."}, {"role": "user", "content": "What is 7 - 4?"}], "answer": "3"}
+{"prompt": [{"role": "system", "content": "Think inside <think></think>, then give only the final number inside <answer></answer>."}, {"role": "user", "content": "What is 6 * 7?"}], "answer": "42"}
+{"prompt": [{"role": "system", "content": "Think inside <think></think>, then give only the final number inside <answer></answer>."}, {"role": "user", "content": "What is 81 / 9?"}], "answer": "9"}
+{"prompt": [{"role": "system", "content": "Think inside <think></think>, then give only the final number inside <answer></answer>."}, {"role": "user", "content": "What is 12 + 19?"}], "answer": "31"}
+{"prompt": [{"role": "system", "content": "Think inside <think></think>, then give only the final number inside <answer></answer>."}, {"role": "user", "content": "What is 100 - 58?"}], "answer": "42"}
+{"prompt": [{"role": "system", "content": "Think inside <think></think>, then give only the final number inside <answer></answer>."}, {"role": "user", "content": "What is 13 * 3?"}], "answer": "39"}
+{"prompt": [{"role": "system", "content": "Think inside <think></think>, then give only the final number inside <answer></answer>."}, {"role": "user", "content": "What is 144 / 12?"}], "answer": "12"}
+{"prompt": [{"role": "system", "content": "Think inside <think></think>, then give only the final number inside <answer></answer>."}, {"role": "user", "content": "What is 25 + 17?"}], "answer": "42"}
+{"prompt": [{"role": "system", "content": "Think inside <think></think>, then give only the final number inside <answer></answer>."}, {"role": "user", "content": "What is 9 * 8?"}], "answer": "72"}
+{"prompt": [{"role": "system", "content": "Think inside <think></think>, then give only the final number inside <answer></answer>."}, {"role": "user", "content": "What is 1000 - 1?"}], "answer": "999"}
+{"prompt": [{"role": "system", "content": "Think inside <think></think>, then give only the final number inside <answer></answer>."}, {"role": "user", "content": "What is 64 / 8?"}], "answer": "8"}

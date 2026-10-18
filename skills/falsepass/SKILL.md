@@ -1,6 +1,6 @@
 ---
 name: falsepass
-description: Audit the reward code of an RL environment or eval task (verifiers / Prime Intellect Environments Hub, OpenEnv / Hugging Face Spaces, Inspect AI, HUD; published or local) for false passes and false fails with the falsepass CLI, confirm each lead, and write it up fairly. Use when asked to check, audit or harden an environment's grader, verifier or reward function.
+description: Audit the reward code of an RL environment or eval task (verifiers / Prime Intellect Environments Hub, OpenEnv / Hugging Face Spaces, Inspect AI, HUD, or plain reward functions written for TRL's GRPOTrainer; published or local) for false passes and false fails with the falsepass CLI, confirm each lead, and write it up fairly. Use when asked to check, audit or harden an environment's grader, verifier or reward function.
 ---
 
 # Audit an RL environment's grader with falsepass
@@ -16,7 +16,8 @@ Requires `uv` on the PATH. If `falsepass` is not installed, prefix every command
 
 ```bash
 falsepass scan path/to/source --json      # optional first look, nothing installed
-falsepass init owner/environment          # Hub environment; or hf:owner/space (an OpenEnv Space), ./folder,
+falsepass init owner/environment          # Hub environment; or rewards.py --dataset d.jsonl (TRL-style reward
+                                          # functions), hf:owner/space (an OpenEnv Space), ./folder,
                                           # an Inspect task file, inspect_evals/<task>, or a HUD environment folder
 falsepass audit environment               # 25 tasks; add --search 120 for mutation search
 falsepass results environment --json      # headline numbers and failing probes

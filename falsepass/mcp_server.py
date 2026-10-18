@@ -22,8 +22,8 @@ from typing import Any
 
 INSTRUCTIONS = """\
 falsepass checks the reward code of RL environments and eval tasks (verifiers / Prime
-Intellect Environments Hub, OpenEnv / Hugging Face Spaces, Inspect AI, HUD; published or in
-a local folder): it scores
+Intellect Environments Hub, OpenEnv / Hugging Face Spaces, Inspect AI, HUD, and plain reward
+functions written for TRL's GRPOTrainer; published or in a local folder): it scores
 completions whose correctness is known
 (the reference, an empty reply, a wrong answer in perfect format, an answer that is then
 denied, ...) with the environment's own grader and reports every disagreement.
@@ -265,16 +265,23 @@ def build():
         target: str, name: str | None = None, version: str | None = None, framework: str | None = None,
         task: str | None = None, answers: str | None = None, extra: list[str] | None = None,
         without: list[str] | None = None, env_class: str | None = None, action_class: str | None = None,
+        dataset: str | None = None, functions: list[str] | None = None, weights: list[float] | None = None,
+        split: str | None = None, answer_column: str | None = None, prompt_column: str | None = None,
         manual: bool = False, policies: bool = False, force: bool = False, workdir: str = ".",
     ) -> Any:  # fmt: skip
         """Set up audits/<name>/ for an environment and return the name to audit it with.
 
-        `target`: a Prime Hub slug (owner/environment), an OpenEnv Space (`hf:owner/space`,
+        `target`: a Prime Hub slug (owner/environment), a Python file of reward functions
+        written for TRL's GRPOTrainer (`def accuracy_reward(completions, solution, **kwargs)`;
+        or a module name such as `trl.rewards` with framework "reward") together with
+        `dataset` (a .jsonl/.json/.csv/.parquet file, `hf:owner/name`, or `call:function` in
+        the file; optional `functions`, `weights`, `split`, `answer_column`, `prompt_column`),
+        an OpenEnv Space (`hf:owner/space`,
         cloned next to the audit) or folder (openenv.yaml), a local folder with a
         pyproject.toml (verifiers or Inspect project), an Inspect task file, an Inspect
         registry name (inspect_evals/gsm8k), or a HUD environment folder. Options: `name`
         (folder name, default from the environment), `version` (Hub version), `framework`
-        ("verifiers", "openenv", "inspect" or "hud" when detection is wrong), `task` (Inspect:
+        ("verifiers", "openenv", "reward", "inspect" or "hud" when detection is wrong), `task` (Inspect:
         which @task), `answers` (HUD and OpenEnv: path to a JSON file of reference answers, an
         object from task key to answer or a list in task order; without it only answer-free
         probes run, unless an OpenEnv task record carries an answer field), `extra` (more
@@ -288,13 +295,18 @@ def build():
         audit's env.toml, e.g. to add answers; adapter.py is kept)."""
         args = ["init", target, "--json"]
         for flag, value in (("--name", name), ("--version", version), ("--framework", framework), ("--task", task), ("--answers", answers),
-                            ("--env-class", env_class), ("--action-class", action_class)):  # fmt: skip
+                            ("--env-class", env_class), ("--action-class", action_class), ("--dataset", dataset), ("--split", split),
+                            ("--answer-column", answer_column), ("--prompt-column", prompt_column)):  # fmt: skip
             if value:
                 args += [flag, value]
         for requirement in extra or []:
             args += ["--with", requirement]
         for requirement in without or []:
             args += ["--without", requirement]
+        for function in functions or []:
+            args += ["--func", function]
+        for weight in weights or []:
+            args += ["--weight", str(weight)]
         args += ["--manual"] * manual + ["--policies"] * policies + ["--force"] * force
         manual = manual or policies
         result = _json(_run(args, workdir, timeout=600))

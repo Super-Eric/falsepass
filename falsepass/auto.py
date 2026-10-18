@@ -123,6 +123,8 @@ class AutoAdapter(Adapter):
             return self._load_hud(n, seed)
         if self.framework == "openenv":
             return self._load_openenv(n, seed)
+        if self.framework == "reward":
+            return self._load_reward(n, seed)
         try:
             scorer, self.pool, self.hint = self._load_v1()
         except ContainerTask as needs_box:
@@ -163,6 +165,27 @@ class AutoAdapter(Adapter):
         sampled = random.Random(seed).sample(self.pool, min(n, len(self.pool)))
         self.hint = (sampled[0].prompt, None)
         self.loader = {"kind": "hud", "task": self.task_spec, "answers": self.answers}
+        return scorer, sampled
+
+    def _load_reward(self, n: int, seed: int) -> tuple[Scorer, list[Example]]:
+        """Plain reward functions (GRPOTrainer's convention) over a dataset (reward_support.py)."""
+        from falsepass import reward_support
+
+        s = self.settings
+        scorer, self.pool, found = reward_support.load(
+            self.task_spec, MAX_ROWS, s.get("dataset", ""), functions=s.get("functions"), weights=s.get("weights"),
+            split=s.get("split", ""), config=s.get("dataset_config", ""), answer=s.get("answer_column", ""),
+            prompt=s.get("prompt_column", ""), mapper=s.get("map", ""), conversational=s.get("conversational"),
+        )  # fmt: skip
+        self.load_notes += found["notes"]
+        self.answer_free = not any(e.answer.strip() for e in self.pool)
+        self._classify_pool()
+        sampled = random.Random(seed).sample(self.pool, min(n, len(self.pool)))
+        self.hint = (sampled[0].prompt, None)
+        self.reward_answer_column = found["answer_column"]
+        self.loader = {"kind": "reward", "task": self.task_spec, "conversational": found["conversational"],
+                       "functions": found["functions"], "weights": found["weights"], "prompt_column": found["prompt_column"],
+                       "rows": {e.key: e.raw["row"] for e in sampled}}  # fmt: skip
         return scorer, sampled
 
     def _load_openenv(self, n: int, seed: int) -> tuple[Scorer, list[Example]]:
@@ -310,6 +333,8 @@ class AutoAdapter(Adapter):
                 "turns": "multi-turn with tools: generic policies call the environment's own tools", "note": "",
             }  # fmt: skip
             return
+        if self.framework == "reward":
+            await self._drop_skipped_tasks(scorer, examples)
         trial = examples[:k]
         table: dict[str, float] = {}
         for name, fmt in candidate_formats(*self.hint).items():
@@ -367,6 +392,28 @@ class AutoAdapter(Adapter):
             if self.multi_turn else "single-turn",
             "note": "; ".join(notes),
         }
+
+    async def _drop_skipped_tasks(self, scorer: Scorer, examples: list[Example]) -> None:
+        """Reward functions return None to have the trainer skip a task (TRL's accuracy_reward
+        does when it cannot parse the gold solution). A task on which the reference itself gets
+        None in every candidate format is one the trainer never scores: leave it out and say so,
+        instead of counting every probe on it as an error."""
+        formats = list(candidate_formats(*self.hint).values())
+        kept, skipped = [], []
+        for example in examples:
+            for fmt in formats:
+                if (await scorer.score(example, fmt(example.answer))).reward is not None:
+                    kept.append(example)
+                    break
+            else:
+                skipped.append(example.key)
+        if skipped and kept:
+            examples[:] = kept
+            self.load_notes.append(
+                f"{len(skipped)} of {len(skipped) + len(kept)} sampled tasks left out: every reward function returned None for the "
+                f"reference itself, so the trainer skips them ({', '.join(skipped[:5])}{' ...' if len(skipped) > 5 else ''}); "
+                "if that share is large, the reference column may not be what the functions parse"
+            )  # fmt: skip
 
     def _floor_note(self, floor: float, maximum: float) -> str:
         """A grader that clamps its reward to (0.01, 0.99) pays the floor to an empty reply:
@@ -435,6 +482,15 @@ class AutoAdapter(Adapter):
             from falsepass import inspect_support
 
             return inspect_support.with_reference(example, reference)
+        if self.framework in ("hud", "openenv"):  # the expected answer lives inside the environment: nothing to swap
+            return None
+        if self.framework == "reward":  # the functions read the reference column; swap it when it holds the bare value
+            column = self.reward_answer_column
+            row = dict(example.raw["row"])
+            if not column or str(row.get(column, "")).strip() != example.answer.strip():
+                return None
+            row[column] = reference if isinstance(row[column], str) else type(row[column])(reference) if is_number(reference) else reference
+            return Example(example.key, example.prompt, reference, {"row": row})
         raw = example.raw
         if hasattr(raw, "data"):  # v1 task
             data = raw.data.model_copy(update={"answer": reference})

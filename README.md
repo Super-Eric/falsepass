@@ -27,12 +27,13 @@ reward. `falsepass` treats that verifier as the system under test: it calls the
 environment's own reward code on completions whose correctness is known in advance and
 reports every disagreement. No model, no rollouts, no GPU.
 
-It works with four frameworks, published or still in a local folder:
+It works with four frameworks and with plain reward functions, published or still in a local folder:
 
 | Framework | What falsepass runs | `falsepass init …` |
 |---|---|---|
 | [verifiers](https://github.com/PrimeIntellect-ai/verifiers) (Prime Intellect Environments Hub), all three API generations | the environment's rubric or taskset | `owner/environment`, or `./folder` |
 | [OpenEnv](https://github.com/huggingface/OpenEnv) (Hugging Face Spaces) | the environment class's own `reset()` and `step()`, in-process, no Docker | `hf:owner/space`, or `./folder` (an `openenv.yaml`) |
+| Reward functions for [TRL](https://github.com/huggingface/trl)'s `GRPOTrainer` (or anything with that signature) | the functions, called as the trainer calls them, summed with their weights | `rewards.py --dataset data.jsonl`, or a module such as `trl.rewards` |
 | [Inspect AI](https://inspect.aisi.org.uk) | the task's solver chain with a scripted model, then its scorers | `path/to/task.py`, `./project`, or `inspect_evals/gsm8k` |
 | [HUD](https://docs.hud.ai) | the task template's grader, driven like HUD's server | `path/to/env-folder` (add `--answers refs.json` for every probe) |
 
@@ -78,6 +79,31 @@ Static hint: falsepass_toy_env.py:26 reference_substring_match
     return 1.0 if answer in reply else 0.0
     confirmed: P9 failed 10/20, P5 failed 10/30
 ```
+
+## Reward functions (TRL GRPOTrainer style)
+
+```bash
+falsepass init rewards.py --dataset data.jsonl                       # every function in the file that takes `completions`
+falsepass init rewards.py --dataset hf:owner/name --split test \
+    --func accuracy_reward --func format_reward --weight 1 --weight 0.2   # which functions, with the trainer's reward_weights
+falsepass init trl.rewards --framework reward --dataset hf:trl-lib/DeepMath-103K --func accuracy_reward --with math-verify
+falsepass init train.py --dataset call:get_dataset --map to_prompt     # a loader and a row mapper defined in the script itself
+falsepass audit rewards
+```
+
+Many graders are not packaged as an environment: a training script defines functions such
+as `accuracy_reward(completions, solution, **kwargs)` and hands them to `GRPOTrainer` with a
+dataset. falsepass calls each function the way the trainer does, one completion at a time,
+with every dataset column as a keyword argument (`prompts`, `completions`, `completion_ids`,
+`trainer_state`, `log_extra`, `log_metric` too), and sums the results with their weights, a
+`None` counting as nothing. A completion is a one-message list when the dataset's prompts are
+conversations or a function reads `completion[0]["content"]`, else text. The reference column
+is the one a function names (`solution`), else `answer`, `solution`, `ground_truth`, ...
+(`--answer-column` to choose); a worked solution is reduced to its last `\boxed{}` or what
+follows `####` for the probes, while the functions always receive the column as it is. The
+dataset is a `.jsonl`/`.json`/`.csv`/`.parquet` file, `hf:owner/name` (streamed through
+`datasets`), or `call:function` in the file. The file's third-party imports are installed
+for the audit (`--with` adds, `--without` drops). `examples/reward-toy/` has one planted defect.
 
 ## OpenEnv
 
@@ -178,6 +204,7 @@ broken on the strength of a probe table.
 ```bash
 falsepass init owner/environment          # set up audits/<name>/ for a Hub environment, or pass a local folder
 falsepass init hf:owner/space             # an OpenEnv Space on the Hugging Face Hub (cloned into audits/<name>/space)
+falsepass init rewards.py --dataset d.jsonl   # reward functions written for TRL's GRPOTrainer, with their dataset
 falsepass audit environment               # no adapter needed for Q&A tasks: the answer format is inferred
 falsepass audit environment --search 120  # add mutation search (scorer calls per direction and example)
 falsepass audit environment --jobs 1      # score one task at a time (default: up to 8 at once where that is safe)
@@ -379,7 +406,7 @@ counts are not published here until those fixes are in.
 falsepass/           the probe kit (falsepass/mcp_server.py: the MCP tools)
 tests/               its tests
 examples/toy-env/    the demo environment, with its planted defect
-examples/openenv-toy/, examples/inspect-toy/, examples/hud-toy/   the same idea for OpenEnv, Inspect AI and HUD
+examples/openenv-toy/, examples/reward-toy/, examples/inspect-toy/, examples/hud-toy/   the same idea for OpenEnv, reward functions, Inspect AI and HUD
 skills/falsepass/    agent skill: the audit procedure
 action.yml           the GitHub Action
 docs/SEVERITY.md     the rating scale; docs/OUTPUT.md: the output files

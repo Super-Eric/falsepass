@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+- **Reward functions without an environment**: `falsepass init rewards.py --dataset data.jsonl`
+  (or a module name such as `trl.rewards` with `--framework reward`) audits functions written
+  for TRL's `GRPOTrainer`. Each is called the way the trainer calls it (every dataset column as
+  a keyword argument, `prompts`, `completions`, `completion_ids`, `trainer_state`,
+  `log_extra`, `log_metric`; one completion per call; message lists when the prompts are
+  conversations or a function reads `completion[0]["content"]`), and the reward is their
+  weighted sum (`--func`, `--weight`), `None` and NaN counting as nothing. Datasets: a
+  JSONL/JSON/CSV/Parquet file, `hf:owner/name` (streamed), or `call:function` in the file,
+  with `--map` for a row mapper. The reference column is the one a function names, else the
+  usual names (`--answer-column`); a worked solution gives the probes its final answer. The
+  file's third-party imports are installed for the audit. Repro scripts inline the rows they
+  need; `verify-fix --source` takes a patched copy of the file. MCP `falsepass_init` gains
+  `dataset`, `functions`, `weights`, `split`, `answer_column`, `prompt_column`.
+  `examples/reward-toy/` has a planted defect.
+- The static scan treats a function that takes `completions` as a reward term, and knows
+  `solution`, `ground_truth`, `target`, `label` as reference names.
+- rewardlint's reference swap is skipped for HUD and OpenEnv audits, where the expected answer
+  lives inside the environment (its numbers there were meaningless).
+
 ## 0.9.0 — 2026-10-18
 
 - **OpenEnv** (Meta / Hugging Face) environments can be audited: `falsepass init hf:owner/space`

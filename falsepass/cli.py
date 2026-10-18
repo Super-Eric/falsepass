@@ -23,7 +23,9 @@ def install_args(env: dict, source: str | Path | None = None) -> list[str]:
     package (a folder with a pyproject.toml) and `verifiers_source` for verifiers itself.
     `source` given here (a patched copy, an upstream checkout) overrides the file's."""
     source = source or env.get("source")
-    if env.get("framework") == "openenv":  # the folder is imported from its path (FALSEPASS_SOURCE for a patched copy), not installed
+    if env.get("framework") == "reward":  # the file is imported from its path (FALSEPASS_SOURCE for a patched copy)
+        args = []
+    elif env.get("framework") == "openenv":  # the folder is imported from its path (FALSEPASS_SOURCE for a patched copy), not installed
         args = ["--with", env.get("openenv") or "openenv"]
     elif env.get("framework") == "hud":
         args = ["--with", f"hud=={env['hud']}" if env.get("hud") else "hud"]
@@ -82,7 +84,7 @@ def source_command(audit_dir: Path, extra: list[str], module: str, source: Path 
     from falsepass import verify
 
     env = tomllib.loads((audit_dir / "env.toml").read_text())["env"]
-    if source is not None and env.get("framework") == "openenv":  # the patched folder is read in place of env.toml's
+    if source is not None and env.get("framework") in ("openenv", "reward"):  # the patched folder or file is read in place of env.toml's
         return ["env", f"FALSEPASS_SOURCE={Path(source).resolve()}", *uv_command(audit_dir, extra, module, None)]
     if verify.overlay(source):
         return ["env", f"PYTHONPATH={verify.overlay_path(audit_dir, source)}", *uv_command(audit_dir, extra, module, None)]
@@ -312,7 +314,7 @@ def scaffold(args) -> int:
     import os
     import re
 
-    from falsepass import hub, hud_support, inspect_support, openenv_support
+    from falsepass import hub, hud_support, inspect_support, openenv_support, reward_support
 
     local = Path(args.env_id)
     space = re.match(r"^(?:hf:|https?://huggingface\.co/spaces/)([\w.-]+)/([\w.-]+?)/?$", args.env_id)
@@ -333,6 +335,18 @@ def scaffold(args) -> int:
         info = openenv_support.describe(local, args.answers)
         if space:
             info["id"] = f"hf/{owner}/{repo}"
+    elif args.framework == "reward" or (args.framework is None and reward_support.uses_reward_functions(local)
+                                         and not inspect_support.uses_inspect(local)):
+        try:
+            info = reward_support.describe(args.env_id, args.dataset or "", args.func or None, args.weight or None, args.split or "",
+                                           args.dataset_config or "", args.answer_column or "", args.prompt_column or "", args.map or "")
+        except (RuntimeError, SyntaxError) as stop:
+            print(f"falsepass: {stop}", file=sys.stderr)
+            return 1
+        if not info.get("dataset"):
+            print("falsepass: reward functions need a dataset: add --dataset (a .jsonl/.json/.csv/.parquet file, hf:owner/name, or "
+                  "call:function for a function in the reward file that returns the rows)", file=sys.stderr)
+            return 1
     elif local.exists() and (args.framework == "hud" or (args.framework is None and hud_support.uses_hud(local))):
         info = hud_support.describe(local, args.answers)
     elif local.is_file() and local.suffix == ".py" and inspect_support.uses_inspect(local):
@@ -366,7 +380,7 @@ def scaffold(args) -> int:
     existing = audit_dir / "env.toml"
     if existing.is_file() and not args.force and not (args.manual or args.policies):
         old = tomllib.loads(existing.read_text())["env"]
-        if all(old.get(k) == info.get(k) for k in ("id", "version", "task", "source")):  # the same target: nothing to do
+        if all(old.get(k) == info.get(k) for k in ("id", "version", "task", "source", "dataset", "functions", "weights")):  # the same target: nothing to do
             if args.json:
                 print(json.dumps({"name": name, "folder": str(audit_dir.resolve()), "framework": old.get("framework", "verifiers"),
                                   "env": old, "manual": (audit_dir / "adapter.py").is_file(), "existing": True,
@@ -384,7 +398,8 @@ def scaffold(args) -> int:
         shutil.rmtree(audit_dir / "src", ignore_errors=True)
     audit_dir.mkdir(parents=True, exist_ok=True)
     keys = ("id", "framework", "task", "package", "version", "module", "index", "verifiers", "python", "inspect_ai", "hud",
-            "openenv", "app", "env_class", "action_class", "factory", "source", "answers", "extra")  # fmt: skip
+            "openenv", "app", "env_class", "action_class", "factory", "dataset", "split", "dataset_config", "functions", "weights",
+            "answer_column", "prompt_column", "map", "source", "answers", "extra")  # fmt: skip
     required = ("index",) if info.get("framework", "verifiers") == "verifiers" else ()
     lines = [f"{key} = {json.dumps(info[key])}" for key in keys if info.get(key) or key in required]
     declared = f"# declared by the package: {info['declared']}\n" if info.get("declared") else ""
@@ -418,6 +433,9 @@ def scaffold(args) -> int:
         print(f"created {audit_dir}/env.toml and adapter.py — fill in solver() and exploits(), then:")
     elif args.manual:
         print(f"created {audit_dir}/env.toml and adapter.py — fill in render() and wrong_answer(), then:")
+    elif info.get("framework") == "reward":
+        print(f"created {audit_dir}/env.toml — each reply goes to the reward functions the way GRPOTrainer calls them, with "
+              f"the dataset row's columns:")
     elif info.get("framework") == "openenv":
         how = ("with the reference answers given" if info.get("answers") else
                "answer-free probes unless the task records carry an answer; add --answers for all")
@@ -490,12 +508,23 @@ def main(argv: list[str] | None = None) -> int:
     prop.add_argument("--source", type=Path, help="install the environment from this local folder instead of its release")
     init = sub.add_parser("init", help="set up audits/<name>/ for a Hub environment or a local environment folder")
     init.add_argument("env_id", help="Hub slug (owner/environment), a local folder with a pyproject.toml, an Inspect task file, "
-                                     "an Inspect registry name such as inspect_evals/gsm8k, or a HUD environment folder")
+                                     "an Inspect registry name such as inspect_evals/gsm8k, a HUD environment folder, an OpenEnv Space "
+                                     "(hf:owner/space) or folder, or a file of reward functions (TRL GRPOTrainer style, with --dataset)")
     init.add_argument("--name", help="folder name under audits/ (default: the environment name)")
     init.add_argument("--version", help="environment version (default: latest on the Hub)")
     init.add_argument("--verifiers", help="verifiers version to pin (default: inferred from the wheel)")
     init.add_argument("--manual", action="store_true", help="also write an adapter.py skeleton to fill in")
-    init.add_argument("--framework", choices=["verifiers", "inspect", "hud", "openenv"], help="force the framework (default: detected)")
+    init.add_argument("--framework", choices=["verifiers", "inspect", "hud", "openenv", "reward"], help="force the framework (default: detected)")
+    init.add_argument("--dataset", metavar="SPEC", help="reward functions: the rows to score with, a .jsonl/.json/.csv/.parquet file, "
+                                                        "hf:owner/name, or call:function (a function in the reward file returning rows)")
+    init.add_argument("--func", action="append", metavar="NAME", help="reward functions: which to use, in order (repeatable; default: "
+                                                                      "every function in the file that takes `completions`)")
+    init.add_argument("--weight", action="append", type=float, metavar="W", help="reward functions: one weight per --func, in order (default 1)")
+    init.add_argument("--split", help="reward functions: the dataset split (default train)")
+    init.add_argument("--dataset-config", dest="dataset_config", help="reward functions: the Hub dataset's configuration name")
+    init.add_argument("--answer-column", dest="answer_column", help="reward functions: the reference column (default: guessed)")
+    init.add_argument("--prompt-column", dest="prompt_column", help="reward functions: the prompt column (default: prompt, question, ...)")
+    init.add_argument("--map", help="reward functions: a function in the reward file applied to every row first")
     init.add_argument("--answers", help="HUD: a JSON file with reference answers, either an object from task slug to "
                                         'answer ({"add-2-3": "5"}) or a list in task order (["5", "12"])')
     init.add_argument("--force", action="store_true", help="rewrite the env.toml of an existing audit folder (adapter.py is kept)")

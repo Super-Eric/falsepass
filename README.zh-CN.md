@@ -17,12 +17,13 @@
 
 一个 RL 环境由任务数据集和判分器组成，判分器把模型的输出换算成奖励。`falsepass` 把判分器本身当作被测对象：用环境自己的奖励代码，去给一批事先已知对错的回答打分，然后报告每一处判分和事实不符的地方。不需要模型，不需要真的跑训练，也不需要 GPU。
 
-支持四个框架，已发布的或还在本地文件夹里的都可以：
+支持四个框架和直接写成函数的奖励代码，已发布的或还在本地文件夹里的都可以：
 
 | 框架 | falsepass 实际运行的是 | `falsepass init …` |
 |---|---|---|
 | [verifiers](https://github.com/PrimeIntellect-ai/verifiers)（Prime Intellect 的 Environments Hub），三代接口都支持 | 环境自己的 rubric 或 taskset | `owner/environment`，或 `./文件夹` |
 | [OpenEnv](https://github.com/huggingface/OpenEnv)（Hugging Face Spaces） | 环境类自己的 `reset()` 和 `step()`，在进程内直接调用，不需要 Docker | `hf:owner/space`，或 `./文件夹`（含 `openenv.yaml`） |
+| 给 [TRL](https://github.com/huggingface/trl) `GRPOTrainer` 写的奖励函数（或任何同样签名的函数） | 这些函数本身，按训练器的调用方式调用，按权重加总 | `rewards.py --dataset data.jsonl`，或 `trl.rewards` 这样的模块名 |
 | [Inspect AI](https://inspect.aisi.org.uk) | 任务自己的 solver 链（用按脚本回答的替身代替模型），再用它自己的 scorer 打分 | `path/to/task.py`、`./项目`，或 `inspect_evals/gsm8k` |
 | [HUD](https://docs.hud.ai) | 任务模板自己的判分代码，调用方式和 HUD 服务器一样 | `path/to/环境文件夹`（加 `--answers refs.json` 可跑全部测试） |
 
@@ -65,6 +66,19 @@ Static hint: falsepass_toy_env.py:26 reference_substring_match
 ```
 
 意思是：错误回答拿到的最高分是满分（1 分里拿了 1 分）；"一次列出所有答案"、"给出答案又收回"、"在答案框里否定答案"三类回答，10 次全部拿了满分；静态扫描指出的第 26 行，被这些测试结果证实了。
+
+## 奖励函数（TRL GRPOTrainer 写法）
+
+```bash
+falsepass init rewards.py --dataset data.jsonl                       # 文件里所有带 `completions` 参数的函数
+falsepass init rewards.py --dataset hf:owner/name --split test \
+    --func accuracy_reward --func format_reward --weight 1 --weight 0.2   # 指定函数和训练器里的 reward_weights
+falsepass init trl.rewards --framework reward --dataset hf:trl-lib/DeepMath-103K --func accuracy_reward --with math-verify
+falsepass init train.py --dataset call:get_dataset --map to_prompt     # 训练脚本里自带的数据加载和逐行转换函数
+falsepass audit rewards
+```
+
+很多判分代码没有打包成环境：训练脚本里写几个 `accuracy_reward(completions, solution, **kwargs)` 这样的函数，连同数据集交给 `GRPOTrainer`。falsepass 像训练器那样一次给一条回答调用每个函数，数据集的每一列都作为关键字参数传进去（还有 `prompts`、`completions`、`completion_ids`、`trainer_state`、`log_extra`、`log_metric`），再按权重加总，返回 `None` 的算 0。数据集的提示是对话格式、或者函数读的是 `completion[0]["content"]` 时，回答以单条消息列表的形式传入，否则传文本。标准答案列优先取函数签名里点名的那一列（如 `solution`），否则按 `answer`、`solution`、`ground_truth` 等常见名字找（`--answer-column` 可指定）；如果这一列是完整解答，探针用它最后一个 `\boxed{}` 或 `####` 后面的内容作答案，函数收到的仍是原样的列。数据集可以是 `.jsonl`/`.json`/`.csv`/`.parquet` 文件、`hf:owner/name`（经 `datasets` 流式读取），或文件里的 `call:函数名`。文件引用的第三方包会自动装进审计环境（`--with` 增加，`--without` 去掉）。`examples/reward-toy/` 埋了一个漏洞，可以拿来试。
 
 ## OpenEnv
 
@@ -123,6 +137,7 @@ jobs:
 ```bash
 falsepass init owner/environment          # 为 Hub 上的环境建好 audits/<name>/，也可以传本地文件夹
 falsepass init hf:owner/space             # Hugging Face Hub 上的 OpenEnv Space（克隆到 audits/<name>/space）
+falsepass init rewards.py --dataset d.jsonl   # 给 TRL GRPOTrainer 写的奖励函数，连同它的数据集
 falsepass audit environment               # 问答类任务不需要写适配器：答案格式会自动推断
 falsepass audit environment --search 120  # 加上变异搜索（每个方向、每道题调用判分器的次数）
 falsepass audit environment --jobs 1      # 一次只判一道题（默认在安全的情况下最多 8 道同时判）
@@ -240,7 +255,7 @@ falsepass mcp                             # MCP 服务，走 stdio（需要 `fal
 falsepass/           测试工具本身（falsepass/mcp_server.py：MCP 工具）
 tests/               工具自身的测试
 examples/toy-env/    demo 用的小环境，带一个故意埋的漏洞
-examples/openenv-toy/、examples/inspect-toy/、examples/hud-toy/   OpenEnv、Inspect AI 和 HUD 版的同类小例子
+examples/openenv-toy/、examples/reward-toy/、examples/inspect-toy/、examples/hud-toy/   OpenEnv、奖励函数、Inspect AI 和 HUD 版的同类小例子
 skills/falsepass/    给 AI 代理的 skill：审计流程
 action.yml           GitHub Action
 docs/SEVERITY.md     定级标准；docs/OUTPUT.md：输出文件说明（均为英文）
