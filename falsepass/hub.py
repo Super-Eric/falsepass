@@ -278,6 +278,28 @@ def classify(sources: dict[str, bytes]) -> dict:
             "has_reference": has_reference, "automatic": automatic}
 
 
+SPACES_API = "https://huggingface.co/api/spaces"
+
+
+def discover_spaces(days: int = 90, limit: int = 40, tag: str = "openenv") -> list[dict]:
+    """OpenEnv environments on the Hugging Face Hub: Spaces tagged `openenv`, updated within
+    `days`, most liked first. The public listing only; nothing is cloned or run."""
+    import json
+    from datetime import datetime, timedelta, timezone
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+    url = f"{SPACES_API}?filter={tag}&sort=lastModified&direction=-1&limit={min(max(limit * 4, 100), 1000)}"
+    rows = json.loads(_get(url).decode())
+    recent = [r for r in rows if (r.get("lastModified") or "")[:10] >= cutoff]
+    recent.sort(key=lambda r: (-(r.get("likes") or 0), r["id"]))
+    return [
+        {"id": r["id"], "likes": r.get("likes") or 0, "updated": (r.get("lastModified") or "")[:10],
+         "tags": [t for t in r.get("tags", []) if t != tag and not t.startswith("region:") and t not in ("docker", "space")][:5],
+         "init": f"hf:{r['id']}"}
+        for r in recent[:limit]
+    ]  # fmt: skip
+
+
 def discover(days: int = 90, min_releases: int = 2, limit: int = 40, min_stars: int = 0) -> list[dict]:
     """Public Hub environments with a maintenance record: updated within `days` and at
     least `min_releases` published versions. Uses the `prime` CLI for the listing."""

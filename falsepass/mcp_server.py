@@ -22,7 +22,8 @@ from typing import Any
 
 INSTRUCTIONS = """\
 falsepass checks the reward code of RL environments and eval tasks (verifiers / Prime
-Intellect Environments Hub, Inspect AI, HUD; published or in a local folder): it scores
+Intellect Environments Hub, OpenEnv / Hugging Face Spaces, Inspect AI, HUD; published or in
+a local folder): it scores
 completions whose correctness is known
 (the reference, an empty reply, a wrong answer in perfect format, an answer that is then
 denied, ...) with the environment's own grader and reports every disagreement.
@@ -267,13 +268,15 @@ def build():
     ) -> Any:  # fmt: skip
         """Set up audits/<name>/ for an environment and return the name to audit it with.
 
-        `target`: a Hub slug (owner/environment), a local folder with a pyproject.toml
-        (verifiers or Inspect project), an Inspect task file, an Inspect registry name
-        (inspect_evals/gsm8k), or a HUD environment folder. Options: `name` (folder name,
-        default from the environment), `version` (Hub version), `framework` ("verifiers",
-        "inspect" or "hud" when detection is wrong), `task` (Inspect: which @task), `answers`
-        (HUD: path to a JSON file of reference answers, an object from task slug to answer or
-        a list in task order; without it only answer-free probes run), `extra` (more
+        `target`: a Prime Hub slug (owner/environment), an OpenEnv Space (`hf:owner/space`,
+        cloned next to the audit) or folder (openenv.yaml), a local folder with a
+        pyproject.toml (verifiers or Inspect project), an Inspect task file, an Inspect
+        registry name (inspect_evals/gsm8k), or a HUD environment folder. Options: `name`
+        (folder name, default from the environment), `version` (Hub version), `framework`
+        ("verifiers", "openenv", "inspect" or "hud" when detection is wrong), `task` (Inspect:
+        which @task), `answers` (HUD and OpenEnv: path to a JSON file of reference answers, an
+        object from task key to answer or a list in task order; without it only answer-free
+        probes run, unless an OpenEnv task record carries an answer field), `extra` (more
         requirements to install, e.g. ["inspect-evals[math]"]), `manual` (also write an
         adapter.py skeleton for a Q&A environment automatic mode cannot script), `policies`
         (the same for games, simulations and tool tasks: a skeleton built around policies;
@@ -434,10 +437,13 @@ def build():
         return {"report": _ok(_run(args, workdir, timeout=600))["stdout"]}
 
     @tool
-    def falsepass_discover(days: int = 90, limit: int = 40, workdir: str = ".") -> Any:
-        """Recently maintained Hub environments and what each needs (sandbox, tools, LLM
-        judge, API key, reference answers). Needs the `prime` CLI."""
-        return {"table": _ok(_run(["discover", "--days", str(days), "--limit", str(limit)], workdir, timeout=900))["stdout"]}
+    def falsepass_discover(days: int = 90, limit: int = 40, hub: str = "prime", workdir: str = ".") -> Any:
+        """Recently maintained environments: `hub` "prime" (the Prime Intellect Hub, with what
+        each needs: sandbox, tools, LLM judge, API key, reference answers; needs the `prime`
+        CLI) or "hf" (OpenEnv Spaces on the Hugging Face Hub, most liked first, each with
+        the `hf:owner/space` target for falsepass_init; the public listing only)."""
+        args = ["discover", "--days", str(days), "--limit", str(limit), "--hub", hub]
+        return {"table": _ok(_run(args, workdir, timeout=900))["stdout"]}
 
     return server
 

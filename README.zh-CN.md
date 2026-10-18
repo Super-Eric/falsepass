@@ -17,11 +17,12 @@
 
 一个 RL 环境由任务数据集和判分器组成，判分器把模型的输出换算成奖励。`falsepass` 把判分器本身当作被测对象：用环境自己的奖励代码，去给一批事先已知对错的回答打分，然后报告每一处判分和事实不符的地方。不需要模型，不需要真的跑训练，也不需要 GPU。
 
-支持三个框架，已发布的或还在本地文件夹里的都可以：
+支持四个框架，已发布的或还在本地文件夹里的都可以：
 
 | 框架 | falsepass 实际运行的是 | `falsepass init …` |
 |---|---|---|
 | [verifiers](https://github.com/PrimeIntellect-ai/verifiers)（Prime Intellect 的 Environments Hub），三代接口都支持 | 环境自己的 rubric 或 taskset | `owner/environment`，或 `./文件夹` |
+| [OpenEnv](https://github.com/huggingface/OpenEnv)（Hugging Face Spaces） | 环境类自己的 `reset()` 和 `step()`，在进程内直接调用，不需要 Docker | `hf:owner/space`，或 `./文件夹`（含 `openenv.yaml`） |
 | [Inspect AI](https://inspect.aisi.org.uk) | 任务自己的 solver 链（用按脚本回答的替身代替模型），再用它自己的 scorer 打分 | `path/to/task.py`、`./项目`，或 `inspect_evals/gsm8k` |
 | [HUD](https://docs.hud.ai) | 任务模板自己的判分代码，调用方式和 HUD 服务器一样 | `path/to/环境文件夹`（加 `--answers refs.json` 可跑全部测试） |
 
@@ -64,6 +65,17 @@ Static hint: falsepass_toy_env.py:26 reference_substring_match
 ```
 
 意思是：错误回答拿到的最高分是满分（1 分里拿了 1 分）；"一次列出所有答案"、"给出答案又收回"、"在答案框里否定答案"三类回答，10 次全部拿了满分；静态扫描指出的第 26 行，被这些测试结果证实了。
+
+## OpenEnv
+
+```bash
+falsepass init hf:owner/space                          # Hugging Face Hub 上的 Space：克隆到审计目录旁边
+falsepass init ./my_env                                # 或本地环境文件夹（openenv.yaml、server/app.py）
+falsepass init hf:owner/space --answers refs.json      # 提供标准答案：跑全部测试
+falsepass audit space
+```
+
+OpenEnv 环境在 `step()` 里算奖励，所以 falsepass 像它服务器上的一个会话那样直接驱动环境类：先 `reset()` 到某道题，再用回答作为动作调用 `step()`，全程在进程内，装的是 Space 自己声明的依赖，不需要 Docker。（服务器的 HTTP `/reset` 和 `/step` 每次请求都新建一个环境，所以没法用它们先 reset 再 step。）题目来源：`audits/<名字>/tasks.json` 列出调用 `reset()` 的关键字组合（多数环境靠 `task_id`、`task_name`、`difficulty` 或种子选题；每组可以带一个 `answer`）；没有的话用环境实现的 Task API；再没有就反复调用 `reset()`，每个不同的题面算一道题，对每次 reset 随机抽题的环境会反复 reset 直到抽回记录过的那道。没有标准答案时只跑不需要答案的测试。普通文字回答填进动作的自由文本字段；其他必填字段（判定枚举、布尔开关）填一个常量，O1 会把这种判定字段的每个取值都试一遍（固定策略，记为懒惰策略得分），O2 会把自报字段（`confidence`、`score`）分别设成最小值和最大值。如果回答本身是一个以动作字段为键的 JSON 对象，就直接当作动作：适配器或由这类对象组成的答案文件就是这样填多个字段的。`examples/openenv-toy/` 埋了一个漏洞，可以拿来试。
 
 ## Inspect AI 和 HUD
 
@@ -110,6 +122,7 @@ jobs:
 
 ```bash
 falsepass init owner/environment          # 为 Hub 上的环境建好 audits/<name>/，也可以传本地文件夹
+falsepass init hf:owner/space             # Hugging Face Hub 上的 OpenEnv Space（克隆到 audits/<name>/space）
 falsepass audit environment               # 问答类任务不需要写适配器：答案格式会自动推断
 falsepass audit environment --search 120  # 加上变异搜索（每个方向、每道题调用判分器的次数）
 falsepass audit environment --jobs 1      # 一次只判一道题（默认在安全的情况下最多 8 道同时判）
@@ -156,6 +169,8 @@ falsepass mcp                             # MCP 服务，走 stdio（需要 `fal
 | P15 | 在答案框里否定答案，或把答案和错误值并列（`\boxed{R \text{ is wrong}}`、`\boxed{W = R}`） | 不给分 |
 | P16 | JSON 答案：把参考答案里每个自由文本字段（两个词以上）换成题目原文，标签、ID 和数字保留 | 不给分或几乎不给分 |
 | A1 | 不需要标准答案：一次列出 0–1000 所有整数、所有字母、yes/no 之类的词，或题目里所有的词 | 不给分 |
+| O1 | OpenEnv，动作里的判定字段：逐个取值各试一遍，其他什么都不说（固定策略，它的平均分就是懒惰策略得分） | 只拿到该标签的基准比例 |
+| O2 | OpenEnv，动作里的自报字段（`confidence`、`score`、`quality`）：分别取最大值和最小值 | 给同样的分 |
 | T7 | 先调用一次无实际作用的工具，再给出正确答案 | 给满分（如果环境本身不提供工具，这一项需要人来判断） |
 | C0–C2 | 容器类任务：把标准答案直接写成输出文件（C0），数字改成 NaN / Infinity / 小数计数（C1），清空、截断或换成输入文件（C2） | C0 给满分，所有变体都不给满分 |
 | T4 | 多轮：先跑一个无关的对话，再重放同一个对话 | 奖励和对话记录都相同 |
@@ -209,7 +224,7 @@ falsepass mcp                             # MCP 服务，走 stdio（需要 `fal
 - 线索需要人来判断。工具能找出判分器在哪里给错了分，但这算不算漏洞、有多严重，要靠人来决定。
 - 搜索比较浅：只有固定的文本变异，判分器调用几百次。不会针对奖励去训练模型。
 - 容器类任务没有自动模式；托管沙箱上的环境，以及用付费大模型当评委的环境，没有相应凭据就无法覆盖。
-- 支持的框架：verifiers、Inspect AI（不含需要沙箱的任务）和 HUD（按回答判分的任务模板；按代理在工作区里做了什么来判分的任务，仍需手写策略）。
+- 支持的框架：verifiers、OpenEnv（`step()` 按回答或结构化动作判分的环境；MCP 工具类环境和没有 `Environment` 类的手写服务器需要策略或适配器）、Inspect AI（不含需要沙箱的任务）和 HUD（按回答判分的任务模板；按代理在工作区里做了什么来判分的任务，仍需手写策略）。
 
 ## 相关工具
 
@@ -225,7 +240,7 @@ falsepass mcp                             # MCP 服务，走 stdio（需要 `fal
 falsepass/           测试工具本身（falsepass/mcp_server.py：MCP 工具）
 tests/               工具自身的测试
 examples/toy-env/    demo 用的小环境，带一个故意埋的漏洞
-examples/inspect-toy/、examples/hud-toy/   Inspect AI 和 HUD 版的同类小例子
+examples/openenv-toy/、examples/inspect-toy/、examples/hud-toy/   OpenEnv、Inspect AI 和 HUD 版的同类小例子
 skills/falsepass/    给 AI 代理的 skill：审计流程
 action.yml           GitHub Action
 docs/SEVERITY.md     定级标准；docs/OUTPUT.md：输出文件说明（均为英文）

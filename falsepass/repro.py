@@ -270,6 +270,97 @@ async def score(key, completion):
     return (await runner.grade({"answer": reply}))["score"]
 '''
 
+LOAD_OPENENV = '''
+import importlib
+import inspect
+import os
+import sys
+import types
+from pathlib import Path
+
+FOLDER = Path(os.environ.get("FALSEPASS_SOURCE") or MODULE).resolve()
+os.chdir(FOLDER)  # data files are read relative to the folder
+sys.path.insert(0, str(FOLDER))
+if ALIAS:  # the folder is its own package: `server/app.py` imports `<alias>.models`
+    package = types.ModuleType(ALIAS)
+    package.__path__ = [str(FOLDER)]
+    sys.modules.setdefault(ALIAS, package)
+
+try:
+    from openenv.core.env_server.interfaces import Environment
+except ImportError:  # the older openenv-core wheel
+    from openenv_core.env_server.interfaces import Environment
+
+
+def _load(spec):
+    module, _, name = spec.partition(":")
+    return getattr(importlib.import_module(module), name)
+
+
+ACTION_CLASS = _load(ACTION_CLASS_SPEC)
+ENV = (_load(FACTORY_SPEC) if FACTORY_SPEC else _load(ENV_CLASS_SPEC))()
+
+
+async def _call(name, *args, **kwargs):
+    """The async override when the environment has one (as openenv's server decides), else the sync method."""
+    asynchronous = getattr(type(ENV), name + "_async", None)
+    if asynchronous is not None and asynchronous is not getattr(Environment, name + "_async", None):
+        return await asynchronous(ENV, *args, **kwargs)
+    result = getattr(ENV, name)(*args, **kwargs)
+    return await result if inspect.isawaitable(result) else result
+
+
+def _reset_kwargs(key):
+    """The reset keywords recorded for the task, filtered to what reset() accepts."""
+    kwargs = RESETS.get(key, {})
+    parameters = inspect.signature(ENV.reset).parameters
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()):
+        return kwargs
+    return {k: v for k, v in kwargs.items() if k in parameters}
+
+
+def _text(observation):
+    """The observation's text, enough to tell one task from another."""
+    data = observation.model_dump() if hasattr(observation, "model_dump") else observation
+    parts = []
+
+    def walk(value):
+        if isinstance(value, dict):
+            for v in value.values():
+                walk(v)
+        elif isinstance(value, (list, tuple)):
+            for v in value:
+                walk(v)
+        elif isinstance(value, str):
+            parts.append(value)
+
+    walk(data)
+    return " ".join(" ".join(parts).split())
+
+
+async def score(key, completion):
+    """The environment's own step() after a reset() to the task, as a WebSocket session does it.
+    An environment that draws tasks at random is reset again until the audited task comes up."""
+    reply = completion if isinstance(completion, str) else ([
+        m.get("content") or "" for m in completion if m.get("role") == "assistant" and not m.get("tool_calls")] or [""])[-1]
+    wanted = PROMPTS.get(key, "")
+    for _ in range(RETRIES):
+        observation = await _call("reset", **_reset_kwargs(key))
+        if not wanted or wanted in _text(observation):
+            break
+    else:
+        raise RuntimeError(f"reset() did not bring back task {key} in {RETRIES} tries")
+    try:
+        data = json.loads(reply)
+    except ValueError:
+        data = None
+    named = isinstance(data, dict) and data and set(data) <= set(ACTION_CLASS.model_fields)
+    fields = {**FILLS, **data} if named else {**FILLS, FIELD: reply} if FIELD else dict(FILLS)
+    observation = await _call("step", ACTION_CLASS(**fields))
+    reward = observation.reward
+    return reward.get("value") if isinstance(reward, dict) else reward
+'''
+
 MAIN = '''
 
 async def main():
@@ -329,7 +420,8 @@ def generate(audit_dir: Path, probes: list[str] | None = None, per_group: int = 
         raise RuntimeError("no failing probe with a stored completion to reproduce")
     env = tomllib.loads((audit_dir / "env.toml").read_text())["env"]
     path = audit_dir / "repro_auto.py"
-    depends = {"inspect": "inspect_ai and the task's package", "hud": "the hud SDK and the environment's folder"}
+    depends = {"inspect": "inspect_ai and the task's package", "hud": "the hud SDK and the environment's folder",
+               "openenv": "openenv and the environment folder with its own requirements"}  # fmt: skip
     script = HEADER.format(
         env_id=env["id"], version=env.get("version", ""), install=" ".join(install_args(env)), python=env.get("python", "3.12"),
         falsepass=payload["meta"]["falsepass"], date=payload["meta"]["date"], path=path,
@@ -340,6 +432,16 @@ def generate(audit_dir: Path, probes: list[str] | None = None, per_group: int = 
         script += LOAD_INSPECT
     elif loader["kind"] == "hud":
         script += LOAD_HUD
+    elif loader["kind"] == "openenv":
+        keys = {c["example"] for c in cases}
+        prompts = {k: " ".join(v.split()) for k, v in loader.get("prompts", {}).items() if k in keys}
+        settings = {
+            "ALIAS": loader.get("alias", ""), "ACTION_CLASS_SPEC": loader["action_class"], "FACTORY_SPEC": loader.get("factory", ""),
+            "ENV_CLASS_SPEC": loader["env_class"], "FIELD": loader.get("field"), "FILLS": loader.get("fills", {}),
+            "RESETS": {k: v for k, v in loader.get("resets", {}).items() if k in keys}, "PROMPTS": prompts,
+            "RETRIES": min(60, max(3, 3 * len(loader.get("resets", {})))),
+        }  # fmt: skip
+        script += "".join(f"{name} = {json.dumps(value, ensure_ascii=True)}\n" for name, value in settings.items()) + LOAD_OPENENV
     elif loader["kind"] == "v1":
         script += LOAD_V1.replace("{last}", str(max(int(re.findall(r"[0-9]+", c["example"])[-1]) for c in cases)))
     else:

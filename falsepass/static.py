@@ -18,7 +18,7 @@ REFERENCE_NAMES = {"answer", "answers", "info", "task", "state", "trace", "data"
 MODEL_TEXT_NAMES = {"prediction", "pred", "completion", "response", "reply", "output", "text"}
 REWARD_NAME = re.compile(r"reward|score|verify|grade|correct", re.I)
 VALUE_WORD = re.compile(r"answer|expected|gold|truth|needle|target|reference|value", re.I)
-TEXT_WORD = re.compile(r"text|reply|response|completion|pred|output|generation|haystack|content|parsed", re.I)
+TEXT_WORD = re.compile(r"text|reply|response|completion|pred|output|generation|haystack|content|parsed|action|message", re.I)
 PROCESS_CALLS = {"run_uv_script", "run", "Popen", "check_output", "check_call", "call"}
 
 # rule -> (probe codes that confirm it, one-line meaning)

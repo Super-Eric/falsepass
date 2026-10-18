@@ -1,6 +1,6 @@
 ---
 name: falsepass
-description: Audit the reward code of an RL environment or eval task (verifiers / Prime Intellect Environments Hub, Inspect AI, HUD; published or local) for false passes and false fails with the falsepass CLI, confirm each lead, and write it up fairly. Use when asked to check, audit or harden an environment's grader, verifier or reward function.
+description: Audit the reward code of an RL environment or eval task (verifiers / Prime Intellect Environments Hub, OpenEnv / Hugging Face Spaces, Inspect AI, HUD; published or local) for false passes and false fails with the falsepass CLI, confirm each lead, and write it up fairly. Use when asked to check, audit or harden an environment's grader, verifier or reward function.
 ---
 
 # Audit an RL environment's grader with falsepass
@@ -16,8 +16,8 @@ Requires `uv` on the PATH. If `falsepass` is not installed, prefix every command
 
 ```bash
 falsepass scan path/to/source --json      # optional first look, nothing installed
-falsepass init owner/environment          # Hub environment; or ./folder, an Inspect task file,
-                                          # inspect_evals/<task>, or a HUD environment folder
+falsepass init owner/environment          # Hub environment; or hf:owner/space (an OpenEnv Space), ./folder,
+                                          # an Inspect task file, inspect_evals/<task>, or a HUD environment folder
 falsepass audit environment               # 25 tasks; add --search 120 for mutation search
 falsepass results environment --json      # headline numbers and failing probes
 ```
@@ -40,7 +40,11 @@ Q&A environment whose answer format can't be inferred, `--manual` writes a simpl
 - `false_fail_rate`: correct answers refused. Read the variant names: rejecting
   `\boxed{6.}` or lower-case letters can be deliberate strictness.
 - `static_hints` with `verdict: confirmed` point at the line that likely causes a failure.
-- HUD tasks without `--answers`: only answer-free probes ran (P3, P4, A1, P10, P11). A1
+- OpenEnv: `load_notes` say how tasks were picked and which action fields were filled with a
+  constant; `audits/<env>/tasks.json` (reset keyword sets, each may carry an `answer`) pins
+  the tasks. O1 rows are a fixed strategy, read their mean (the lazy-policy reward), not
+  single rows; an O2 row that fails means a self-reported field moves the reward.
+- HUD and OpenEnv tasks without `--answers`: only answer-free probes ran (P3, P4, A1, P10, P11). A1
   paying means a reply that lists everything earns reward; P1/P5/P9 need reference answers.
 - Each failing entry shows the start and the end of one completion (the answer is
   usually at the end). `falsepass results environment --completion <completion_id>`

@@ -27,11 +27,12 @@ reward. `falsepass` treats that verifier as the system under test: it calls the
 environment's own reward code on completions whose correctness is known in advance and
 reports every disagreement. No model, no rollouts, no GPU.
 
-It works with three frameworks, published or still in a local folder:
+It works with four frameworks, published or still in a local folder:
 
 | Framework | What falsepass runs | `falsepass init …` |
 |---|---|---|
 | [verifiers](https://github.com/PrimeIntellect-ai/verifiers) (Prime Intellect Environments Hub), all three API generations | the environment's rubric or taskset | `owner/environment`, or `./folder` |
+| [OpenEnv](https://github.com/huggingface/OpenEnv) (Hugging Face Spaces) | the environment class's own `reset()` and `step()`, in-process, no Docker | `hf:owner/space`, or `./folder` (an `openenv.yaml`) |
 | [Inspect AI](https://inspect.aisi.org.uk) | the task's solver chain with a scripted model, then its scorers | `path/to/task.py`, `./project`, or `inspect_evals/gsm8k` |
 | [HUD](https://docs.hud.ai) | the task template's grader, driven like HUD's server | `path/to/env-folder` (add `--answers refs.json` for every probe) |
 
@@ -77,6 +78,32 @@ Static hint: falsepass_toy_env.py:26 reference_substring_match
     return 1.0 if answer in reply else 0.0
     confirmed: P9 failed 10/20, P5 failed 10/30
 ```
+
+## OpenEnv
+
+```bash
+falsepass init hf:owner/space                          # a Space on the Hugging Face Hub: cloned next to the audit
+falsepass init ./my_env                                # or a local environment folder (openenv.yaml, server/app.py)
+falsepass init hf:owner/space --answers refs.json      # with reference answers: every probe runs
+falsepass audit space
+```
+
+An OpenEnv environment computes its reward in `step()`, so falsepass drives the
+environment class the way a session on its server does: `reset()` to a task, then `step()`
+with the reply as the action, in-process, with the Space's own requirements installed and no
+Docker. (The server's HTTP `/reset` and `/step` routes build a fresh environment per request,
+so they cannot grade a reset followed by a step.) Tasks: `audits/<name>/tasks.json` lists the
+keyword sets `reset()` is called with (most environments pick a task through `task_id`,
+`task_name`, `difficulty` or a seed; each set may carry an `answer`), else the Task API when
+the environment implements it, else repeated `reset()` calls, one task per distinct prompt;
+an environment that draws a task at random is reset again until the recorded one comes up.
+Without a reference answer only the answer-free probes run. A plain reply goes into the
+action's free-text field; other required fields (a decision enum, a flag) are filled with a
+constant, and O1 plays every value of such a decision field (a fixed strategy, reported as
+the lazy-policy reward) while O2 moves a self-reported field (`confidence`, `score`) between
+its minimum and maximum. A reply that is a JSON object naming the action's fields is the
+action itself: an adapter, or an answers file of such objects, fills several fields that way.
+`examples/openenv-toy/` has one planted defect to try.
 
 ## Inspect AI and HUD
 
@@ -150,6 +177,7 @@ broken on the strength of a probe table.
 
 ```bash
 falsepass init owner/environment          # set up audits/<name>/ for a Hub environment, or pass a local folder
+falsepass init hf:owner/space             # an OpenEnv Space on the Hugging Face Hub (cloned into audits/<name>/space)
 falsepass audit environment               # no adapter needed for Q&A tasks: the answer format is inferred
 falsepass audit environment --search 120  # add mutation search (scorer calls per direction and example)
 falsepass audit environment --jobs 1      # score one task at a time (default: up to 8 at once where that is safe)
@@ -158,6 +186,7 @@ falsepass results environment [--json]    # the last run: summary.md, or a compa
 falsepass results environment --completion ID   # one completion in full (IDs are in the JSON digest)
 falsepass scan path/to/source [--json]    # static pre-scan only, nothing is installed or run
 falsepass discover --days 90 --limit 160  # recently maintained Hub environments and what each needs
+falsepass discover --hub hf --days 30      # OpenEnv Spaces on the Hugging Face Hub, most liked first
 falsepass reach environment --probe P15/denied   # how many tasks one failing probe row reaches (every task by default)
 falsepass reach environment --template '{wrong} or {answer}'   # ...or a completion of your own, filled per task
 falsepass repro environment               # stand-alone script that re-scores the exact failing completions
@@ -199,6 +228,8 @@ the commands with `uv run`; `uv run pytest` runs the kit's own tests.
 | P15 | the answer denied, or named next to a wrong value, inside the answer slot (`\boxed{R \text{ is wrong}}`, `\boxed{W = R}`) | gives nothing |
 | P16 | JSON answers: the reference with every free-text value (two words or more) replaced by the prompt; labels, IDs and numbers kept | gives (close to) nothing |
 | A1 | no reference needed: every integer 0–1000, every letter, yes/no words, or the prompt's words in one reply | gives nothing |
+| O1 | OpenEnv, a decision field in the action: every value of it in turn, nothing else said (a fixed strategy; its mean is the lazy-policy reward) | pays only the base rate of that label |
+| O2 | OpenEnv, a self-reported field in the action (`confidence`, `score`, `quality`): at its maximum and at its minimum | gives the same reward |
 | T7 | the correct answer after one no-op tool call | gives full reward (a judgement call where the harness offers no tools) |
 | C0–C2 | container tasks: the key written as the output file (C0), with NaN / Infinity / fractional counts (C1), emptied, truncated or replaced by an input file (C2) | pays C0 in full and no mutation in full |
 | T4 | multi-turn: replay an episode after an unrelated one | gives the same reward and transcript |
@@ -259,6 +290,8 @@ so every row is something to read, not a finding.
 **Discovery.** `falsepass discover` lists Hub environments updated recently with more
 than one published version, and reads each wheel to say what it needs (sandbox, tools,
 LLM judge, API key, reference answers). It needs the `prime` CLI for the listing.
+`--hub hf` lists OpenEnv Spaces on the Hugging Face Hub instead (likes, last update, tags,
+and the `hf:owner/space` target for `init`), from the public listing alone.
 
 Three headline numbers per environment: the **false-pass ceiling** (highest reward any
 known-bad completion received), the **lazy-policy reward** (best average reward of one
@@ -320,8 +353,11 @@ counts are not published here until those fixes are in.
   a model against the reward.
 - Container tasks have no automatic mode, and environments on hosted sandboxes or with a
   paid LLM judge are not covered without credentials.
-- Supported frameworks: verifiers, Inspect AI (no sandboxed tasks) and HUD (answer-graded
-  templates; tasks graded on what an agent did in a workspace need hand-written policies).
+- Supported frameworks: verifiers, OpenEnv (environments whose `step()` grades a reply or a
+  structured action; MCP tool environments and hand-written servers without an
+  `Environment` class need policies or an adapter), Inspect AI (no sandboxed tasks) and HUD
+  (answer-graded templates; tasks graded on what an agent did in a workspace need
+  hand-written policies).
 
 ## Related tools
 
@@ -343,7 +379,7 @@ counts are not published here until those fixes are in.
 falsepass/           the probe kit (falsepass/mcp_server.py: the MCP tools)
 tests/               its tests
 examples/toy-env/    the demo environment, with its planted defect
-examples/inspect-toy/, examples/hud-toy/   the same idea for Inspect AI and HUD
+examples/openenv-toy/, examples/inspect-toy/, examples/hud-toy/   the same idea for OpenEnv, Inspect AI and HUD
 skills/falsepass/    agent skill: the audit procedure
 action.yml           the GitHub Action
 docs/SEVERITY.md     the rating scale; docs/OUTPUT.md: the output files

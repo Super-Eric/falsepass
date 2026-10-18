@@ -139,7 +139,7 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
     audited = audited.get("format") if isinstance(audited, dict) else None
     payload = {
         "meta": {
-            "environment": adapter.name, "date": date.today().isoformat(), "falsepass": falsepass.__version__,
+            "environment": adapter.name, "date": date.today().isoformat(), "falsepass": falsepass.build_version(),
             "asked": wanted, "templates": templates, "template_expect": expect if templates else None,
             "tasks_counted": len(examples),
             "tasks_in_dataset": len(pool) if pool is not None else (len(examples) if everything else None),
@@ -148,7 +148,7 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
             "format": fmt, "audit_format": audited,
             "note": f"the answer format inferred here ({fmt}) differs from the audit's ({audited}): the counts "
                     "are for this format" if audited and audited != fmt else "",
-            "versions": {p: v for p in ["verifiers", "inspect-ai", "hud"] if (v := _version(p)) != "not installed"},
+            "versions": {p: v for p in ["verifiers", "inspect-ai", "hud", "openenv"] if (v := _version(p)) != "not installed"},
         },  # fmt: skip
         "rows": counted,
     }

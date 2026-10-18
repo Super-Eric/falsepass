@@ -105,6 +105,7 @@ class AutoAdapter(Adapter):
         self.answer_free = False  # no reference answers (HUD without an answers file): answer-free probes only
         self.module = env.get("module") or env.get("package") or self.task_spec
         self.load_args = env.get("load_args", {})
+        self.settings = env  # the env.toml table, for framework-specific keys (OpenEnv's app, env_class, action_class)
         self.multi_turn = False
         self.tool_mode = False  # a tool-use environment: played with policies, no answer format to infer
         self.open_ended = False
@@ -120,6 +121,8 @@ class AutoAdapter(Adapter):
             return self._load_inspect(n, seed)
         if self.framework == "hud":
             return self._load_hud(n, seed)
+        if self.framework == "openenv":
+            return self._load_openenv(n, seed)
         try:
             scorer, self.pool, self.hint = self._load_v1()
         except ContainerTask as needs_box:
@@ -160,6 +163,30 @@ class AutoAdapter(Adapter):
         sampled = random.Random(seed).sample(self.pool, min(n, len(self.pool)))
         self.hint = (sampled[0].prompt, None)
         self.loader = {"kind": "hud", "task": self.task_spec, "answers": self.answers}
+        return scorer, sampled
+
+    def _load_openenv(self, n: int, seed: int) -> tuple[Scorer, list[Example]]:
+        """An OpenEnv environment: its own reset() and step() grade the reply (openenv_support.py)."""
+        from falsepass import openenv_support
+
+        audit_dir = self.settings.get("_audit_dir")
+        scorer, self.pool, found = openenv_support.load(
+            self.task_spec, MAX_ROWS, self.answers, app=self.settings.get("app", ""),
+            env_class=self.settings.get("env_class", ""), action_class=self.settings.get("action_class", ""),
+            factory=self.settings.get("factory", ""),
+            tasks_file=f"{audit_dir}/{openenv_support.TASKS_FILE}" if audit_dir else None,
+        )  # fmt: skip
+        self.load_notes += found["notes"]
+        self.answer_free = not any(e.answer.strip() for e in self.pool)
+        self._classify_pool()
+        self.json_references = not self.answer_free and sum(_json_object(e.answer) for e in self.pool) > len(self.pool) / 2
+        self.answer_free_probes = [openenv_support.o1_fixed_choice, openenv_support.o2_self_report]  # need no reference
+        self.per_example_probes = [*self.per_example_probes, *self.answer_free_probes]
+        sampled = random.Random(seed).sample(self.pool, min(n, len(self.pool)))
+        self.hint = (sampled[0].prompt, None)
+        self.loader = {"kind": "openenv", "task": self.task_spec, "answers": self.answers,
+                       **{k: found[k] for k in ("app", "alias", "env_class", "factory", "action_class", "field", "fills")},
+                       "resets": {e.key: e.raw["reset"] for e in sampled}, "prompts": {e.key: e.prompt for e in sampled}}  # fmt: skip
         return scorer, sampled
 
     def _load_inspect(self, n: int, seed: int) -> tuple[Scorer, list[Example]]:
@@ -251,13 +278,21 @@ class AutoAdapter(Adapter):
     async def prepare(self, scorer: Scorer, examples: list[Example], k: int = 5) -> None:
         """Score the reference in every candidate format and keep the best-paid one."""
         if self.answer_free:
+            openenv = self.framework == "openenv"
             self.inferred = {
-                "validity": "no control: the tasks carry no reference answer (HUD keeps it inside the grader), so only "
-                            "answer-free probes ran (P3, P4, A1, P10, P11) and the maximum reward is assumed to be 1.0. "
-                            "Give reference answers with `falsepass init ... --answers file.json` to run every probe",
+                "validity": "no control: the tasks carry no reference answer ("
+                            + ("OpenEnv environments keep it inside step()" if openenv else "HUD keeps it inside the grader")
+                            + "), so only answer-free probes ran (P3, P4, A1, P10, P11"
+                            + (", O1, O2" if openenv else "") + ") and the maximum reward is assumed to be 1.0. "
+                            "Give reference answers with `falsepass init ... --answers file.json`"
+                            + (" (or an `answer` per task in tasks.json)" if openenv else "") + " to run every probe",
                 "format": "plain reply", "reference_reward_by_format": {}, "examples_tried": 0, "answers": "not available",
-                "turns": "single answer, graded by the task template", "note": "",
+                "turns": "single answer, graded by the environment's step()" if openenv else "single answer, graded by the task template",
+                "note": "",
             }  # fmt: skip
+            empties = [(await scorer.score(ex, "")).reward or 0.0 for ex in examples[:k]]
+            floor_note = self._floor_note(max(empties, default=0.0), 1.0)
+            self.inferred["note"] = "; ".join(n for n in [*self.load_notes, floor_note] if n)
             return
         if self.tool_mode:
             self.inferred = {
@@ -306,6 +341,8 @@ class AutoAdapter(Adapter):
         notes = list(self.load_notes)
         if abs(table[best] - 1.0) > 1e-9:
             notes.append(f"the reference did not score exactly 1.0; the best format averaged {table[best]:.3f} and is used as the maximum")
+        if floor_note := self._floor_note(max(empty), table[best]):
+            notes.append(floor_note)
         if sum(own_markup(ex.answer) for ex in trial) > len(trial) / 2:
             # Seen in curvebench: wrapping such a reference again, or a wrong value next to it,
             # leaves the grader reading the reference's own tags.
@@ -322,6 +359,15 @@ class AutoAdapter(Adapter):
             if self.multi_turn else "single-turn",
             "note": "; ".join(notes),
         }
+
+    def _floor_note(self, floor: float, maximum: float) -> str:
+        """A grader that clamps its reward to (0.01, 0.99) pays the floor to an empty reply:
+        that floor is this grader's zero, not a false pass. Known-bad rows are judged against
+        it; the ceiling and the means still show the raw numbers."""
+        if 0 < floor <= 0.05 * maximum:
+            self.bad_tolerance = floor
+            return f"an empty reply earns {floor:g}: that floor counts as nothing (bad_tolerance {floor:g})"
+        return ""
 
     # --- the three adapter questions -----------------------------------------------
     def render(self, answer: str, example: Example) -> str:
@@ -370,6 +416,8 @@ class AutoAdapter(Adapter):
         }
         if a.isalpha() and a.swapcase() != a:
             forms["answer_case_swapped"] = self.format(a.swapcase())
+        if getattr(self, "json_references", False):  # a JSON action: only forms that are still that object
+            forms = {name: form for name, form in forms.items() if _json_object(form)}
         return forms
 
     def with_reference(self, example: Example, reference: str) -> Example | None:

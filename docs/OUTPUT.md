@@ -35,7 +35,9 @@ Everything an audit writes lives in `audits/<env>/` (or the folder given with `-
 
 - `expected`: `full` (a correct completion, must get the maximum), `zero` (a known-bad
   completion, must get nothing), `stable` (the same completion scored repeatedly, must get
-  the same score), `at_most_reference` (must not beat the concise correct answer).
+  the same score), `at_most_reference` (must not beat the concise correct answer), `lazy`
+  (a fixed strategy that is right on some tasks by chance, such as O1's constant decision:
+  the row never fails; only the mean of its rows, the lazy-policy reward, is read).
 - `passed`: whether the grader did what `expected` asks.
 - `answer_free`: the completion was built without the reference answer, so a policy that
   knows nothing about the task could produce it. These feed the lazy-policy number.

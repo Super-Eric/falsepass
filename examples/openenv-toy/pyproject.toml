@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-arith-toy"
+version = "0.1.0"
+description = "falsepass example: an OpenEnv arithmetic environment with one planted grading defect"
+requires-python = ">=3.10"
+dependencies = [
+    "openenv>=0.4.2",
+    "fastapi>=0.115.0",
+    "pydantic>=2.0.0",
+    "uvicorn>=0.24.0",
+]
+
+[project.scripts]
+server = "arith_env.server.app:main"
+
+[tool.setuptools]
+packages = ["arith_env", "arith_env.server"]
+package-dir = { "arith_env" = ".", "arith_env.server" = "server" }

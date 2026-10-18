@@ -144,12 +144,25 @@ def test_wheel_data_files_are_kept_for_src_up_to_the_caps(monkeypatch):
     assert set(hub.data_files(opened, opened.namelist())) == {"pkg/data/tasks.jsonl"}
 
 
+def test_discover_lists_openenv_spaces_from_the_hub_listing(monkeypatch):
+    rows = [
+        {"id": "a/old", "likes": 50, "lastModified": "2020-01-01T00:00:00.000Z", "tags": ["openenv", "docker"]},
+        {"id": "b/quiet", "likes": 2, "lastModified": "2099-01-01T00:00:00.000Z", "tags": ["openenv", "region:us", "rl-environment"]},
+        {"id": "c/liked", "likes": 9, "lastModified": "2099-01-02T00:00:00.000Z", "tags": ["openenv", "triage"]},
+    ]
+    seen = {}
+    monkeypatch.setattr(hub, "_get", lambda url: seen.setdefault("url", url) and json.dumps(rows).encode())
+    found = hub.discover_spaces(days=30, limit=10)
+    assert [s["id"] for s in found] == ["c/liked", "b/quiet"] and found[0]["init"] == "hf:c/liked"
+    assert found[1]["tags"] == ["rl-environment"] and "filter=openenv" in seen["url"]
+
+
 def test_local_folders_are_classified_and_the_build_version_names_the_checkout(tmp_path):
-    from falsepass import __version__
+    from falsepass import __version__, build_version
 
     info = hub.describe_local(write_env(tmp_path / "env"))
     assert info["kind"]["generation"] in ("v0", "v1") and "automatic" in info["kind"]
-    assert cli.build_version().split("+")[0] == __version__
+    assert build_version().split("+")[0] == __version__
 
 
 def test_python_follows_requires_python_only_when_it_rules_out_312():

@@ -75,6 +75,8 @@ def wanted(probe: str, variant: str) -> bool:
 def judge(expected: Expect, score: float | None, adapter: Adapter) -> bool:
     if score is None:
         return False
+    if expected is Expect.LAZY:  # a fixed strategy: right on some tasks by chance; only its mean says anything
+        return True
     if expected is Expect.FULL:
         return score >= adapter.max_reward - EPS
     return score <= adapter.bad_tolerance + EPS

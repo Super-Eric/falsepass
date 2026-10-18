@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- **OpenEnv** (Meta / Hugging Face) environments can be audited: `falsepass init hf:owner/space`
+  clones the Space next to the audit, `init ./folder` takes a local one (an `openenv.yaml`).
+  The audit installs the Space's own requirements plus `openenv` and drives the environment
+  class in-process, as a session on its server does (`reset()` to the task, `step()` with the
+  reply as the action): no Docker, no port. Tasks come from `audits/<name>/tasks.json` (reset
+  keyword sets, each may carry an `answer`), the Task API when implemented, or repeated
+  `reset()` calls; an environment that draws a task at random is reset until the recorded one
+  returns. A plain reply goes into the action's free-text field, other required fields are
+  filled with constants, and a reply that is a JSON object with the action's field names is
+  the action. Two probes for structured actions: O1 plays every value of a decision field (a
+  fixed strategy, `expected: lazy`, read through the lazy-policy reward) and O2 moves a
+  self-reported field (`confidence`, `score`) between its minimum and maximum. Generated repro
+  scripts, `verify-fix --source` and `reach` work for these audits; `examples/openenv-toy/` has
+  a planted defect. Not covered: MCP tool environments and hand-written servers without an
+  `Environment` class (they stop with a message).
+- `falsepass discover --hub hf` (MCP `falsepass_discover(hub="hf")`) lists OpenEnv Spaces on
+  the Hugging Face Hub updated within `--days`, most liked first, with the `hf:owner/space`
+  target for `init`; the public listing only, nothing is cloned.
+- `expected` gains the value `lazy`: a fixed strategy that is right on some tasks by chance;
+  such rows never fail, only their mean (the lazy-policy reward) is read.
+- Static rule `reference_substring_match` also recognises `expected in action.answer`.
 - `falsepass init` keeps a Hub package's data files (JSON, JSONL, CSV, TSV, YAML, text; up to
   8 MB each and 32 MB in all) in `audits/<env>/src/` next to the source, so a reviewer can read
   the task bank the grader compares against and a patched copy of `src/` carries its own data.

@@ -40,7 +40,7 @@ For clients configured with JSON (Cursor, Claude Desktop, and others):
 | Tool | Arguments | Returns |
 |---|---|---|
 | `falsepass_scan` | `path` | static hints for a source folder or file; nothing is installed |
-| `falsepass_init` | `target` (Hub id, local folder, Inspect task, HUD folder); optional `name`, `version`, `framework`, `task`, `answers`, `extra`, `manual`, `policies`, `force` | `{"name": ..., "folder": ..., "framework": ..., "env": {...}, "next": ...}`: `name` is what the other tools take |
+| `falsepass_init` | `target` (Prime Hub id, OpenEnv Space `hf:owner/space` or folder, local folder, Inspect task, HUD folder); optional `name`, `version`, `framework`, `task`, `answers`, `extra`, `manual`, `policies`, `force` | `{"name": ..., "folder": ..., "framework": ..., "env": {...}, "next": ...}`: `name` is what the other tools take |
 | `falsepass_audit` | `env`, `n` (tasks, default 25), `search` (mutation budget), `wait` (seconds, default 45) | the results digest below with `"status": "finished"`, or `"status": "running"` if the audit needs longer |
 | `falsepass_audit_status` | `env`, `wait` | the same, for an audit already started: results, or `"running"` with the latest progress lines |
 | `falsepass_results` | `env` | the digest of the last run (progress instead while one is running) |
@@ -67,7 +67,7 @@ login), the tool returns an MCP error whose text says what happened and what to 
 next, so a client sees `isError` and the reason without reading server logs. Names are
 forgiving: `arc_easy` finds the audit `init` named `arc-easy`.
 
-For a HUD environment, pass reference answers with `answers`: a JSON file holding either
+For a HUD or OpenEnv environment, pass reference answers with `answers`: a JSON file holding either
 an object from task slug to answer (`{"add-2-3": "5"}`) or a list in task order. Without
 it only the answer-free probes run. Adding answers to an existing audit takes
 `force: true`. `uv` must be
@@ -84,7 +84,7 @@ environment.
 ## 3. Plain CLI
 
 ```bash
-falsepass init owner/environment          # or ./folder, task.py, inspect_evals/<task>, a HUD folder
+falsepass init owner/environment          # or hf:owner/space (OpenEnv), ./folder, task.py, inspect_evals/<task>, a HUD folder
 falsepass audit environment --fail-on 'ceiling>0.1'   # exit 1 when the condition is met
 falsepass audit environment --jobs 1      # one task at a time (default: up to 8 at once where safe)
 falsepass results environment --json      # compact digest, small enough for a context window
@@ -174,6 +174,43 @@ What the skeleton's parts mean:
 - `loader` tells `falsepass repro` how to load the same rows without the adapter: keep the
   skeleton's line, and keep example keys that end in the row's index (`row-17`, `task-17`).
 - `max_reward` is what the reference earns when it is below 1.0 by design.
+
+## OpenEnv environments
+
+`falsepass init hf:owner/space` clones the Space into `audits/<name>/space` and records it as
+the source; a local folder with an `openenv.yaml` works the same. The audit installs the
+Space's own requirements plus `openenv`, imports its app module, and drives the environment
+class directly: `reset()` to a task, `step()` with the reply as the action. There is no
+Docker and no server; the HTTP `/reset` and `/step` routes of an openenv server build a fresh
+environment per request, which is why they are not used.
+
+What to check in the results and how to steer the run:
+
+- **Tasks.** Few Spaces implement the Task API; most pick a task through extra `reset()`
+  keywords (`task_id`, `task_name`, `difficulty`, a seed). The `load_notes` in the digest
+  name those keywords. Write `audits/<name>/tasks.json`, a JSON list of keyword sets, each
+  optionally with an `answer` (`[{"task_id": 1, "answer": "approve"}, ...]`, or an object from
+  task key to such a set), and rerun the audit. Without it, falsepass calls `reset()`
+  repeatedly and keeps one task per distinct prompt (`reset-N` keys). An environment that
+  draws a task at random on every reset is reset again until the recorded prompt comes back;
+  when it never does, the rows carry an error saying so instead of a grade for another task.
+- **References.** Give them with `--answers` (an object by task key or a list in task order)
+  or in `tasks.json`; a Task API record's `answer`/`target`/`expected`/`label` field is used
+  too. Without any, only the answer-free probes run and the digest says so.
+- **Structured actions.** When the action is a decision (`category: Literal[...]`,
+  `approve: bool`) plus optional text, a plain reply goes into the text field and the
+  decision is filled with a constant (`load_notes` says which). O1 then plays every value of
+  the decision field with nothing else said: its per-value mean is what a policy earns
+  without reading the task, shown as the lazy-policy reward. O2 sets a self-reported number
+  (`confidence`, `score`, `quality`) to its maximum and to its minimum: a grader that trusts
+  it pays the two differently. To grade a real decision, give answers that are JSON objects
+  naming the action's fields (`{"category": "billing"}`), or write an adapter whose
+  `render()` returns such an object as a string: a reply that parses as a JSON object with
+  the action's field names is the action.
+- **What is not covered.** MCP tool environments (`CallToolAction`) and hand-written servers
+  without an `Environment` subclass stop with a message; use `--policies` or an adapter.
+  `env.toml` takes `app = "module:attr"`, `env_class`, `factory` and `action_class` when
+  detection picks the wrong one.
 
 ## Reading the output
 

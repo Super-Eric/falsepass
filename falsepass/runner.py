@@ -95,7 +95,7 @@ def load_adapter(audit_dir: Path) -> Adapter:
 
         from falsepass.auto import AutoAdapter
 
-        return AutoAdapter(tomllib.loads((audit_dir / "env.toml").read_text())["env"])
+        return AutoAdapter({**tomllib.loads((audit_dir / "env.toml").read_text())["env"], "_audit_dir": str(audit_dir)})
     spec = importlib.util.spec_from_file_location(f"falsepass_adapter_{audit_dir.name}", audit_dir / "adapter.py")
     assert spec and spec.loader, f"no adapter.py in {audit_dir}"
     module = importlib.util.module_from_spec(spec)
@@ -138,7 +138,7 @@ def run(
         if getattr(adapter, "tool_mode", False):
             run_probes(probes.TOOL_MODE, examples)
         elif getattr(adapter, "answer_free", False):
-            run_probes(probes.ANSWER_FREE, examples, together=True)
+            run_probes(probes.ANSWER_FREE + list(getattr(adapter, "answer_free_probes", [])), examples, together=True)
             run_probes(probes.ANSWER_FREE_FEW, examples[:few], "slower probes", together=True)
         else:
             run_probes(probes.PER_EXAMPLE + list(adapter.per_example_probes), examples, together=True)
@@ -178,9 +178,9 @@ def run(
             "examples": len(examples),
             "seed": seed,
             "python": platform.python_version(),
-            "versions": {p: v for p in ["verifiers", "inspect-ai", "hud", "rewardlint", *(packages or [])]
-                         if (v := _version(p)) != "not installed" or p not in ("verifiers", "inspect-ai", "hud")},
-            "falsepass": falsepass.__version__,
+            "versions": {p: v for p in ["verifiers", "inspect-ai", "hud", "openenv", "rewardlint", *(packages or [])]
+                         if (v := _version(p)) != "not installed" or p not in ("verifiers", "inspect-ai", "hud", "openenv")},
+            "falsepass": falsepass.build_version(),
             "max_reward": adapter.max_reward,
             "bad_tolerance": adapter.bad_tolerance,
             "weights": getattr(scorer, "weights", {}),

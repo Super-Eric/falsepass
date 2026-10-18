@@ -23,7 +23,9 @@ def install_args(env: dict, source: str | Path | None = None) -> list[str]:
     package (a folder with a pyproject.toml) and `verifiers_source` for verifiers itself.
     `source` given here (a patched copy, an upstream checkout) overrides the file's."""
     source = source or env.get("source")
-    if env.get("framework") == "hud":
+    if env.get("framework") == "openenv":  # the folder is imported from its path (FALSEPASS_SOURCE for a patched copy), not installed
+        args = ["--with", env.get("openenv") or "openenv"]
+    elif env.get("framework") == "hud":
         args = ["--with", f"hud=={env['hud']}" if env.get("hud") else "hud"]
         if source:
             args += ["--with", str(source)]
@@ -79,6 +81,9 @@ def source_command(audit_dir: Path, extra: list[str], module: str, source: Path 
     audit's src/) laid over the released package via PYTHONPATH, as verify-fix does."""
     from falsepass import verify
 
+    env = tomllib.loads((audit_dir / "env.toml").read_text())["env"]
+    if source is not None and env.get("framework") == "openenv":  # the patched folder is read in place of env.toml's
+        return ["env", f"FALSEPASS_SOURCE={Path(source).resolve()}", *uv_command(audit_dir, extra, module, None)]
     if verify.overlay(source):
         return ["env", f"PYTHONPATH={verify.overlay_path(audit_dir, source)}", *uv_command(audit_dir, extra, module, None)]
     return uv_command(audit_dir, extra, module, source)
@@ -304,12 +309,31 @@ def missing_audit(env: str, needs: str = "env.toml") -> int:
 
 
 def scaffold(args) -> int:
-    from falsepass import hub
+    import os
+    import re
 
-    from falsepass import hud_support, inspect_support
+    from falsepass import hub, hud_support, inspect_support, openenv_support
 
     local = Path(args.env_id)
-    if local.exists() and (args.framework == "hud" or (args.framework is None and hud_support.uses_hud(local))):
+    space = re.match(r"^(?:hf:|https?://huggingface\.co/spaces/)([\w.-]+)/([\w.-]+?)/?$", args.env_id)
+    fresh_clone = False
+    if space:  # an OpenEnv environment on the Hugging Face Hub: a shallow clone, kept next to the audit
+        owner, repo = space.groups()
+        clone = Path("audits") / (args.name or repo.lower().replace("_", "-")) / "space"
+        fresh_clone = not clone.parent.exists()
+        if not clone.is_dir():
+            print(f"cloning https://huggingface.co/spaces/{owner}/{repo} into {clone}", file=sys.stderr)
+            done = subprocess.run(["git", "clone", "--depth", "1", f"https://huggingface.co/spaces/{owner}/{repo}", str(clone)],
+                                  env={**os.environ, "GIT_TERMINAL_PROMPT": "0"}, capture_output=True, text=True, check=False)  # fmt: skip
+            if done.returncode != 0:
+                print(f"falsepass: could not clone the Space: {done.stderr.strip()[-400:]}", file=sys.stderr)
+                return 1
+        local = clone
+    if space or (local.exists() and (args.framework == "openenv" or (args.framework is None and openenv_support.uses_openenv(local)))):
+        info = openenv_support.describe(local, args.answers)
+        if space:
+            info["id"] = f"hf/{owner}/{repo}"
+    elif local.exists() and (args.framework == "hud" or (args.framework is None and hud_support.uses_hud(local))):
         info = hud_support.describe(local, args.answers)
     elif local.is_file() and local.suffix == ".py" and inspect_support.uses_inspect(local):
         info = inspect_support.describe_file(local, args.task)
@@ -342,7 +366,7 @@ def scaffold(args) -> int:
             else:
                 print(f"{audit_dir} is already set up for {info['id']}; next: falsepass audit {name}")
             return 0
-    if audit_dir.exists() and not args.force:
+    if audit_dir.exists() and not args.force and not fresh_clone:
         print(f"falsepass: {audit_dir} already exists. Pass --force to rewrite its env.toml (stored results are kept "
               "until the next audit), or --name to set up a second audit next to it.", file=sys.stderr)  # fmt: skip
         return 1
@@ -351,7 +375,8 @@ def scaffold(args) -> int:
 
         shutil.rmtree(audit_dir / "src", ignore_errors=True)
     audit_dir.mkdir(parents=True, exist_ok=True)
-    keys = ("id", "framework", "task", "package", "version", "module", "index", "verifiers", "python", "inspect_ai", "hud", "source", "answers", "extra")
+    keys = ("id", "framework", "task", "package", "version", "module", "index", "verifiers", "python", "inspect_ai", "hud",
+            "openenv", "app", "env_class", "action_class", "factory", "source", "answers", "extra")  # fmt: skip
     required = ("index",) if info.get("framework", "verifiers") == "verifiers" else ()
     lines = [f"{key} = {json.dumps(info[key])}" for key in keys if info.get(key) or key in required]
     declared = f"# declared by the package: {info['declared']}\n" if info.get("declared") else ""
@@ -385,6 +410,10 @@ def scaffold(args) -> int:
         print(f"created {audit_dir}/env.toml and adapter.py — fill in solver() and exploits(), then:")
     elif args.manual:
         print(f"created {audit_dir}/env.toml and adapter.py — fill in render() and wrong_answer(), then:")
+    elif info.get("framework") == "openenv":
+        how = ("with the reference answers given" if info.get("answers") else
+               "answer-free probes unless the task records carry an answer; add --answers for all")
+        print(f"created {audit_dir}/env.toml — each reply goes through the environment's own reset() and step() ({how}):")
     elif info.get("framework") == "hud":
         how = "with the reference answers given" if info.get("answers") else "answer-free probes only; add --answers for all"
         print(f"created {audit_dir}/env.toml — each reply is graded by its task template ({how}):")
@@ -423,25 +452,9 @@ def demo(target: Path) -> int:
     return subprocess.call(uv_command(audit_dir, ["-n", "10"]))
 
 
-def build_version() -> str:
-    """`0.8.0`, or `0.8.0+<commit>` when falsepass runs from a git checkout rather than a
-    release (`+<commit>.dirty` with uncommitted changes), so a log says which build ran."""
-    from falsepass import __version__
-
-    root = Path(__file__).resolve().parent.parent
-    if not (root / ".git").exists():
-        return __version__
-    try:
-        head = subprocess.run(["git", "-C", str(root), "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=5)
-        dirty = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--untracked-files=no"], capture_output=True, text=True, timeout=5)
-    except (OSError, subprocess.TimeoutExpired):
-        return __version__
-    if head.returncode != 0 or not head.stdout.strip():
-        return __version__
-    return f"{__version__}+{head.stdout.strip()}{'.dirty' if dirty.stdout.strip() else ''}"
-
-
 def main(argv: list[str] | None = None) -> int:
+    from falsepass import build_version
+
     parser = argparse.ArgumentParser(
         prog="falsepass", description="Probe RL environment verifiers for false passes and false fails.",
         epilog="Results are leads to reproduce and read, not verdicts. Docs: https://github.com/Super-Eric/falsepass",
@@ -474,7 +487,7 @@ def main(argv: list[str] | None = None) -> int:
     init.add_argument("--version", help="environment version (default: latest on the Hub)")
     init.add_argument("--verifiers", help="verifiers version to pin (default: inferred from the wheel)")
     init.add_argument("--manual", action="store_true", help="also write an adapter.py skeleton to fill in")
-    init.add_argument("--framework", choices=["verifiers", "inspect", "hud"], help="force the framework (default: detected)")
+    init.add_argument("--framework", choices=["verifiers", "inspect", "hud", "openenv"], help="force the framework (default: detected)")
     init.add_argument("--answers", help="HUD: a JSON file with reference answers, either an object from task slug to "
                                         'answer ({"add-2-3": "5"}) or a list in task order (["5", "12"])')
     init.add_argument("--force", action="store_true", help="rewrite the env.toml of an existing audit folder (adapter.py is kept)")
@@ -485,6 +498,8 @@ def main(argv: list[str] | None = None) -> int:
     init.add_argument("--with", dest="extra", action="append", default=[], metavar="REQ",
                       help="extra requirement to install for the audit, e.g. 'inspect-evals[math]' (repeatable)")
     disc = sub.add_parser("discover", help="list actively maintained Hub environments and what each needs")
+    disc.add_argument("--hub", choices=["prime", "hf"], default="prime",
+                      help="prime: the Prime Intellect Hub (needs the prime CLI); hf: OpenEnv Spaces on the Hugging Face Hub")
     disc.add_argument("--days", type=int, default=90, help="updated within this many days")
     disc.add_argument("--min-releases", type=int, default=2, help="published versions required to count as maintained")
     disc.add_argument("--min-stars", type=int, default=0)
@@ -622,6 +637,18 @@ def main(argv: list[str] | None = None) -> int:
         if args.output:
             args.output.write_text(table)
         print(table)
+        return 0
+
+    if args.command == "discover" and args.hub == "hf":
+        from falsepass import hub
+
+        spaces = hub.discover_spaces(args.days, args.limit)
+        if args.output:
+            args.output.write_text(json.dumps(spaces, indent=1))
+        print(f"{'likes':>5} {'updated':10} init target / tags")
+        for space in spaces:
+            print(f"{space['likes']:>5} {space['updated']:10} {space['init']:45} {', '.join(space['tags'])}")
+        print(f"{len(spaces)} OpenEnv Spaces updated in the last {args.days} days (public listing; `falsepass init <target>` to audit one).")
         return 0
 
     if args.command == "discover":

@@ -149,7 +149,8 @@ def command_for(audit_dir: Path, script: str, source: Path | None) -> list[str]:
     env = tomllib.loads((audit_dir / "env.toml").read_text())["env"]
     output = audit_dir / (Path(script).stem + ".output.txt")
     stored = stored_command(output) if output.is_file() else None
-    package = None if source is None or overlay(source) else source
+    openenv = env.get("framework") == "openenv"  # the folder is read in place, not installed: FALSEPASS_SOURCE names the patched copy
+    package = None if source is None or overlay(source) or openenv else source
     if stored:
         command = _absolute_script(patched(stored, env, package) if package else stored, audit_dir, script)
     else:
@@ -162,6 +163,8 @@ def command_for(audit_dir: Path, script: str, source: Path | None) -> list[str]:
             "uv", "run", "-q", "--isolated", "--no-project", "--python", env.get("python", "3.12"),
             *install_args(env, package), "python", str((audit_dir / script).resolve()),
         ]  # fmt: skip
+    if source is not None and openenv:
+        return ["env", f"FALSEPASS_SOURCE={source.resolve()}", *command]
     return ["env", f"PYTHONPATH={overlay_path(audit_dir, source)}", *command] if overlay(source) else command
 
 
