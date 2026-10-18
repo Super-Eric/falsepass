@@ -16,6 +16,15 @@
   need; `verify-fix --source` takes a patched copy of the file. MCP `falsepass_init` gains
   `dataset`, `functions`, `weights`, `split`, `answer_column`, `prompt_column`.
   `examples/reward-toy/` has a planted defect.
+- New probe P17 (JSON answers): one short string field (a label, a date, an ID) followed by
+  "(this is wrong)" everywhere it occurs, one field at a time; it must earn less than the
+  reference (`expected: below_reference`). Found a grader that reads only the first ten
+  characters of a date field on 10/10 tasks, which no other probe showed.
+- `init --manual` lists the package's task-data fields (`verdad: list[dict]`, ...) and `--json`
+  returns them as `task_data_fields`: where the expected values are, for `render()`.
+- The draft shows the shortest failing completion of a candidate (a 2 KB preview hid the
+  defect), and splits P11 by variant in "Checks that passed"; a hand-written adapter no longer
+  leaves `__pycache__/` in the audit folder.
 - The static scan treats a function that takes `completions` as a reward term, and knows
   `solution`, `ground_truth`, `target`, `label` as reference names.
 - When the reference earns clearly different amounts on different tasks (a clamp at 0.99 on

@@ -254,6 +254,30 @@ INFRASTRUCTURE = {
 }
 
 
+def task_data_fields(sources: dict[str, bytes]) -> dict[str, list[str]]:
+    """The annotated fields of the package's task-data classes (a subclass of verifiers'
+    `TaskData`, or any class named `*TaskData` / `*Data`), read from the source: where a
+    hand-written adapter finds the expected values (`verdad: list[dict]`, `answer: str`)."""
+    import ast
+
+    found: dict[str, list[str]] = {}
+    for name, content in sources.items():
+        if not name.endswith(".py"):
+            continue
+        try:
+            tree = ast.parse(content.decode(errors="replace"))
+        except SyntaxError:
+            continue
+        for node in (n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)):
+            bases = " ".join(ast.unparse(b) for b in node.bases)
+            if "TaskData" in bases or node.name.endswith(("TaskData", "Data")):
+                fields = [f"{item.target.id}: {ast.unparse(item.annotation)}" for item in node.body
+                          if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name)]  # fmt: skip
+                if fields:
+                    found[node.name] = fields
+    return found
+
+
 def classify(sources: dict[str, bytes]) -> dict:
     """What kind of environment a wheel contains, read from its source text only."""
     code = "\n".join(content.decode(errors="replace") for name, content in sources.items() if name.endswith(".py"))

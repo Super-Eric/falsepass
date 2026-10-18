@@ -416,6 +416,75 @@ async def p16_field_echo(adapter: Adapter, scorer: Scorer, ex: Example) -> list[
     ]
 
 
+FIELD_DENIAL = " (this is wrong)"
+MAX_HEDGED_FIELDS = 6
+
+
+def _short_string_paths(value: Any, path: str = "") -> list[str]:
+    """Key paths (`items[].date`) whose values are short strings (one to three words): labels,
+    dates, IDs, the values a grader compares rather than reads."""
+    found: list[str] = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            here = f"{path}.{key}" if path else str(key)
+            if isinstance(item, str) and 1 <= len(item.split()) <= 3:
+                found.append(here)
+            else:
+                found += _short_string_paths(item, here)
+    elif isinstance(value, list):
+        for item in value:
+            found += _short_string_paths(item, f"{path}[]")
+    return list(dict.fromkeys(found))
+
+
+def _suffix_at(value: Any, path: str, suffix: str, here: str = "") -> Any:
+    if isinstance(value, dict):
+        return {k: (v + suffix if f"{here}.{k}".lstrip(".") == path and isinstance(v, str) else _suffix_at(v, path, suffix, f"{here}.{k}".lstrip(".")))
+                for k, v in value.items()}  # fmt: skip
+    if isinstance(value, list):
+        return [_suffix_at(v, path, suffix, f"{here}[]") for v in value]
+    return value
+
+
+def field_hedges(answer: str) -> dict[str, str]:
+    """For a JSON-object reference: per short string field, the reference with that field
+    followed by a denial in every place it occurs. Each variant changes one field, so a
+    grader that reads only a prefix of one field (a date cut to ten characters) shows."""
+    import json
+
+    try:
+        value = json.loads(answer)
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    return {f"{path}_denied": json.dumps(_suffix_at(value, path, FIELD_DENIAL), ensure_ascii=False)
+            for path in _short_string_paths(value)[:MAX_HEDGED_FIELDS]}  # fmt: skip
+
+
+async def p17_field_hedge(adapter: Adapter, scorer: Scorer, ex: Example) -> list[ProbeResult]:
+    """One short field of a JSON reply followed by "(this is wrong)" everywhere it occurs must
+    earn less than the reference: a grader that keeps full credit does not read that field
+    to its end."""
+    variants = field_hedges(ex.answer)
+    if not variants:
+        return []
+    reference = (await scorer.score(ex, adapter.render(ex.answer, ex))).reward
+    if reference is None or reference <= adapter.bad_tolerance + EPS:
+        return []
+    results = []
+    for variant, value in variants.items():
+        if not wanted("P17", variant):
+            continue
+        done = adapter.render(value, ex)
+        score = await scorer.score(ex, done)
+        passed = score.reward is not None and score.reward < reference - EPS
+        detail = "" if passed else f"the reference earns {reference:g} and this {score.reward}: the field is not read to its end"
+        results.append(ProbeResult("P17", "field_hedge", variant, ex.key, Expect.BELOW_REFERENCE, score.reward, passed, detail,
+                                   preview(done), score.metrics, score.errors, False, remember(done)))  # fmt: skip
+    return results
+
+
 # --- T7: a tool call before the answer --------------------------------------------------
 
 
@@ -741,7 +810,7 @@ ANSWER_FREE_FEW = [p10_exception_path, a2_determinism]
 PER_EXAMPLE = [
     p1_ground_truth, p2_equivalent_forms, p3_empty, p4_echo, p5_shotgun,
     p6_format_only, p7_wrong_confident, p8_judge_injection, p9_oversized,
-    p13_special_numbers, p14_format_mentions, p15_hedged_in_slot, p16_field_echo, a1_answer_free_spray,
+    p13_special_numbers, p14_format_mentions, p15_hedged_in_slot, p16_field_echo, p17_field_hedge, a1_answer_free_spray,
 ]  # fmt: skip
 # Slower or input-independent probes run on a handful of examples only.
 FEW_EXAMPLES = [p10_exception_path, p11_determinism, t4_state_reset, t5_turn_limit, t7_tool_call_first, t8_after_the_end]

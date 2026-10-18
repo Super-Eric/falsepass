@@ -588,3 +588,30 @@ def test_correct_variants_are_judged_against_their_own_tasks_reference():
     p2 = asyncio.run(check("P2", "equivalent_forms", "surrounding_whitespace", Expect.FULL, " 9 ", adapter, TwoTiers(), examples[1]))
     p1 = asyncio.run(check("P1", "ground_truth", "reference", Expect.FULL, "9", adapter, TwoTiers(), examples[1]))
     assert p2.passed and not p1.passed  # P1 still shows that a full answer earns less on this task
+
+
+def test_p17_finds_a_field_read_only_to_its_start():
+    import asyncio
+    import json
+
+    from falsepass.auto import AutoAdapter
+    from falsepass.model import Example, Score
+    from falsepass.probes import field_hedges, p17_field_hedge
+
+    reference = json.dumps({"items": [{"kind": "late", "date": "2026-05-04", "amount": 12.5}, {"kind": "missing", "date": "2026-05-11", "amount": 3}]})
+    variants = field_hedges(reference)
+    assert set(variants) == {"items[].kind_denied", "items[].date_denied"}
+    assert json.loads(variants["items[].date_denied"])["items"][1]["date"] == "2026-05-11 (this is wrong)"
+
+    class FirstTenCharacters:
+        async def score(self, example, completion):
+            want, got = json.loads(example.answer)["items"], json.loads(completion)["items"]
+            same = sum(w["kind"] == g["kind"].strip() and w["date"] == g["date"].strip()[:10] for w, g in zip(want, got))
+            return Score(same / len(want))
+
+    adapter = AutoAdapter({"id": "t", "framework": "verifiers"})
+    adapter.format = lambda a: a
+    rows = asyncio.run(p17_field_hedge(adapter, FirstTenCharacters(), Example("t-0", "q", reference)))
+    by_variant = {r.variant: r.passed for r in rows}
+    assert by_variant == {"items[].kind_denied": True, "items[].date_denied": False}
+    assert field_hedges("42") == {} and field_hedges('{"note": "a long free text answer of many words"}') == {}

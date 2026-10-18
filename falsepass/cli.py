@@ -426,13 +426,17 @@ def scaffold(args) -> int:
         print(json.dumps({"name": name, "folder": str(audit_dir.resolve()), "framework": info.get("framework", "verifiers"),
                           "env": {k: info[k] for k in keys if info.get(k)}, "manual": bool(args.manual),
                           "automatic_likely": kind["automatic"] if kind else None,
+                          **({"task_data_fields": hub.task_data_fields(info["sources"])} if args.manual and info.get("sources") else {}),
                           **({"automatic_unlikely_because": why} if why else {}),
                           "others": info.get("others", []), "next": f"falsepass audit {name}"}, indent=1))  # fmt: skip
         return 0
+    fields = hub.task_data_fields(info["sources"]) if (args.manual and info.get("sources")) else {}
     if args.policies:
         print(f"created {audit_dir}/env.toml and adapter.py — fill in solver() and exploits(), then:")
     elif args.manual:
         print(f"created {audit_dir}/env.toml and adapter.py — fill in render() and wrong_answer(), then:")
+        for cls, names in fields.items():  # where the expected values live, for render()
+            print(f"  task data {cls}: " + ", ".join(names))
     elif info.get("framework") == "reward":
         print(f"created {audit_dir}/env.toml — each reply goes to the reward functions the way GRPOTrainer calls them, with "
               f"the dataset row's columns:")
@@ -561,7 +565,7 @@ def main(argv: list[str] | None = None) -> int:
         "reach", help="count how many tasks a probe fails on: a sample of N or every task (after an audit)",
         epilog="Scores only the probe rows asked for, plus the reference (P1) as a control, in an isolated "
                "virtualenv like `audit`, and writes audits/<env>/reach/<probe>.json; the stored audit results are "
-               "not touched. Per-example probes only (P1-P9, P13-P16, A1, X1). Examples: "
+               "not touched. Per-example probes only (P1-P9, P13-P17, A1, X1). Examples: "
                "falsepass reach my-env --probe P15/denied --tasks all; "
                "falsepass reach my-env --template '\\boxed{{answer} \\text{ is wrong}}' --template '{wrong} or {answer}'",
     )  # fmt: skip

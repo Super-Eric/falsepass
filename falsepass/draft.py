@@ -36,6 +36,7 @@ MEANING = {
     "P14": "a correct answer loses reward when the reply also names its answer format",
     "P15": "a denied or hedged answer written inside the answer slot gets full credit",
     "P16": "a JSON reply whose free-text fields are the prompt pasted in is paid like the reference",
+    "P17": "a JSON reply with one short field followed by a denial everywhere is paid like the reference: that field is not read to its end",
     "C0": "the key written as the output file is not paid in full (no automatic submission format)",
     "C1": "a key with NaN, Infinity or fractional counts written as the output file is paid in full, or makes scoring raise",
     "C2": "an empty, truncated or copied output file is paid in full",
@@ -110,7 +111,8 @@ def draft(audit_dir: Path) -> Path:
             continue
         number += 1
         variants = sorted({r["variant"] for r in failed})
-        first = failed[0]
+        # the shortest failing completion shows the defect best (a 2 KB preview hides the `=`)
+        first = min(failed, key=lambda r: len(completions.get(r.get("completion_id") or "") or r["completion"] or ""))
         backing = [h for h in hints if probe in h["confirm_with"] and h["verdict"].startswith("confirmed")]
         lines += [
             f"### C{number} — {MEANING.get(probe, name)}  [severity: TODO]",
@@ -137,6 +139,11 @@ def draft(audit_dir: Path) -> Path:
     lines += ["## Checks that passed", "", "| Check | Runs | Scores |", "|---|---|---|"]
     for (probe, name), rows in groups.items():
         if all(r["passed"] for r in rows):
+            if probe == "P11":  # the reference and a wrong reply, each repeated: one line each, not pooled
+                for variant in sorted({r["variant"] for r in rows}):
+                    some = [r for r in rows if r["variant"] == variant]
+                    lines.append(f"| {probe} {name} ({variant}) | {len(some)} | {_stats(some)} |")
+                continue
             lines.append(f"| {probe} {name} | {len(rows)} | {_stats(rows)} |")
     lines += [
         "",

@@ -39,6 +39,7 @@ class Expect(str, Enum):
     STABLE = "stable"  # same input scored repeatedly: identical scores
     AT_MOST_REFERENCE = "at_most_reference"  # must not beat the concise correct answer
     LAZY = "lazy"  # a fixed strategy that never reads the task: no pass or fail, its mean is the lazy-policy reward
+    BELOW_REFERENCE = "below_reference"  # a changed value: must earn less than the reference earns on the same task
 
 
 @dataclass

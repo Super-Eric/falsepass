@@ -105,6 +105,7 @@ def load_adapter(audit_dir: Path) -> Adapter:
     spec = importlib.util.spec_from_file_location(f"falsepass_adapter_{audit_dir.name}", audit_dir / "adapter.py")
     assert spec and spec.loader, f"no adapter.py in {audit_dir}"
     module = importlib.util.module_from_spec(spec)
+    sys.dont_write_bytecode = True  # no __pycache__ left in the audit folder
     spec.loader.exec_module(module)
     return module.ADAPTER
 
