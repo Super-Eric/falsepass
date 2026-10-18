@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 — 2026-10-18
 
 - **OpenEnv** (Meta / Hugging Face) environments can be audited: `falsepass init hf:owner/space`
   clones the Space next to the audit, `init ./folder` takes a local one (an `openenv.yaml`).
@@ -17,6 +17,18 @@
   scripts, `verify-fix --source` and `reach` work for these audits; `examples/openenv-toy/` has
   a planted defect. Not covered: MCP tool environments and hand-written servers without an
   `Environment` class (they stop with a message).
+- From the sixth dogfood round (four Spaces): the environment class is read from the served
+  app itself (what `create_app` was given), so a `_build_app()` wrapper no longer passes for
+  the environment; `init --env-class` / `--action-class` (MCP `env_class`, `action_class`) name
+  them by hand; `init --without PKG` (MCP `without`) drops one of the environment's own
+  requirements, and pins of openenv's own dependencies (`fastapi==0.115.2`) are relaxed at
+  `init` so the folder resolves next to the openenv release; a decision spelled as text
+  (`action_type: str`) is no longer taken for the free-text field; references an environment
+  reveals only after a step (`correct_answer`) are read at load time; a run in which an empty
+  reply and a sentence score the same on every task says so in its note instead of posing as
+  a result; generated repro scripts carry the audit's reset retries; `repro --run` counts
+  cases that raised in both runs and does not call them reproduced; the draft says "no
+  control was possible" rather than "the control failed" for an answer-free run.
 - `falsepass discover --hub hf` (MCP `falsepass_discover(hub="hf")`) lists OpenEnv Spaces on
   the Hugging Face Hub updated within `--days`, most liked first, with the `hf:owner/space`
   target for `init`; the public listing only, nothing is cloned.

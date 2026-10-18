@@ -290,9 +290,17 @@ class AutoAdapter(Adapter):
                 "turns": "single answer, graded by the environment's step()" if openenv else "single answer, graded by the task template",
                 "note": "",
             }  # fmt: skip
-            empties = [(await scorer.score(ex, "")).reward or 0.0 for ex in examples[:k]]
+            trial = examples[:k]
+            empties = [(await scorer.score(ex, "")).reward or 0.0 for ex in trial]
             floor_note = self._floor_note(max(empties, default=0.0), 1.0)
-            self.inferred["note"] = "; ".join(n for n in [*self.load_notes, floor_note] if n)
+            unrelated = [(await scorer.score(ex, "This reply answers nothing in particular.")).reward or 0.0 for ex in trial]
+            flat = ""
+            if len(trial) >= 2 and len({*empties, *unrelated}) == 1:
+                flat = (f"every reply scored {empties[0]:g} on {len(trial)} tasks, an empty one and a sentence alike: the reply "
+                        "did not reach the part of the action that is graded (a decision or id field kept its default). "
+                        "Give answers as JSON actions (tasks.json or --answers) or write an adapter; the rows below only show "
+                        "that constant")  # fmt: skip
+            self.inferred["note"] = "; ".join(n for n in [*self.load_notes, floor_note, flat] if n)
             return
         if self.tool_mode:
             self.inferred = {

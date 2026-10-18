@@ -264,6 +264,7 @@ def build():
     def falsepass_init(
         target: str, name: str | None = None, version: str | None = None, framework: str | None = None,
         task: str | None = None, answers: str | None = None, extra: list[str] | None = None,
+        without: list[str] | None = None, env_class: str | None = None, action_class: str | None = None,
         manual: bool = False, policies: bool = False, force: bool = False, workdir: str = ".",
     ) -> Any:  # fmt: skip
         """Set up audits/<name>/ for an environment and return the name to audit it with.
@@ -277,17 +278,23 @@ def build():
         which @task), `answers` (HUD and OpenEnv: path to a JSON file of reference answers, an
         object from task key to answer or a list in task order; without it only answer-free
         probes run, unless an OpenEnv task record carries an answer field), `extra` (more
-        requirements to install, e.g. ["inspect-evals[math]"]), `manual` (also write an
+        requirements to install, e.g. ["inspect-evals[math]"]; added to the environment's own),
+        `without` (requirement names to drop from the environment's own, e.g. a pin that does
+        not resolve), `env_class` / `action_class` (OpenEnv, "module:Class": the environment
+        class or factory and the action class when detection picks the wrong one), `manual` (also write an
         adapter.py skeleton for a Q&A environment automatic mode cannot script), `policies`
         (the same for games, simulations and tool tasks: a skeleton built around policies;
         use it when an audit comes back "inconclusive"), `force` (rewrite an existing
         audit's env.toml, e.g. to add answers; adapter.py is kept)."""
         args = ["init", target, "--json"]
-        for flag, value in (("--name", name), ("--version", version), ("--framework", framework), ("--task", task), ("--answers", answers)):
+        for flag, value in (("--name", name), ("--version", version), ("--framework", framework), ("--task", task), ("--answers", answers),
+                            ("--env-class", env_class), ("--action-class", action_class)):  # fmt: skip
             if value:
                 args += [flag, value]
         for requirement in extra or []:
             args += ["--with", requirement]
+        for requirement in without or []:
+            args += ["--without", requirement]
         args += ["--manual"] * manual + ["--policies"] * policies + ["--force"] * force
         manual = manual or policies
         result = _json(_run(args, workdir, timeout=600))

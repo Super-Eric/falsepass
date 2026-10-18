@@ -85,7 +85,7 @@ def test_the_action_plan_fills_what_a_reply_cannot_say():
     class Free(pydantic.BaseModel):
         answer: str
 
-    assert openenv_support.action_plan(Free) == {"field": "answer", "fills": {}, "choices": {}, "reports": {}, "blockers": []}
+    assert openenv_support.action_plan(Free) == {"field": "answer", "fills": {}, "choices": {}, "reports": {}, "blockers": [], "decision_text": []}
 
     class Opaque(pydantic.BaseModel):
         payload: dict[str, int]
@@ -263,3 +263,105 @@ def test_a_space_laid_out_as_its_own_package_imports_under_an_alias(tmp_path: Pa
     assert any("task_id" in note and "tasks.json" in note for note in found["notes"])
     assert asyncio.run(scorer.score(pool[0], "0")).reward == 1.0
     asyncio.run(scorer.close())
+
+
+def test_init_names_the_classes_and_drops_requirements(tmp_path: Path, monkeypatch):
+    from falsepass import hub
+
+    monkeypatch.setattr(hub, "pypi_version", lambda package: "0.9.0")
+    (tmp_path / "space").mkdir()
+    (tmp_path / "space" / "openenv.yaml").write_text("spec_version: 1\nname: pinned\napp: server.app:app\n")
+    (tmp_path / "space" / "requirements.txt").write_text("openenv-core==0.2.3\nfastapi==0.115.2\nstarlette==0.40.0\nnumpy==1.26.4\nrequests\n")
+    info = openenv_support.describe(tmp_path / "space")
+    assert info["extra"] == ["fastapi", "starlette", "numpy==1.26.4", "requests"]  # openenv's own dependencies lose their pins
+    assert "pins relaxed to openenv's own: fastapi==0.115.2, starlette==0.40.0" in info["declared"]
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["init", "space", "--without", "numpy", "--env-class", "env.core:PinnedEnv", "--action-class", "env.models:PinnedAction"]) == 0
+    env = tomllib.loads((tmp_path / "audits/pinned/env.toml").read_text())["env"]
+    assert env["extra"] == ["fastapi", "starlette", "requests"]
+    assert env["env_class"] == "env.core:PinnedEnv" and env["action_class"] == "env.models:PinnedAction"
+    assert cli.install_args(env) == ["--with", "openenv==0.9.0", "--with", "fastapi", "--with", "starlette", "--with", "requests"]
+
+
+def test_decisions_spelled_as_text_are_not_the_free_text_field():
+    pydantic = pytest.importorskip("pydantic")
+    from typing import Optional
+
+    class Triage(pydantic.BaseModel):
+        action_type: str
+        cause_explanation: Optional[str] = None
+        remediation_steps: Optional[str] = None
+
+    plan = openenv_support.action_plan(Triage)
+    assert plan["field"] == "cause_explanation" and plan["fills"] == {"action_type": ""} and plan["decision_text"] == ["action_type"]
+    note = openenv_support.describe_plan(Triage, plan)
+    assert "a plain reply goes into `cause_explanation`" in note and "action_type look like decisions spelled as text" in note
+
+
+WRAPPED_APP = '''
+from openenv.core.env_server.http_server import create_app
+from openenv.core.env_server.interfaces import Environment
+from openenv.core.env_server.types import Action, Observation, State
+from pydantic import Field
+
+
+class SumAction(Action):
+    answer: str
+
+
+class SumObservation(Observation):
+    question: str = ""
+    correct_answer: str = ""
+
+
+class SumEnvironment(Environment):
+    """Reveals the expected answer only after the step, as reasoning tasks do."""
+
+    PROBLEMS = [("1+1", "2"), ("2+2", "4"), ("3+3", "6")]
+
+    def __init__(self):
+        super().__init__()
+        self._state = State(episode_id="e", step_count=0)
+        self._cursor = 0
+        self._expected = ""
+
+    def reset(self, seed=None, episode_id=None, **kwargs):
+        question, self._expected = self.PROBLEMS[self._cursor % len(self.PROBLEMS)]  # sequential, seed ignored
+        self._cursor += 1
+        return SumObservation(question=question, done=False)
+
+    def step(self, action, timeout_s=None, **kwargs):
+        right = action.answer.strip() == self._expected
+        return SumObservation(correct_answer=self._expected, done=True, reward=1.0 if right else 0.0)
+
+    @property
+    def state(self):
+        return self._state
+
+
+def _build_app():
+    """A wrapper around create_app, as some Spaces have: not the environment factory."""
+    return create_app(SumEnvironment, SumAction, SumObservation, env_name="sum_env")
+
+
+app = _build_app()
+'''
+
+
+def test_the_served_app_names_the_environment_and_answers_revealed_after_a_step_are_read(tmp_path: Path, monkeypatch):
+    pytest.importorskip("openenv")
+    folder = tmp_path / "sum_env"
+    folder.mkdir()
+    (folder / "openenv.yaml").write_text("spec_version: 1\nname: sum_env\napp: sum_env_app:app\n")
+    (folder / "sum_env_app.py").write_text(WRAPPED_APP)
+    _fresh_imports(monkeypatch, folder)
+    scorer, pool, found = openenv_support.load(str(folder), 20, None)
+    assert found["env_class"].endswith(":SumEnvironment") and found["factory"] == ""  # _build_app() was not taken for the factory
+    assert [(e.key, e.prompt, e.answer) for e in pool] == [("reset-0", "1+1", "2"), ("reset-1", "2+2", "4"), ("reset-2", "3+3", "6")]
+    assert any(note.startswith("reference answers read from what the environment reveals after a step (3 of 3") for note in found["notes"])
+    assert found["retries"] >= 150
+    try:
+        assert asyncio.run(scorer.score(pool[2], "6")).reward == 1.0  # a sequential environment: reset until task 3 comes round
+        assert asyncio.run(scorer.score(pool[0], "6")).reward == 0.0
+    finally:
+        asyncio.run(scorer.close())

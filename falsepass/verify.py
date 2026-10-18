@@ -212,10 +212,11 @@ def twice(audit_dir: Path, script: str) -> dict:
                 try:
                     value = float(observed)
                 except ValueError:
-                    return True  # "raised ...": the reward code failing is itself what was seen
+                    return False  # "raised ...": counted apart, it may be the script failing rather than the grader
                 return value > 1e-9 if expected == "0" else value < top - 1e-9
 
-            result.update(cases=len(cases), reproduced=sum(wrong(o, e) for o, e in cases))
+            raised = sum(1 for o, _ in cases if o.startswith("raised"))
+            result.update(cases=len(cases), reproduced=sum(wrong(o, e) for o, e in cases), raised=raised)
     (audit_dir / "repro-run.json").write_text(json.dumps(result, indent=1))
     return result
 
@@ -245,7 +246,10 @@ def describe_twice(result: dict) -> str:
             f"stored in {result['output']} ({result['lines']} lines)"]
     if "cases" in result:
         rows.append(f"{result['reproduced']} of {result['cases']} cases still miss what a correct verifier gives "
-                    "(expected 0 but paid, expected full but not paid in full, or the reward code raised)")
+                    "(expected 0 but paid, expected full but not paid in full)")
+        if result.get("raised"):
+            rows.append(f"{result['raised']} of {result['cases']} cases raised in both runs: read the exception line; it may be the "
+                        "script's own setup (a task that did not come back) rather than the reward code, and is not a repro")  # fmt: skip
     rows += [f"  differs: {d}" for d in result["differences"]]
     return "\n".join(rows)
 

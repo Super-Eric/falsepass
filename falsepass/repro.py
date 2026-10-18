@@ -439,7 +439,7 @@ def generate(audit_dir: Path, probes: list[str] | None = None, per_group: int = 
             "ALIAS": loader.get("alias", ""), "ACTION_CLASS_SPEC": loader["action_class"], "FACTORY_SPEC": loader.get("factory", ""),
             "ENV_CLASS_SPEC": loader["env_class"], "FIELD": loader.get("field"), "FILLS": loader.get("fills", {}),
             "RESETS": {k: v for k, v in loader.get("resets", {}).items() if k in keys}, "PROMPTS": prompts,
-            "RETRIES": min(60, max(3, 3 * len(loader.get("resets", {})))),
+            "RETRIES": loader.get("retries", 150),
         }  # fmt: skip
         script += "".join(f"{name} = {json.dumps(value, ensure_ascii=True)}\n" for name, value in settings.items()) + LOAD_OPENENV
     elif loader["kind"] == "v1":

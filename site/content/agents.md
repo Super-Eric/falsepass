@@ -196,7 +196,12 @@ What to check in the results and how to steer the run:
   when it never does, the rows carry an error saying so instead of a grade for another task.
 - **References.** Give them with `--answers` (an object by task key or a list in task order)
   or in `tasks.json`; a Task API record's `answer`/`target`/`expected`/`label` field is used
-  too. Without any, only the answer-free probes run and the digest says so.
+  too. An environment that reveals the answer only after a step (`correct_answer` in the
+  next observation, `ground_truth` in its state) is stepped once per task at load time and
+  those values are taken, with a note saying so; the P1 control then shows whether that is
+  what `step()` compares against. Without any, only the answer-free probes run and the
+  digest says so. An answer may be a JSON object naming the action's fields
+  (`{"decision": "approve"}`), in `tasks.json` and in `--answers` alike.
 - **Structured actions.** When the action is a decision (`category: Literal[...]`,
   `approve: bool`) plus optional text, a plain reply goes into the text field and the
   decision is filled with a constant (`load_notes` says which). O1 then plays every value of
@@ -207,10 +212,21 @@ What to check in the results and how to steer the run:
   naming the action's fields (`{"category": "billing"}`), or write an adapter whose
   `render()` returns such an object as a string: a reply that parses as a JSON object with
   the action's field names is the action.
+- **Reading a flat run.** When every reply scores the same (an empty one and a sentence
+  alike), the digest's `note` says so: the reply never reached the graded part of the
+  action (a decision or id field kept its default). The note also says where a plain reply
+  goes and what the other fields get. The rows of such a run show that constant, not a
+  grader property. `falsepass_reach` templates may be whole JSON actions
+  (`'{"claim_id": "C-7", "decision": "deny"}'`), which is the quick way to score specific
+  actions on every task.
 - **What is not covered.** MCP tool environments (`CallToolAction`) and hand-written servers
   without an `Environment` subclass stop with a message; use `--policies` or an adapter.
-  `env.toml` takes `app = "module:attr"`, `env_class`, `factory` and `action_class` when
-  detection picks the wrong one.
+  The environment class is read from the served app (what `create_app` was given); when
+  detection still picks the wrong one, `falsepass init ... --env-class module:Class
+  --action-class module:Class` (MCP `env_class`, `action_class`) names them, and `env.toml`
+  takes `app = "module:attr"` as well. `--with` adds a requirement to the environment's own,
+  `--without name` drops one (a pin that does not resolve); pins of openenv's own
+  dependencies (`fastapi==...`) are relaxed at `init`, and the env.toml comment says which.
 
 ## Reading the output
 

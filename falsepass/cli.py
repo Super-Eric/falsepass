@@ -353,6 +353,14 @@ def scaffold(args) -> int:
         info["verifiers"] = args.verifiers
     if args.extra:
         info["extra"] = [*info.get("extra", []), *args.extra]
+    if args.without:
+        from falsepass.openenv_support import requirement_name
+
+        dropped = {requirement_name(w) for w in args.without}
+        info["extra"] = [d for d in info.get("extra", []) if requirement_name(d) not in dropped]
+    for key in ("env_class", "action_class"):
+        if getattr(args, key, None):
+            info[key] = getattr(args, key)
     name = args.name or info["id"].split("/")[-1].lower().replace("_", "-")
     audit_dir = Path("audits") / name
     existing = audit_dir / "env.toml"
@@ -495,6 +503,11 @@ def main(argv: list[str] | None = None) -> int:
                       help="like --manual, for games, simulations and tool tasks: an adapter skeleton built around policies")
     init.add_argument("--json", action="store_true", help="print the result as JSON (name to audit with, env.toml fields)")
     init.add_argument("--task", help="Inspect: which @task to audit when a file or project defines several")
+    init.add_argument("--env-class", dest="env_class", metavar="MODULE:CLASS",
+                      help="OpenEnv: the environment class (or factory function) when detection picks the wrong one")
+    init.add_argument("--action-class", dest="action_class", metavar="MODULE:CLASS", help="OpenEnv: the action class")
+    init.add_argument("--without", action="append", default=[], metavar="PKG",
+                      help="drop this requirement from the ones installed with the environment (repeatable)")
     init.add_argument("--with", dest="extra", action="append", default=[], metavar="REQ",
                       help="extra requirement to install for the audit, e.g. 'inspect-evals[math]' (repeatable)")
     disc = sub.add_parser("discover", help="list actively maintained Hub environments and what each needs")

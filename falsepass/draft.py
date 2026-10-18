@@ -91,7 +91,11 @@ def draft(audit_dir: Path) -> Path:
     ]
     if isinstance(adapter, dict):
         lines.append(f"- Adapter inferred: format `{adapter['format']}`, answers {adapter['answers']}; control: {adapter.get('validity', 'ok')}")
-        if adapter.get("validity", "ok") != "ok":
+        validity = adapter.get("validity", "ok")
+        if validity.startswith("no control"):
+            lines += ["", "**No control was possible (no reference answers): the rows below say what answer-free replies earn, "
+                          "nothing about correct ones. Give references (`--answers`, `tasks.json`) before calling anything a false pass.**"]  # fmt: skip
+        elif validity != "ok":
             lines += ["", "**The control failed. Do not report anything from this run before resolving that.**"]
 
     groups: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)

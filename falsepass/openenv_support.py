@@ -48,7 +48,8 @@ from typing import Any
 from falsepass.model import Completion, Example, Expect, ProbeResult, Score
 from falsepass.scorers import _guarded
 
-ANSWER_KEYS = ("answer", "answers", "expected_answer", "expected", "target", "label", "solution", "gold", "ground_truth", "reference")
+ANSWER_KEYS = ("answer", "answers", "correct_answer", "expected_answer", "expected", "target", "label", "solution", "gold",
+               "gold_answer", "ground_truth", "reference", "truth")  # fmt: skip
 PROMPT_KEY = re.compile(r"prompt|question|task|instruction|problem|query|input|text|message|description|context|document|ticket"
                         r"|case|scenario|email|passage|incident|snippet|history|conversation|post|claim|queue|code|source", re.I)  # fmt: skip
 NOISE_KEY = re.compile(r"feedback|error|status|reward|done|metadata|episode|step|id$|_at$|timestamp|session", re.I)
@@ -57,6 +58,10 @@ TEXT_FIELD_PREFERENCE = ("answer", "response", "reply", "message", "text", "outp
                          "reason", "reasoning", "explanation", "justification", "summary", "note", "notes", "comment", "analysis",
                          "command", "action")  # fmt: skip
 SELF_REPORT = re.compile(r"confidence|certainty|probab|score|quality|rating|likelihood", re.I)
+DECISION_NAME = re.compile(r"(^|_)(type|kind|label|category|decision|intent|choice|option|verdict|route|routing|severity|priority)$", re.I)
+OPENENV_DEPENDENCIES = {"fastapi", "pydantic", "uvicorn", "starlette", "requests", "websockets", "httpx", "pyyaml", "typer", "rich",
+                        "huggingface-hub", "openai", "gradio", "fastmcp", "jsonschema", "packaging", "typing-extensions"}  # fmt: skip
+MAX_HARVEST = 200  # tasks stepped once at load to read a reference the environment reveals only afterwards
 FACTORY_NAME = re.compile(r"factory|create_|make_|build_|get_env", re.I)
 SKIP_MODULES = re.compile(r"^(test|tests|inference|train|baseline|client|scripts?|examples?|eval|evaluate|run_|setup$|conftest|demo)", re.I)
 DEFAULT_APPS = ("server.app:app", "app:app", "api:app", "main:app", "server.main:app")
@@ -181,9 +186,12 @@ def action_plan(action_cls: type) -> dict[str, Any]:
     `blockers` (required fields nothing can be made up for)."""
     fields = {n: f for n, f in getattr(action_cls, "model_fields", {}).items() if n != "metadata"}
     texts = [n for n, f in fields.items() if _is_text(f.annotation)]
-    by_name = [n for n in TEXT_FIELD_PREFERENCE if n in texts]
-    required_texts = [n for n in texts if fields[n].is_required()]
-    field = by_name[0] if by_name else required_texts[0] if required_texts else texts[0] if texts else None
+    # `action_type: str`, `label: str`: a decision spelled as free text; a reply is not what goes there
+    decision_text = [n for n in texts if DECISION_NAME.search(n)]
+    free = [n for n in texts if n not in decision_text] or texts
+    by_name = [n for word in TEXT_FIELD_PREFERENCE for n in free if word in n.lower()]  # `cause_explanation` matches `explanation`
+    required_texts = [n for n in free if fields[n].is_required()]
+    field = by_name[0] if by_name else required_texts[0] if required_texts else free[0] if free else None
     fills: dict[str, Any] = {}
     blockers: list[str] = []
     for name, info in fields.items():
@@ -202,7 +210,24 @@ def action_plan(action_cls: type) -> dict[str, Any]:
             blockers.append(name)
     choices = {n: _choices(f.annotation)[:MAX_CHOICES] for n, f in fields.items() if _choices(f.annotation) and n != field}
     reports = {n: _bounds(f) for n, f in fields.items() if _is_number(f.annotation) and SELF_REPORT.search(n)}
-    return {"field": field, "fills": fills, "choices": choices, "reports": reports, "blockers": blockers}
+    return {"field": field, "fills": fills, "choices": choices, "reports": reports, "blockers": blockers,
+            "decision_text": [n for n in decision_text if n != field]}  # fmt: skip
+
+
+def describe_plan(action_cls: type, plan: dict[str, Any]) -> str:
+    """One line for the notes: where a plain reply goes and what the other fields get."""
+    fields = getattr(action_cls, "model_fields", {})
+    parts = [f"a plain reply goes into `{plan['field']}`" if plan["field"] else "no free-text field: replies must be JSON actions"]
+    if plan["fills"]:
+        parts.append("required fields filled with constants: " + ", ".join(f"{k}={v!r}" for k, v in plan["fills"].items()))
+    defaults = {n: f.default for n, f in fields.items() if n != "metadata" and n != plan["field"] and n not in plan["fills"]
+                and not f.is_required()}  # fmt: skip
+    if defaults:
+        parts.append("other fields keep their defaults: " + ", ".join(f"{k}={getattr(v, 'value', v)!r}" for k, v in list(defaults.items())[:8]))
+    if plan["decision_text"]:
+        parts.append(f"{', '.join(plan['decision_text'])} look like decisions spelled as text and are left at their defaults "
+                     "(a JSON action in tasks.json or --answers sets them)")  # fmt: skip
+    return "; ".join(parts)
 
 
 # --- the scorer ----------------------------------------------------------------------------
@@ -428,8 +453,37 @@ def _action_classes(module: Any, base: type) -> list[type]:
             and v is not base and v.__module__ not in ("openenv.core.env_server.types", "openenv_core.env_server.types")]  # fmt: skip
 
 
-def _factory(module: Any) -> Any:
-    """A module-level function that builds the environment with no arguments (`create_textarena_environment`, `_env_factory`)."""
+def _server_from_app(app: Any) -> Any:
+    """The HTTPEnvServer behind a FastAPI app built with `create_app`: its route handlers close
+    over it, and it holds the environment factory and the action class exactly as served."""
+    seen: set[int] = set()
+    for route in getattr(app, "routes", []) or []:
+        stack = [getattr(route, "endpoint", None)]
+        while stack:
+            function = stack.pop()
+            if function is None or id(function) in seen:
+                continue
+            seen.add(id(function))
+            owner = getattr(function, "__self__", None)
+            if owner is not None and hasattr(owner, "_env_factory") and hasattr(owner, "action_cls"):
+                return owner
+            for cell in getattr(function, "__closure__", None) or ():
+                try:
+                    value = cell.cell_contents
+                except ValueError:
+                    continue
+                if hasattr(value, "_env_factory") and hasattr(value, "action_cls"):
+                    return value
+                if callable(value):
+                    stack.append(value)
+            stack.append(getattr(function, "__wrapped__", None))
+    return None
+
+
+def _factory(module: Any, environment_base: type) -> Any:
+    """A module-level function that builds the environment with no arguments
+    (`create_textarena_environment`, `_env_factory`), checked by calling it once: a
+    `_build_app()` that returns the FastAPI app is not one."""
     for name, obj in vars(module).items():
         if not inspect.isfunction(obj) or name == "create_app" or not FACTORY_NAME.search(name):
             continue
@@ -437,7 +491,18 @@ def _factory(module: Any) -> Any:
             parameters = inspect.signature(obj).parameters.values()
         except (TypeError, ValueError):
             continue
-        if all(p.default is not inspect.Parameter.empty or p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD) for p in parameters):
+        if not all(p.default is not inspect.Parameter.empty or p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD) for p in parameters):
+            continue
+        try:
+            built = obj()
+        except Exception:  # noqa: BLE001 - not a factory we can use
+            continue
+        if isinstance(built, environment_base):
+            if hasattr(built, "close"):
+                try:
+                    built.close()
+                except Exception:  # noqa: BLE001
+                    pass
             return obj
     return None
 
@@ -453,8 +518,12 @@ def find_classes(folder: Path, app: str, name: str, env_class: str = "", action_
     module, app, alias = import_app(folder, app, name)
     make_env: Any = _import_object(factory) if factory else _import_object(env_class) if env_class else None
     actions = [_import_object(action_class)] if action_class else []
+    server = _server_from_app(getattr(module, app.partition(":")[2] or "app", None))
+    if server is not None:  # what create_app() was given: the surest source
+        make_env = make_env or server._env_factory
+        actions = actions or [server.action_cls]
     if make_env is None:
-        make_env = _factory(module)
+        make_env = _factory(module, environment_base)
         if make_env is not None:
             notes.append(f"the environment is built by {make_env.__name__}() from the app module")
     if make_env is None:
@@ -640,6 +709,38 @@ async def _examples(scorer: OpenEnvScorer, max_rows: int, references: Any, tasks
     return pool
 
 
+def _answer_in(value: Any) -> str:
+    """An answer-like field of an observation or state, top level or in its metadata."""
+    data = value.model_dump() if hasattr(value, "model_dump") else value if isinstance(value, dict) else {}
+    for holder in (data, data.get("metadata") or {}):
+        if isinstance(holder, dict):
+            for name in ANSWER_KEYS:
+                if holder.get(name) not in (None, "", [], {}):
+                    return _as_text(holder[name])
+    return ""
+
+
+async def _harvest(scorer: OpenEnvScorer, pool: list[Example], notes: list[str]) -> None:
+    """References an environment reveals only after a step (`correct_answer` in the next
+    observation, `ground_truth` in its state): one constant step per task, at load time."""
+    env = scorer.environment()
+    tried = pool[:MAX_HARVEST]
+    found = 0
+    for example in tried:
+        try:
+            await scorer.reset(example)
+            observation = await _call(env, "step", scorer.action(""))
+        except Exception:  # noqa: BLE001 - nothing revealed for this task
+            continue
+        value = _answer_in(observation) or _answer_in(getattr(env, "state", None))
+        if value:
+            example.answer = value
+            found += 1
+    if found:
+        notes.append(f"reference answers read from what the environment reveals after a step ({found} of {len(tried)} tasks): "
+                     "the P1 control shows whether that is what step() compares against")  # fmt: skip
+
+
 def load(spec: str, max_rows: int, answers: str | None = None, app: str = "", env_class: str = "", action_class: str = "",
          factory: str = "", tasks_file: str | Path | None = None) -> tuple[OpenEnvScorer, list[Example], dict[str, Any]]:
     """The scorer and the tasks of the environment folder `spec` (or of `$FALSEPASS_SOURCE`, a
@@ -666,11 +767,12 @@ def load(spec: str, max_rows: int, answers: str | None = None, app: str = "", en
     # Tasks that reset() hands out in a cycle come back after one full cycle; random draws need
     # several times the pool size to be likely. Each try is one reset(), cheap in most environments.
     scorer.retries = min(2000, max(150, 8 * len(pool)))
-    if plan["fills"]:
-        notes.append("required action fields filled with constants for a plain reply: " + ", ".join(f"{k}={v!r}" for k, v in plan["fills"].items()))
+    notes.append(describe_plan(action_cls, plan))
+    if not any(e.answer.strip() for e in pool):
+        asyncio.run(_harvest(scorer, pool, notes))
     environment = scorer.environment()
     found = {
-        "notes": notes, "app": app, "alias": alias, "field": plan["field"], "fills": plan["fills"],
+        "notes": notes, "app": app, "alias": alias, "field": plan["field"], "fills": plan["fills"], "retries": scorer.retries,
         "env_class": f"{type(environment).__module__}:{type(environment).__qualname__}",
         "factory": f"{make_env.__module__}:{make_env.__name__}" if inspect.isfunction(make_env) else "",
         "action_class": f"{action_cls.__module__}:{action_cls.__qualname__}",
@@ -749,7 +851,13 @@ def describe(path: Path, answers: str | None = None) -> dict[str, Any]:
     except Exception:  # noqa: BLE001 - offline
         latest = ""
     openenv_pin = f"openenv=={exact.group(1)}" if exact else f"openenv=={latest}" if latest else "openenv"
-    extra = [d for d in declared if d not in own]
+    extra, relaxed = [], []
+    for requirement in (d for d in declared if d not in own):
+        name = requirement_name(requirement)
+        if name in OPENENV_DEPENDENCIES and re.search(r"==|<|~=|!=", requirement):  # a floor (`>=`) is left alone
+            relaxed.append(requirement)  # a pin or ceiling on one of openenv's own dependencies: openenv's release decides
+            requirement = re.split(r"[<>=!~;\s]", requirement, 1)[0]
+        extra.append(requirement)
     requires_python = ""
     if (folder / "pyproject.toml").is_file():
         import tomllib
@@ -759,9 +867,15 @@ def describe(path: Path, answers: str | None = None) -> dict[str, Any]:
     info: dict[str, Any] = {
         "id": f"local/{name}", "framework": "openenv", "task": str(folder), "openenv": openenv_pin,
         "app": found.get("app", DEFAULT_APP), "package": "", "version": found.get("version", ""),
-        "declared": ", ".join(own) or "openenv (not declared)", "python": python_for(requires_python),
-        "extra": extra, "source": str(folder), "others": [],
+        "declared": (", ".join(own) or "openenv (not declared)")
+                    + (f"; pins relaxed to openenv's own: {', '.join(relaxed)}" if relaxed else ""),
+        "python": python_for(requires_python), "extra": extra, "source": str(folder), "others": [],
     }  # fmt: skip
     if answers:
         info["answers"] = str(Path(answers).resolve())
     return info
+
+
+def requirement_name(requirement: str) -> str:
+    """`fastapi==0.115.2` -> `fastapi`, `huggingface_hub[cli]>=0.20` -> `huggingface-hub`."""
+    return re.split(r"[\[<>=!~;@\s]", requirement.strip(), 1)[0].lower().replace("_", "-")
