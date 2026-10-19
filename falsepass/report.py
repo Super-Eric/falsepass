@@ -63,7 +63,7 @@ def term_leak(results: list[dict[str, Any]], weights: dict[str, float]) -> list[
     for r in results:
         if r["expected"] == KNOWN_BAD and r["score"] is not None and not r.get("no_control"):
             for term, value in (r.get("metrics") or {}).items():
-                if term != "num_turns":
+                if term not in ("num_turns", "raw_reward"):  # raw_reward: the unscaled reward (falsepass.scale)
                     values[term].append(float(value))
     return [
         (term, sum(v != 0 for v in vals) / len(vals), sum(vals) / len(vals), weights.get(term))  # a penalty pays too
@@ -200,6 +200,17 @@ def _fmt(value: float | None) -> str:
 def _weight_lines(meta: dict[str, Any]) -> list[str]:
     """Say so when the rubric can pay more than the reference earned: the reference used
     for the audit may then not be a full solution (e.g. `answer` is only a name or a key)."""
+    scaled = meta.get("scale")
+    if scaled:
+        excluded = scaled.get("excluded") or {}
+        return [
+            f"- **Reward scale: reference-relative.** Every score below is (raw − floor) / (reference − floor) on its "
+            f"task: 0 = {scaled['floor']}, 1 = {scaled['reference']}; the raw reward is in each row's metrics "
+            f"(`raw_reward`). {scaled['tasks']} tasks scaled"
+            + (f"; {len(excluded)} left out (first: {next(iter(excluded))}: {next(iter(excluded.values()))})" if excluded else "")
+            + ". Under a reward that measures an outcome, a fixed strategy keeps what it really achieves: read the "
+            "lazy-policy figure as where answer-free strategies fall between the floor and the reference."
+        ]
     positive = sum(w for w in (meta.get("weights") or {}).values() if w and w > 0)
     if positive > meta["max_reward"] + 1e-9:
         return [

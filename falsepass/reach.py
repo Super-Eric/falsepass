@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Any
 
 import falsepass
-from falsepass import probes
+from falsepass import probes, scale
 from falsepass.model import Expect
 from falsepass.runner import DEFAULT_JOBS, _version, concurrent_ok, load_adapter, score_examples
 
@@ -79,6 +79,8 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
         if hasattr(adapter, "prepare"):
             loop.run_until_complete(adapter.prepare(scorer, examples))
             _use_audit_format(audit_dir, adapter)
+        scorer, examples, scaled = scale.apply(adapter, scorer, examples, loop,
+                                               jobs if jobs > 1 and concurrent_ok(adapter, scorer) else 1)
         probe_list = _probe_list(adapter) + ([probes.u1_template] if templates else [])
         probes.TEMPLATES, probes.TEMPLATE_EXPECT = templates, Expect(expect)
         # What can be asked for: run the probes on one task with nothing scored.
@@ -157,6 +159,7 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
             "note": f"the answer format inferred here ({fmt}) differs from the audit's ({audited}): the counts "
                     "are for this format" if audited and audited != fmt else "",
             "versions": {p: v for p in ["verifiers", "inspect-ai", "hud", "openenv"] if (v := _version(p)) != "not installed"},
+            **({"scale": {k: v for k, v in scaled.items() if k != "points"}} if scaled else {}),
         },  # fmt: skip
         "rows": counted,
     }
@@ -176,6 +179,10 @@ def describe(payload: dict[str, Any]) -> str:
     lines = [f"{meta['environment']}: {meta['tasks_counted']} tasks counted ({scope}); answer format: {meta['format']}"]
     if meta["note"]:
         lines.append(f"note: {meta['note']}")
+    if meta.get("scale"):
+        lines.append(f"rewards on the reference-relative scale: 0 = {meta['scale']['floor']}, 1 = {meta['scale']['reference']}"
+                     + (f"; {len(meta['scale']['excluded'])} tasks left out (the reference does not beat the floor, or not scored)"
+                        if meta["scale"]["excluded"] else ""))
     for row in payload["rows"]:
         what = "paid" if row["expected"] == Expect.ZERO.value else "not paid in full"
         tag = "control  " if row["control"] else ""

@@ -34,6 +34,13 @@ class Adapter:
     # Leave at 0 unless the env grades by similarity and partial credit is by design.
     bad_tolerance: float = 0.0
     has_judge: bool = False  # enables P8 (judge injection)
+    # Rewards with no fixed scale (a cost or an error with maximum 0, a game score): define
+    # `scale_points(example)` to return (floor, reference) policies or completions for a task.
+    # Both are scored first, and every score on that task is reported as (raw - floor) /
+    # (reference - floor): 0 = the floor, 1 = the reference (falsepass.scale). Name them here.
+    scale_points = None
+    scale_floor: str = ""  # e.g. "no hedge at all"
+    scale_reference: str = ""  # e.g. "the textbook delta hedge from the prompt's figures"
     # Played with policies (games, tool tasks): no text probes, only the tool-policy probes
     # (T5, T6) and `episode_probes`, the adapter's own policy probes (see `init --policies`).
     tool_mode: bool = False

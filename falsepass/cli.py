@@ -376,6 +376,9 @@ async def policy_probes(adapter, scorer, ex):
 class Env(Adapter):
     name = "{id}"
     max_reward = 1.0  # what the solver earns; set it to the real figure once the X1 solver rows show it
+    # A reward with no fixed scale (a cost with maximum 0, a game score): define
+    # scale_points(self, example) -> (floor policy, reference policy), e.g. (gives_up(example),
+    # solver(example)); every score is then reported from 0 (floor) to 1 (reference).
     tool_mode = True  # played with policies: no text probes
     episode_probes = [policy_probes]
     # how `falsepass repro` replays the same tasks (keys must end in the task index)

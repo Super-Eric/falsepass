@@ -41,6 +41,11 @@ Everything an audit writes lives in `audits/<env>/` (or the folder given with `-
   `below_reference` (a changed value, such as P17's denied field: must earn less than the
   reference earns on the same task).
 - `passed`: whether the grader did what `expected` asks.
+- `meta.scale` (only when the adapter defines `scale_points`, for a reward with no fixed
+  scale): `{"kind": "reference-relative", "floor": "…", "reference": "…", "tasks": 24,
+  "points": {"task-3": [floor, reference]}, "excluded": {"task-0": "why"}}`. Every `score` is
+  then `(raw - floor) / (reference - floor)` on its task, `max_reward` is 1.0, and the raw
+  reward is in `metrics.raw_reward`.
 - `answer_free`: the completion was built without the reference answer, so a policy that
   knows nothing about the task could produce it. These feed the lazy-policy number.
 - `metrics`: the value of each reward term, so a leak can be traced to the term that pays.

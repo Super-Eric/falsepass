@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import falsepass
-from falsepass import hygiene, probes, report, rewardlint_bridge
+from falsepass import hygiene, probes, report, rewardlint_bridge, scale
 from falsepass.adapter import Adapter
 from falsepass.model import ProbeResult
 
@@ -144,6 +144,7 @@ def run(
     try:
         if hasattr(adapter, "prepare"):
             loop.run_until_complete(adapter.prepare(scorer, examples))
+        scorer, examples, scaled = scale.apply(adapter, scorer, examples, loop, jobs if parallel else 1)
         if getattr(adapter, "tool_mode", False):
             run_probes(probes.TOOL_MODE + list(getattr(adapter, "episode_probes", [])), examples)
         elif getattr(adapter, "answer_free", False):
@@ -211,6 +212,7 @@ def run(
             "weights": getattr(scorer, "weights", {}),
             "adapter": getattr(adapter, "inferred", None) or "hand-written",
             "loader": getattr(adapter, "loader", None),
+            **({"scale": scaled} if scaled else {}),
         },
         "results": [r.to_dict() for r in results],
         "rewardlint": lint,

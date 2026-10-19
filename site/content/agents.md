@@ -218,6 +218,34 @@ kept: `falsepass results <env> --completion <id>` shows the conversation, and `f
 repro <env>` writes a script that replays the recorded tool calls through the same loop
 with verifiers alone.
 
+### Rewards with no fixed scale
+
+Some rewards measure an outcome instead of checking an answer: a hedging error or a cost
+(maximum 0, no floor), a game score, a distance. "Full" and "nothing" then have no fixed
+values, and a fixed strategy really achieves part of the outcome. Give the adapter two
+reference points per task:
+
+```python
+class Env(Adapter):
+    scale_floor = "no hedge at all"               # names used in the summary
+    scale_reference = "the textbook delta hedge"
+
+    def scale_points(self, example):
+        return no_hedge(example), textbook_hedge(example)   # policies or completions
+```
+
+falsepass scores both on every task first, then reports every score on that task as
+`(raw - floor) / (reference - floor)`: 0 is the floor, 1 the reference, above 1 beats the
+reference. The ceiling, lazy-policy and false-fail figures are on that scale; each row keeps
+its raw reward in `metrics.raw_reward`, and `meta.scale` in probe-results.json has both
+points per task. Tasks where the reference does not beat the floor cannot be scaled and are
+left out (listed in `meta.scale.excluded`). Pick a reference that uses only what the prompt
+shows, and a floor a model could fall back on without working the task. Under such a reward
+a fixed strategy keeps what it really achieves, as a fixed label keeps its base rate on a
+yes/no task: read the lazy-policy figure as where answer-free strategies fall between the
+two points, and look for what the grader pays beyond the outcome reached. `falsepass repro`
+replays raw rewards.
+
 ## When the reference is not a reply
 
 Some Q&A environments store something other than a reply in their `answer` field: a

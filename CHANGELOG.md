@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Rewards with no fixed scale** (a cost or an error with maximum 0, a game score): an
+  adapter's `scale_points(example)` returns a floor and a reference strategy; both are scored
+  on every task first, and every score is reported as `(raw - floor) / (reference - floor)`
+  (0 = the floor, 1 = the reference). The raw reward stays in `metrics.raw_reward`; tasks
+  where the reference does not beat the floor are left out and listed (`meta.scale`). `audit`
+  and `reach` use it; the summary says so. `falsepass.scale`, `tests/test_scale.py`.
 - `init` flags an environment whose code calls an outside service (an HTTP client and a URL
   that is not local and not a data or documentation host): `outside service` among the needs
   in `discover` and `init`, the hosts in `init`'s output and `--json` (`outside_hosts`).
