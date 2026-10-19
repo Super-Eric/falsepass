@@ -5,12 +5,12 @@
   "description": "Find RL environment graders that pay wrong answers: probes reward code, returns reproducible leads",
   "websiteUrl": "https://super-eric.github.io/falsepass/",
   "repository": {"url": "https://github.com/Super-Eric/falsepass", "source": "github"},
-  "version": "0.10.0",
+  "version": "0.11.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "falsepass",
-      "version": "0.10.0",
+      "version": "0.11.0",
       "transport": {"type": "stdio"},
       "packageArguments": [{"type": "positional", "value": "mcp"}]
     }

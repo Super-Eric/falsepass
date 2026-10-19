@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.11.0 — 2026-10-19
 
 - **v1 tool and multi-turn tasksets are played as whole episodes.** A `verifiers.v1` taskset
   with tool servers, its own `Env` episode loop or a scripted user is now run through its
