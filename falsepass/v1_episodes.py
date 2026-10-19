@@ -30,6 +30,7 @@ from falsepass.model import Completion, Example, Policy, Score
 from falsepass.scorers import TURN_CAP, as_messages, tool_schema
 
 KEY_VAR = "FALSEPASS_POLICY_KEY"  # the endpoint ignores it; the client config wants one
+EPISODE_TURN_CAP = 400  # far above any taskset's own `max_turns` (a 21-day game with retries takes 42)
 
 
 def text_of(content: Any) -> str:
@@ -68,19 +69,19 @@ def plain_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 class Player:
     """One episode's policy: what it is asked, what it answers, and how often."""
 
-    def __init__(self, completion: Completion) -> None:
+    def __init__(self, completion: Completion, cap: int = TURN_CAP) -> None:
         if isinstance(completion, Policy):
             self.act, self.wants_tools, self.script = completion.act, completion.wants_tools, None
         else:
             script = [m for m in as_messages(completion) if m.get("role") == "assistant"]
             self.act, self.wants_tools, self.script = None, False, script or [{"content": ""}]
-        self.calls = 0
+        self.calls, self.cap = 0, cap
         self.replies: list[dict[str, Any]] = []
         self.error: str | None = None
 
     def next(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> dict[str, Any]:
-        if self.calls >= TURN_CAP:
-            raise RuntimeError(f"rollout did not stop after {TURN_CAP} model turns")
+        if self.calls >= self.cap:
+            raise RuntimeError(f"rollout did not stop after {self.cap} model turns")
         if self.script is not None:
             entry = self.script[min(self.calls, len(self.script) - 1)]
         else:
@@ -296,7 +297,7 @@ class V1EpisodeScorer:
         except Exception as exc:  # noqa: BLE001 - one line the caller can act on
             return Score(None, {}, [f"could not start the environment: {type(exc).__name__}: {exc}"[:800]])
         assert self.endpoint is not None
-        player = Player(completion)
+        player = Player(completion, EPISODE_TURN_CAP)  # the env's own turn limit comes first; this only stops a runaway
         name = self.endpoint.add(player)
         try:
             ctx = ModelContext(client=self.config.client, model=name, sampling=self.config.sampling)

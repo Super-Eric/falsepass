@@ -38,6 +38,10 @@
   answering 429 is retried (`UV_HTTP_RETRIES=10`); a failed MCP audit no longer appends the
   generic "common causes" footer to a specific stop message; the stop message says when an
   outside call (an LLM judge) was blocked.
+- From the hedge-gym and second-strike audits: an episode's runaway cap is 400 model turns
+  (the taskset's own `max_turns` comes first; 40 cut a 42-turn game short); T6 plays only
+  "Done." when an episode offers no tools; the reward-terms table counts negative values
+  (penalties) as paying.
 - A local environment folder is installed editable in the audit's virtualenv: uv cached the
   build of a folder and did not notice edits to its code, so a run could test an older
   version of the folder than the one on disk.

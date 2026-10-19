@@ -762,12 +762,17 @@ async def t6_tool_policies(adapter: Adapter, scorer: Scorer, ex: Example) -> lis
     if not getattr(adapter, "tool_mode", False):
         return []
     any_tool_row = not ONLY or any(w.split("/")[0] in ("T5", "T6") for w in ONLY)
-    results = []
+    results: list[ProbeResult] = []
+    offered: list[str] | None = None
     for name, policy in tool_policies().items():
         if not (wanted("T6", name) or (name == IDLE and any_tool_row)):  # doing nothing tells refusal tasks apart
             results.append(ProbeResult("T6", "tool_policy", name, ex.key, Expect.ZERO, None, True, SKIPPED, answer_free=True))
             continue
+        if name != IDLE and results and results[0].variant == IDLE and offered == []:
+            continue  # the episode offers no tools: every tool policy would only say "Done." again
         score = await scorer.score(ex, policy)
+        if name == IDLE:
+            offered = score.info.get("tools")  # None when the scorer does not say (v0): play them all
         detail = f"stopped after {score.info.get('turns')} model turns ({score.info.get('stop')}); reward {score.reward}"
         said = [m["content"] for m in score.info.get("transcript", []) if m.get("role") == "assistant"]
         results.append(ProbeResult("T6", "tool_policy", name, ex.key, Expect.ZERO, score.reward,

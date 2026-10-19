@@ -66,7 +66,7 @@ def term_leak(results: list[dict[str, Any]], weights: dict[str, float]) -> list[
                 if term != "num_turns":
                     values[term].append(float(value))
     return [
-        (term, sum(v > 0 for v in vals) / len(vals), sum(vals) / len(vals), weights.get(term))
+        (term, sum(v != 0 for v in vals) / len(vals), sum(vals) / len(vals), weights.get(term))  # a penalty pays too
         for term, vals in values.items()
     ]
 
