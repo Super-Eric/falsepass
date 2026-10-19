@@ -187,7 +187,9 @@ def _wheels(env_id: str) -> tuple[str, str, dict[str, str]]:
 SOURCE_SUFFIXES = (".py", ".toml", ".md")
 DATA_SUFFIXES = (".json", ".jsonl", ".csv", ".tsv", ".yaml", ".yml", ".txt",
                  # code the grader may run outside Python (a game engine, a checker)
-                 ".js", ".mjs", ".cjs", ".ts", ".wasm", ".sh", ".sql", ".lua", ".rs", ".go", ".c", ".h", ".cpp")
+                 ".js", ".mjs", ".cjs", ".ts", ".wasm", ".sh", ".sql", ".lua", ".rs", ".go", ".c", ".h", ".cpp",
+                 # files a checker or a simulator reads (proof sources, planning domains, arrays)
+                 ".lean", ".v", ".pddl", ".smt2", ".npz", ".npy")
 DATA_FILE_CAP = 8 * 1024 * 1024  # one data file
 DATA_TOTAL_CAP = 32 * 1024 * 1024  # all of them together
 

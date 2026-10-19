@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- `init` also copies `.lean`, `.v`, `.pddl`, `.smt2`, `.npz` and `.npy` files from the wheel
+  into `src/` (under the same size caps): a Lean taskset read its `Network.lean` and per-task
+  `Weights.lean` at import, so `src/` could not load without them.
 - **Rewards with no fixed scale** (a cost or an error with maximum 0, a game score): an
   adapter's `scale_points(example)` returns a floor and a reference strategy; both are scored
   on every task first, and every score is reported as `(raw - floor) / (reference - floor)`
