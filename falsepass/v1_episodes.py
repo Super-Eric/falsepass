@@ -5,7 +5,8 @@ blind for a tool or multi-turn taskset, where the reward depends on what the too
 what the scripted user said. `V1EpisodeScorer` runs the environment's own episode instead
 (its harness, its tool servers, its scripted user, its stop conditions, its rewards), as
 `vf-eval` does, and answers the model's requests from a local OpenAI-compatible endpoint
-that plays the policy. No model and no network beyond 127.0.0.1.
+that plays the policy. No model. Outside hosts are blocked through proxy settings (see
+`block_network`) unless the audit allows them.
 
 A completion is played as follows: a `Policy` reacts to each request (`act(messages)`, or
 `act(messages, tools)` with `wants_tools`); a string or a message list is a fixed script,
@@ -185,17 +186,61 @@ def eval_config(taskset: str, base_url: str, runtime: str = "subprocess", args: 
     from verifiers.v1.cli.resolve import narrow_config, with_positional_taskset
     from verifiers.v1.configs.cli.eval import EvalConfig
 
+    from verifiers.v1.configs.agent import agent_config_fields
+
+    def parse(argv: list[str]) -> Any:
+        saved = sys.argv
+        try:
+            config_type = narrow_config(EvalConfig, argv)
+            sys.argv = [saved[0] if saved else "falsepass", *argv]
+            return cli(config_type)
+        except SystemExit as exc:
+            raise RuntimeError(f"verifiers could not build a run config for {taskset!r} with {args or []} (exit {exc.code})") from None
+        finally:
+            sys.argv = saved
+
     argv = with_positional_taskset([taskset, "-m", "falsepass", "--client.base-url", base_url, "--client.api-key-var", KEY_VAR,
-                                    "--no-push", "--env.agent.runtime.type", runtime, *(args or [])])  # fmt: skip
-    saved = sys.argv
-    try:
-        config_type = narrow_config(EvalConfig, argv)
-        sys.argv = [saved[0] if saved else "falsepass", *argv]
-        return cli(config_type)
-    except SystemExit as exc:
-        raise RuntimeError(f"verifiers could not build a run config for {taskset!r} with {args or []} (exit {exc.code})") from None
-    finally:
-        sys.argv = saved
+                                    "--no-push", *(args or [])])  # fmt: skip
+    # Every agent seat of the env (`agent` for a plain taskset; a multi-agent env names its own)
+    # runs in `runtime`, unless the extra args already chose one for it.
+    seats = [name for name in agent_config_fields(parse(argv).env) if f"--env.{name}.runtime.type" not in (args or [])]
+    return parse(argv + [flag for name in seats for flag in (f"--env.{name}.runtime.type", runtime)])
+
+
+PACKAGE_HOSTS = ("pypi.org", "files.pythonhosted.org")
+
+
+def block_network(allowed: list[str]) -> None:
+    """Point HTTP(S) proxies at a closed port for this process and everything it starts, so an
+    environment that calls an outside service (registers an agent, posts a result) fails to
+    reach it instead of acting there. 127.0.0.1, localhost, the package indexes and `allowed`
+    are exempt. Best effort: a client that ignores proxy settings, or a raw socket, is not stopped."""
+    closed = "http://127.0.0.1:9"
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        os.environ[name] = closed
+    exempt = ",".join(["127.0.0.1", "localhost", "::1", *PACKAGE_HOSTS, *allowed])
+    os.environ["NO_PROXY"] = os.environ["no_proxy"] = exempt
+
+
+def outside_hosts(module: str) -> list[str]:
+    """Hosts named in URLs in the package's Python source (not localhost): services the
+    environment may call when it runs."""
+    import importlib.util
+    import re
+    from pathlib import Path
+
+    spec = importlib.util.find_spec(module.split(".")[0])
+    roots = list(spec.submodule_search_locations or []) if spec and spec.submodule_search_locations else \
+        ([str(Path(spec.origin).parent)] if spec and spec.origin else [])
+    hosts: set[str] = set()
+    for root in roots:
+        for path in Path(root).rglob("*.py"):
+            try:
+                text = path.read_text(errors="replace")
+            except OSError:
+                continue
+            hosts |= set(re.findall(r"https?://([A-Za-z0-9.-]+\.[A-Za-z]{2,})", text))
+    return sorted(h for h in hosts if h not in ("localhost",) and not h.endswith(("example.com", "example.org")))
 
 
 class V1EpisodeScorer:
@@ -206,8 +251,9 @@ class V1EpisodeScorer:
     concurrent_safe = True
 
     def __init__(self, taskset: str, load_args: dict[str, Any] | None = None, runtime: str = "subprocess",
-                 args: list[str] | None = None) -> None:  # fmt: skip
+                 args: list[str] | None = None, network: bool | list[str] = False) -> None:  # fmt: skip
         self.taskset, self.load_args, self.runtime, self.args = taskset, dict(load_args or {}), runtime, list(args or [])
+        self.network = network  # False: outside hosts blocked; a list: those hosts allowed; True: everything
         self.endpoint: PolicyEndpoint | None = None
         self.env: Any = None
         self.config: Any = None
@@ -224,6 +270,8 @@ class V1EpisodeScorer:
             from verifiers.v1.utils.loaders import load_environment
 
             os.environ.setdefault(KEY_VAR, "unused")
+            if self.network is not True:
+                block_network(list(self.network or []))
             self.endpoint = PolicyEndpoint()
             self.config = eval_config(self.taskset, self.endpoint.url, self.runtime, self.args)
             if self.load_args:  # the taskset options the audit's tasks were loaded with

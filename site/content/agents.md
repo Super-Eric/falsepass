@@ -200,7 +200,15 @@ writes a v1 skeleton. Policies there are `act(messages, tools)`: messages carry
 command line), e.g. `{"families": ["pin_request"]}`. The harness runs in verifiers'
 subprocess runtime; when it can run code (a bash tool), the summary says so, and
 `runtime = "docker"` in env.toml (or `RUNTIME` in the adapter) isolates it. Extra
-`vf-eval` options go in env.toml as `vf_args = ["--env.option", "value"]`. Each episode is
+`vf-eval` options go in env.toml as `vf_args = ["--env.option", "value"]`.
+
+Outside hosts are blocked during episodes: falsepass points HTTP(S) proxies at a closed port
+(127.0.0.1, localhost and the package indexes are exempt), so an environment that registers
+with, posts to or plays on an outside service fails to reach it instead of acting there under
+your run. The summary lists the hosts its source names. To test such an environment, point it
+at a local stand-in through its own option (`vf_args`), or, knowing what it will do there,
+allow named hosts with `network = ["host"]` in env.toml (`NETWORK` in a policy adapter). The
+guard is best effort: a client that ignores proxy settings is not stopped. Each episode is
 kept: `falsepass results <env> --completion <id>` shows the conversation, and `falsepass
 repro <env>` writes a script that replays the recorded tool calls through the same loop
 with verifiers alone.

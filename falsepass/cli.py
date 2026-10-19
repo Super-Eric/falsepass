@@ -321,6 +321,7 @@ from falsepass.v1_episodes import V1EpisodeScorer
 MODULE = "{package}"
 LOAD_ARGS = {{}}  # taskset options, as `--env.taskset.<option>` would set them, e.g. {{"split": "eval"}}
 RUNTIME = "subprocess"  # or "docker": where the harness runs
+NETWORK = False  # outside hosts are blocked during episodes; a list of hosts allows those (the env may act there)
 
 
 def call(name, **arguments):
@@ -377,14 +378,14 @@ class Env(Adapter):
     tool_mode = True  # played with policies: no text probes
     episode_probes = [policy_probes]
     # how `falsepass repro` replays the same tasks (keys must end in the task index)
-    loader = {{"kind": "v1-episode", "module": MODULE, "load_args": LOAD_ARGS, "runtime": RUNTIME}}
+    loader = {{"kind": "v1-episode", "module": MODULE, "load_args": LOAD_ARGS, "runtime": RUNTIME, "network": NETWORK}}
 
     def load(self, n, seed):
         self.tasks = list(open_taskset(MODULE, LOAD_ARGS).load())
         picks = random.Random(seed).sample(range(len(self.tasks)), min(n, len(self.tasks)))
         examples = [self._example(i) for i in picks]
         self.refusal_tasks = {{ex.key for ex in examples if refusing_is_right(ex)}}  # T5/T6 rows there are not counted
-        return V1EpisodeScorer(MODULE, LOAD_ARGS, RUNTIME), examples
+        return V1EpisodeScorer(MODULE, LOAD_ARGS, RUNTIME, network=NETWORK), examples
 
     def _example(self, i) -> Example:
         task = self.tasks[i]

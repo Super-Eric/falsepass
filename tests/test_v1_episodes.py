@@ -88,7 +88,7 @@ def test_a_v1_tool_folder_gets_the_v1_policy_skeleton(tmp_path: Path, monkeypatc
     assert cli.main(["init", str(TOY), "--policies"]) == 0
     audit = tmp_path / "audits" / "falsepass-v1-tool-toy"
     adapter = (audit / "adapter.py").read_text()
-    assert "V1EpisodeScorer(MODULE, LOAD_ARGS, RUNTIME)" in adapter and 'MODULE = "falsepass_v1_tool_toy"' in adapter
+    assert "V1EpisodeScorer(MODULE, LOAD_ARGS, RUNTIME, network=NETWORK)" in adapter and 'MODULE = "falsepass_v1_tool_toy"' in adapter
     compile(adapter, "adapter.py", "exec")
     env = tomllib.loads((audit / "env.toml").read_text())["env"]
     assert cli.install_args(env)[2:4] == ["--with-editable", str(TOY)]  # a folder: edits are picked up on every run
@@ -152,3 +152,20 @@ def test_automatic_mode_plays_a_v1_tool_taskset_and_repro_replays_it(toy_tasks, 
     out = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=300)
     assert out.returncode == 0, out.stderr[-2000:]
     assert "1.000000  expected 0     T6 tool_policy/says_done_without_any_tool_call" in out.stdout
+
+
+def test_outside_hosts_are_listed_and_blocked(tmp_path: Path, monkeypatch):
+    import os
+
+    from falsepass.v1_episodes import block_network, outside_hosts
+
+    package = tmp_path / "netty_env"
+    package.mkdir()
+    (package / "__init__.py").write_text('URL = "https://game.example.net/api"\nLOCAL = "http://localhost:8000"\nDOC = "https://example.com/x"\n')
+    monkeypatch.syspath_prepend(str(tmp_path))
+    assert outside_hosts("netty_env") == ["game.example.net"]
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy", "NO_PROXY", "no_proxy"):
+        monkeypatch.delenv(name, raising=False)
+    block_network(["allowed.example.net"])
+    assert os.environ["HTTPS_PROXY"] == "http://127.0.0.1:9"
+    assert {"127.0.0.1", "localhost", "pypi.org", "allowed.example.net"} <= set(os.environ["NO_PROXY"].split(","))

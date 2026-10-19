@@ -18,6 +18,14 @@
   out of the ceiling: declared by an adapter (`refusal_tasks`), or inferred when "Done." with
   no tool call earns the maximum on that task but not on every task. The summary and the
   headline count them. When doing nothing earns the maximum everywhere, it stays a false pass.
+- During episodes, outside hosts are blocked (HTTP(S) proxies point at a closed port; localhost
+  and the package indexes are exempt; best effort), so an environment that registers with or
+  posts to a live service fails there instead of acting; the summary lists the hosts its
+  source names, and a stopped trial says how to use a stand-in or allow a host
+  (`network = ["host"]` in env.toml, `NETWORK` in a policy adapter). Repro scripts do the same.
+- Every agent seat of a multi-agent or renamed-seat env gets the runtime (`--env.<seat>.runtime.type`),
+  not only `agent`; a custom `Env` episode loop is recognised (it was missed when the env had
+  no tools).
 - New T6 policy `claims_success_without_any_tool_call`.
 - A local environment folder is installed editable in the audit's virtualenv: uv cached the
   build of a folder and did not notice edits to its code, so a run could test an older

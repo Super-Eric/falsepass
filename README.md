@@ -307,7 +307,9 @@ rewards (`V1EpisodeScorer`). The model is a local endpoint on 127.0.0.1 that ans
 the policy, so nothing is billed or uploaded. Automatic mode plays T5 and T6 this way;
 `falsepass init <env> --policies` writes a v1 skeleton with a solver as the control, and
 `repro` replays each recorded episode turn by turn without falsepass. The harness runs in
-verifiers' subprocess runtime unless env.toml says `runtime = "docker"`.
+verifiers' subprocess runtime unless env.toml says `runtime = "docker"`. Outside hosts are
+blocked during episodes (proxies to a closed port; `network = ["host"]` allows one), so an
+environment that registers with or posts to a live service does not act there.
 
 **Rollout check.** `falsepass rollout <env>` sends a sample of tasks to a model behind
 an OpenAI-compatible endpoint — a local Ollama server by default, so nothing is billed —

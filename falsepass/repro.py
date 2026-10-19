@@ -194,6 +194,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pydantic_config import cli
 from verifiers.v1.cli.resolve import narrow_config, with_positional_taskset
 from verifiers.v1.clients import ModelContext
+from verifiers.v1.configs.agent import agent_config_fields
 from verifiers.v1.configs.cli.eval import EvalConfig
 from verifiers.v1.utils.loaders import load_environment
 
@@ -236,11 +237,18 @@ class Replay(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
+if NETWORK is not True:  # outside hosts blocked, as in the audit: HTTP(S) proxies point at a closed port
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        os.environ[name] = "http://127.0.0.1:9"
+    os.environ["NO_PROXY"] = os.environ["no_proxy"] = ",".join(["127.0.0.1", "localhost", "::1", "pypi.org", "files.pythonhosted.org", *(NETWORK or [])])
 server = ThreadingHTTPServer(("127.0.0.1", 0), Replay)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 os.environ.setdefault("REPLAY_KEY", "unused")
 argv = with_positional_taskset([TASKSET, "-m", "replay", "--client.base-url", f"http://127.0.0.1:{server.server_address[1]}/v1",
-                                "--client.api-key-var", "REPLAY_KEY", "--no-push", "--env.agent.runtime.type", RUNTIME, *ARGS])
+                                "--client.api-key-var", "REPLAY_KEY", "--no-push", *ARGS])
+sys.argv = [sys.argv[0], *argv]
+seats = [name for name in agent_config_fields(cli(narrow_config(EvalConfig, argv)).env) if f"--env.{name}.runtime.type" not in ARGS]
+argv += [flag for name in seats for flag in (f"--env.{name}.runtime.type", RUNTIME)]
 sys.argv = [sys.argv[0], *argv]
 config = cli(narrow_config(EvalConfig, argv))
 if LOAD_ARGS:
@@ -596,8 +604,8 @@ def generate(audit_dir: Path, probes: list[str] | None = None, per_group: int = 
         script += LOAD_V1.replace("{last}", str(max(int(re.findall(r"[0-9]+", c["example"])[-1]) for c in cases)))
     elif loader["kind"] == "v1-episode":
         settings = {"TASKSET": loader.get("taskset") or loader["module"], "RUNTIME": loader.get("runtime", "subprocess"),
-                    "ARGS": loader.get("args", [])}  # fmt: skip
-        script += "".join(f"{name} = {json.dumps(value, ensure_ascii=True)}\n" for name, value in settings.items())
+                    "ARGS": loader.get("args", []), "NETWORK": loader.get("network", False)}  # fmt: skip
+        script += "".join(f"{name} = {value!r}\n" for name, value in settings.items())  # Python literals: True, not true
         script += LOAD_V1_EPISODE.replace("{last}", str(max(int(re.findall(r"[0-9]+", c["example"])[-1]) for c in cases)))
     else:
         script += LOAD_V0.format(getter=loader["getter"])

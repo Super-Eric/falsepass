@@ -307,8 +307,12 @@ class AutoAdapter(Adapter):
         from falsepass.scorers import scripted_user_turns
         from falsepass.v1_episodes import V1EpisodeScorer
 
+        from falsepass.v1_episodes import outside_hosts
+
         runtime, args = self.settings.get("runtime", "subprocess"), list(self.settings.get("vf_args", []))
-        trial = V1EpisodeScorer(self.module, self.load_args, runtime, args)
+        network = self.settings.get("network", False)
+        hosts = outside_hosts(self.module)
+        trial = V1EpisodeScorer(self.module, self.load_args, runtime, args, network)
         first = Example("task-0", tasks[0].data.prompt_text or "", "", tasks[0])
 
         async def try_once() -> Score:
@@ -318,11 +322,15 @@ class AutoAdapter(Adapter):
                 await trial.close()
 
         tried = asyncio.run(try_once())
+        blocked = (f" Its source names outside hosts ({', '.join(hosts[:8])}), which are blocked during episodes: if the "
+                   "environment needs one, run it against a local stand-in (`vf_args = [\"--env.<option>\", \"http://127.0.0.1:...\"]` "
+                   "in env.toml) or, knowing it may act there (register, post, publish), allow it with `network = [\"host\"]`."
+                   if hosts and network is not True else "")  # fmt: skip
         if tried.reward is None:
             raise ContainerTask(  # not a container either, but nothing to fall back to v0 for
                 f"{type(tasks[0]).__name__} is played as whole episodes ({'; '.join(reasons)}), and a trial episode did not "
-                f"finish: {'; '.join(tried.errors)[:600]}. Options: `runtime = \"docker\"` in env.toml, extra vf-eval "
-                "options as `vf_args = [...]` there, or write an adapter (falsepass init <env> --force --policies)"
+                f"finish: {'; '.join(tried.errors)[:600]}.{blocked} Other options: `runtime = \"docker\"` in env.toml, extra "
+                "vf-eval options as `vf_args = [...]` there, or write an adapter (falsepass init <env> --force --policies)"
             )
         self.tool_mode, self.multi_turn = True, True
         tools = tried.info.get("tools") or []
@@ -333,10 +341,14 @@ class AutoAdapter(Adapter):
             "(falsepass init <env> --force --policies)"
         )
         self.load_notes += trial.notes
+        if hosts and network is not True:
+            self.load_notes.append(f"outside hosts named in the source ({', '.join(hosts[:8])}) were blocked during episodes "
+                                   f"{'except ' + ', '.join(network) + ' ' if network else ''}(HTTP(S) proxies set to a closed port)")
         pool = [Example(f"task-{i}", t.data.prompt_text or (scripted_user_turns(t.data) or [""])[0], str(getattr(t.data, "answer", "") or ""), t) for i, t in enumerate(tasks)]
-        self.loader = {"kind": "v1-episode", "module": self.module, "load_args": self.load_args, "runtime": runtime, "args": args}
+        self.loader = {"kind": "v1-episode", "module": self.module, "load_args": self.load_args, "runtime": runtime, "args": args,
+                       "network": network}
         system = getattr(tasks[0].data, "system_prompt", None) or ""
-        return V1EpisodeScorer(self.module, self.load_args, runtime, args), pool, (f"{system}\n{tasks[0].data.prompt_text}", None)
+        return V1EpisodeScorer(self.module, self.load_args, runtime, args, network), pool, (f"{system}\n{tasks[0].data.prompt_text}", None)
 
     @staticmethod
     def _last_user(messages: Any) -> str:
@@ -621,11 +633,10 @@ def episode_reasons(module: str, taskset: Any, tasks: list[Any]) -> list[str]:
     when a reply can be scored on its own (`V1TaskScorer`)."""
     reasons = []
     try:
-        from verifiers.v1.env import SingleAgentEnv
-        from verifiers.v1.utils.loaders import environment_class
+        from verifiers.v1.utils import loaders
 
-        env_class = environment_class(module)
-        if env_class is not SingleAgentEnv:
+        env_class = loaders.environment_class(module)
+        if env_class.__name__ != "SingleAgentEnv" and env_class is not getattr(loaders, "SingleAgentEnv", None):
             reasons.append(f"its own episode loop ({env_class.__name__})")
     except Exception:  # noqa: BLE001 - an older v1 without these: judge by the tools alone
         pass
