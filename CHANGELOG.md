@@ -1,5 +1,32 @@
 # Changelog
 
+## Unreleased
+
+- **v1 tool and multi-turn tasksets are played as whole episodes.** A `verifiers.v1` taskset
+  with tool servers, its own `Env` episode loop or a scripted user is now run through its
+  own loop, as `vf-eval` runs it (harness, tool servers, scripted user, stop conditions,
+  rewards), against a local endpoint on 127.0.0.1 that answers with the policy
+  (`falsepass.v1_episodes.V1EpisodeScorer`). Before, automatic mode scored a single reply
+  against such a taskset, or stopped. Automatic mode now plays T5 and T6 this way, after one
+  trial episode that stops with a one-line reason when the taskset cannot run here;
+  `init --policies` on a v1 taskset writes a v1 skeleton (solver as the control,
+  `refusing_is_right`, exploits) instead of refusing; `repro` replays each recorded episode,
+  tool calls included, with verifiers alone (loader kind `v1-episode`). env.toml takes
+  `runtime` (`subprocess` by default, `docker`) and `vf_args`. `examples/v1-tool-toy/` has a
+  planted defect.
+- T5/T6 rows on a task where refusing is the right answer are marked `no_control` and left
+  out of the ceiling: declared by an adapter (`refusal_tasks`), or inferred when "Done." with
+  no tool call earns the maximum on that task but not on every task. The summary and the
+  headline count them. When doing nothing earns the maximum everywhere, it stays a false pass.
+- New T6 policy `claims_success_without_any_tool_call`.
+- A local environment folder is installed editable in the audit's virtualenv: uv cached the
+  build of a folder and did not notice edits to its code, so a run could test an older
+  version of the folder than the one on disk.
+- Tool-mode audits no longer report the empty-reference hygiene row (tool tasks carry no
+  reference), and v1 episode audits no longer report identical prompts (the task is its
+  world, not its prompt). A known-bad tool episode is no longer compared with a known-good
+  one by its last words alone.
+
 ## 0.10.0 — 2026-10-19
 
 - **Reward functions without an environment**: `falsepass init rewards.py --dataset data.jsonl`

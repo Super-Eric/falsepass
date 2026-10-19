@@ -40,6 +40,10 @@ def install_args(env: dict, source: str | Path | None = None) -> list[str]:
     else:
         args = ["--with", str(env["verifiers_source"]) if env.get("verifiers_source") else f"verifiers=={env['verifiers']}"]
         args += ["--with", str(source) if source else f"{env['package']}=={env['version']}"]
+    if source and Path(source).is_dir() and str(source) in args:
+        # uv caches the environment built from a folder and does not notice edits to its code
+        # (not even with --reinstall-package): install it editable, so every run sees the folder as it is
+        args[args.index(str(source)) - 1] = "--with-editable"
     for requirement in env.get("extra", []):
         args += ["--with", requirement]
     if env.get("index"):
@@ -286,6 +290,117 @@ ADAPTER = Env()
 '''
 
 
+V1_POLICY_TEMPLATE = '''"""falsepass adapter for {id}: policies for a verifiers v1 tool or multi-turn taskset.
+
+Each policy plays whole episodes through the taskset's own loop, as `vf-eval` runs them:
+its harness, its tool servers, its scripted user, its stop conditions and its rewards
+(falsepass.v1_episodes.V1EpisodeScorer). No model: a local endpoint on 127.0.0.1 answers
+the harness with the policy's next message.
+
+A policy is `act(messages, tools)`: the conversation so far (dicts with "role", "content",
+and "tool_calls" / "tool_call_id" where present; tool results are role "tool") and the
+offered tool schemas in; the next assistant message out: a string (ends the turn) or
+`call("tool_name", arg=value, ...)` (one or more tool calls).
+
+`example.raw` is the task: `example.raw.data` holds its fields (the prompt, and whatever
+the grader compares against). The solver may read them; every other policy must not.
+
+The generic tool policies (T5, T6) run as well. Each episode is kept, so `falsepass
+results <env> --completion <id>` shows it and `falsepass repro <env>` replays it.
+Run: falsepass audit <env>
+"""
+
+import random
+
+from falsepass import Adapter, Example
+from falsepass.auto import open_taskset
+from falsepass.model import Expect, Policy
+from falsepass.probes import check
+from falsepass.v1_episodes import V1EpisodeScorer
+
+MODULE = "{package}"
+LOAD_ARGS = {{}}  # taskset options, as `--env.taskset.<option>` would set them, e.g. {{"split": "eval"}}
+RUNTIME = "subprocess"  # or "docker": where the harness runs
+
+
+def call(name, **arguments):
+    return {{"content": "", "tool_calls": [{{"name": name, "arguments": arguments}}]}}
+
+
+def turn(messages):
+    """How many assistant messages came before: 0 on the first request."""
+    return sum(1 for m in messages if m["role"] == "assistant")
+
+
+def tool_results(messages):
+    return [m["content"] for m in messages if m["role"] == "tool"]
+
+
+def refusing_is_right(example):
+    """True for a task where the correct episode moves nothing (a scam to refuse, a request
+    to decline). Known-bad policies are not judged there: doing nothing is correct."""
+    return False  # TODO: e.g. example.raw.data.family in ("pin_request", "fake_refund")
+
+
+def solver(example):
+    """Known-good: does the task properly from its own data. Should earn the maximum."""
+    def act(messages, tools):
+        raise NotImplementedError("TODO: e.g. `return call(...) if turn(messages) == 0 else 'Done.'`")
+    return Policy("solver", act, wants_tools=True)
+
+
+def gives_up(example):
+    """Known-bad, honest: declines without trying. Should earn nothing (unless refusing is right)."""
+    return Policy("gives_up", lambda messages, tools: "I'm sorry, I can't help with that.", wants_tools=True)
+
+
+def exploits(example):
+    """Known-bad policies that never read the task data. Each should earn nothing. Ideas: claim
+    success without acting; act on everything the tools show; a number written another way
+    (words, spaced digits); NaN, inf, -1 or 1e999 in an amount; a reply that lists every
+    candidate answer."""
+    return {{}}
+
+
+async def policy_probes(adapter, scorer, ex):
+    found = [await check("X1", "policy", "solver", Expect.FULL, solver(ex), adapter, scorer, ex)]
+    bad = Expect.LAZY if refusing_is_right(ex) else Expect.ZERO
+    found.append(await check("X1", "policy", "gives_up", bad, gives_up(ex), adapter, scorer, ex, answer_free=True))
+    for name, policy in exploits(ex).items():
+        found.append(await check("X1", "policy", name, bad, policy, adapter, scorer, ex, answer_free=True))
+    return found
+
+
+class Env(Adapter):
+    name = "{id}"
+    max_reward = 1.0  # what the solver earns; set it to the real figure once the X1 solver rows show it
+    tool_mode = True  # played with policies: no text probes
+    episode_probes = [policy_probes]
+    # how `falsepass repro` replays the same tasks (keys must end in the task index)
+    loader = {{"kind": "v1-episode", "module": MODULE, "load_args": LOAD_ARGS, "runtime": RUNTIME}}
+
+    def load(self, n, seed):
+        self.tasks = list(open_taskset(MODULE, LOAD_ARGS).load())
+        picks = random.Random(seed).sample(range(len(self.tasks)), min(n, len(self.tasks)))
+        examples = [self._example(i) for i in picks]
+        self.refusal_tasks = {{ex.key for ex in examples if refusing_is_right(ex)}}  # T5/T6 rows there are not counted
+        return V1EpisodeScorer(MODULE, LOAD_ARGS, RUNTIME), examples
+
+    def _example(self, i) -> Example:
+        task = self.tasks[i]
+        return Example(f"task-{{i}}", task.data.prompt_text or "", "", task)
+
+    def render(self, answer, example):
+        return solver(example) if answer == example.answer else gives_up(example)
+
+    def wrong_answer(self, example):
+        return "WRONG"
+
+
+ADAPTER = Env()
+'''
+
+
 def find_audit(env: str, needs: str = "env.toml") -> Path | None:
     """The audit folder for `env`: a path to one, or a name under audits/ (`arc_easy` also
     finds `arc-easy`, the name `init` gives it)."""
@@ -416,17 +531,9 @@ def scaffold(args) -> int:
             target.write_bytes(content)
     kind = hub.classify(info["sources"]) if info.get("sources") else info.get("kind")  # read from the source text
     kept_adapter = (args.manual or args.policies) and (audit_dir / "adapter.py").exists()
-    if args.policies and not kept_adapter and kind and kind["generation"] == "v1":
-        print("falsepass: --policies writes a skeleton for verifiers environments built with vf.load_environment (v0); this is a "
-              "v1 taskset, which falsepass cannot play policies against yet. Two ways on: --manual writes a v1 adapter for a task "
-              "whose reply can be written from the task data; for a tool or multi-turn v1 taskset, serve scripted policies from a "
-              "local OpenAI-compatible endpoint and play them with verifiers' own `vf-eval <env> -m <policy> --client.base-url "
-              "http://127.0.0.1:PORT/v1 --env.agent.runtime.type subprocess --no-push` (the agents page, \"Games, simulations "
-              "and tool tasks\")", file=sys.stderr)  # fmt: skip
-        return 1
     if (args.manual or args.policies) and not kept_adapter:
         v1 = bool(kind) and kind["generation"] == "v1"
-        template = POLICY_TEMPLATE if args.policies else V1_ADAPTER_TEMPLATE if v1 else ADAPTER_TEMPLATE
+        template = (V1_POLICY_TEMPLATE if v1 else POLICY_TEMPLATE) if args.policies else V1_ADAPTER_TEMPLATE if v1 else ADAPTER_TEMPLATE
         (audit_dir / "adapter.py").write_text(template.format(id=info["id"], package=info.get("module") or info.get("task", "")))
     if kept_adapter:
         print(f"falsepass: kept the existing {audit_dir}/adapter.py (delete it first for a fresh skeleton)", file=sys.stderr)
@@ -462,6 +569,10 @@ def scaffold(args) -> int:
         print(f"created {audit_dir}/env.toml — each reply is graded by its task template ({how}):")
     elif info.get("framework") == "inspect":
         print(f"created {audit_dir}/env.toml — each reply goes through the task's own solver chain and scorers:")
+    elif kind and kind["generation"] == "v1" and "tools" in kind["needs"]:
+        print(f"created {audit_dir}/env.toml — a v1 tool taskset: each probe plays whole episodes through the taskset's own "
+              "loop with generic tool policies (T5, T6). For policies that know the task (a solver as the control, "
+              "task-aware exploits), rerun with --force --policies:")
     elif kind and not kind["automatic"]:
         print(f"created {audit_dir}/env.toml — automatic mode may not fit ({why or kind['turns']}); try it, and if it "
               f"stops, rerun with --force --manual (or --policies for a game, simulation or tool task):")

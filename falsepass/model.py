@@ -86,6 +86,11 @@ class ProbeResult:
     # sorted list) or a real multi-attempt exploit (wrong tries, then the right one). Kept
     # in the numbers; the headline says when its ceiling rests on such a row.
     final_as_good: bool = False
+    # A known-bad tool-policy row (T5, T6) on a task where doing nothing ("Done." without a
+    # tool call) earns the maximum while it does not on other tasks: a task where refusing or
+    # doing nothing is the right answer, so no answer-free policy can be told apart from a
+    # correct one there. Kept, marked passed, left out of the ceiling (see mark_no_control).
+    no_control: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)

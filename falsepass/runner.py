@@ -143,7 +143,7 @@ def run(
         if hasattr(adapter, "prepare"):
             loop.run_until_complete(adapter.prepare(scorer, examples))
         if getattr(adapter, "tool_mode", False):
-            run_probes(probes.TOOL_MODE, examples)
+            run_probes(probes.TOOL_MODE + list(getattr(adapter, "episode_probes", [])), examples)
         elif getattr(adapter, "answer_free", False):
             run_probes(probes.ANSWER_FREE + list(getattr(adapter, "answer_free_probes", [])), examples, together=True)
             run_probes(probes.ANSWER_FREE_FEW, examples[:few], "slower probes", together=True)
@@ -155,9 +155,12 @@ def run(
 
             run_probes([search.make_probe(search_calls, seed)], examples[:search_examples], "mutation search")
         probes.mark_same_as_good(results)
+        probes.mark_no_control(results, adapter)
         hygiene_results = hygiene.check_dataset(adapter.hygiene_examples(100)) if adapter.hygiene_examples(1) else []
-        if getattr(adapter, "answer_free", False):  # no references were given, so none is "empty"
+        if getattr(adapter, "answer_free", False) or getattr(adapter, "tool_mode", False):  # no references to be "empty"
             hygiene_results = [r for r in hygiene_results if r.variant != "empty_answer"]
+        if (getattr(adapter, "loader", None) or {}).get("kind") == "v1-episode":  # the task is its world, not its prompt
+            hygiene_results = [r for r in hygiene_results if r.variant != "duplicate_prompt"]
         results.extend(hygiene_results)
         no_reference = getattr(adapter, "tool_mode", False) or getattr(adapter, "answer_free", False)
         lint = None if no_reference else rewardlint_bridge.run(adapter, scorer, examples[0], loop, jobs if parallel else 1)

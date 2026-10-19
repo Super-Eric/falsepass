@@ -17,6 +17,7 @@ hand-written adapter; `load` says so instead of guessing.
 
 from __future__ import annotations
 
+import asyncio
 import itertools
 import random
 import re
@@ -24,7 +25,7 @@ from collections.abc import Callable
 from typing import Any
 
 from falsepass.adapter import Adapter
-from falsepass.model import Example
+from falsepass.model import Example, Score
 from falsepass.scorers import Scorer, V0RolloutScorer, V0RubricScorer, V1TaskScorer
 
 REASONING = (
@@ -285,12 +286,12 @@ class AutoAdapter(Adapter):
             )
         from falsepass.scorers import scripted_user_turns
 
-        if tasks and not tasks[0].data.prompt_text and scripted_user_turns(tasks[0].data):
-            raise ContainerTask(  # not a container, but equally not something to fall back to v0 for
-                f"{type(tasks[0]).__name__} has no prompt: its env plays a scripted user over several turns, and the "
-                "answer for each turn cannot be inferred. Write an adapter whose render() returns the conversation; "
-                "V1TaskScorer opens the trace with the first scripted turn (write an adapter.py with the scripted turns)"
-            )
+        scripted = bool(tasks) and not tasks[0].data.prompt_text and bool(scripted_user_turns(tasks[0].data))
+        episodic = episode_reasons(self.module, taskset, tasks[:1])
+        if scripted:
+            episodic.insert(0, "a scripted user over several turns and no prompt")
+        if episodic:
+            return self._load_v1_episodes(tasks, episodic)
         pool = [
             Example(f"task-{i}", t.data.prompt_text, str(getattr(t.data, "answer", "") or ""), t)
             for i, t in enumerate(tasks)
@@ -298,6 +299,44 @@ class AutoAdapter(Adapter):
         self.loader = {"kind": "v1", "module": self.module, "load_args": self.load_args}
         system = getattr(tasks[0].data, "system_prompt", None) or ""
         return V1TaskScorer(tasks[0]), pool, (f"{system}\n{tasks[0].data.prompt_text}", None)
+
+    def _load_v1_episodes(self, tasks: list[Any], reasons: list[str]) -> tuple[Scorer, list[Example], tuple[str, Any]]:
+        """A tool or multi-turn v1 taskset: every completion is played as a whole episode
+        through the taskset's own loop (falsepass.v1_episodes). One trial episode first, so a
+        taskset that cannot run here stops now with one line, not with every probe erroring."""
+        from falsepass.scorers import scripted_user_turns
+        from falsepass.v1_episodes import V1EpisodeScorer
+
+        runtime, args = self.settings.get("runtime", "subprocess"), list(self.settings.get("vf_args", []))
+        trial = V1EpisodeScorer(self.module, self.load_args, runtime, args)
+        first = Example("task-0", tasks[0].data.prompt_text or "", "", tasks[0])
+
+        async def try_once() -> Score:
+            try:
+                return await trial.score(first, "Done.")
+            finally:
+                await trial.close()
+
+        tried = asyncio.run(try_once())
+        if tried.reward is None:
+            raise ContainerTask(  # not a container either, but nothing to fall back to v0 for
+                f"{type(tasks[0]).__name__} is played as whole episodes ({'; '.join(reasons)}), and a trial episode did not "
+                f"finish: {'; '.join(tried.errors)[:600]}. Options: `runtime = \"docker\"` in env.toml, extra vf-eval "
+                "options as `vf_args = [...]` there, or write an adapter (falsepass init <env> --force --policies)"
+            )
+        self.tool_mode, self.multi_turn = True, True
+        tools = tried.info.get("tools") or []
+        self.load_notes.append(
+            f"played as whole episodes through the taskset's own loop ({'; '.join(reasons)}; "
+            f"{len(tools)} tools offered{': ' + ', '.join(tools[:12]) if tools else ''}{', ...' if len(tools) > 12 else ''}), "
+            f"runtime {runtime}: generic tool policies only (T5, T6); for task-aware policies write an adapter "
+            "(falsepass init <env> --force --policies)"
+        )
+        self.load_notes += trial.notes
+        pool = [Example(f"task-{i}", t.data.prompt_text or (scripted_user_turns(t.data) or [""])[0], str(getattr(t.data, "answer", "") or ""), t) for i, t in enumerate(tasks)]
+        self.loader = {"kind": "v1-episode", "module": self.module, "load_args": self.load_args, "runtime": runtime, "args": args}
+        system = getattr(tasks[0].data, "system_prompt", None) or ""
+        return V1EpisodeScorer(self.module, self.load_args, runtime, args), pool, (f"{system}\n{tasks[0].data.prompt_text}", None)
 
     @staticmethod
     def _last_user(messages: Any) -> str:
@@ -342,7 +381,8 @@ class AutoAdapter(Adapter):
                 "validity": "no control: the reference cannot be replayed without a policy that solves the task, so the "
                             "maximum reward is assumed to be 1.0 and only the tool-policy probes (T5, T6) were run",
                 "format": "tool calls", "reference_reward_by_format": {}, "examples_tried": 0, "answers": "given through tool calls",
-                "turns": "multi-turn with tools: generic policies call the environment's own tools", "note": "",
+                "turns": "multi-turn with tools: generic policies call the environment's own tools",
+                "note": "; ".join(self.load_notes),
             }  # fmt: skip
             return
         if self.framework == "reward":
@@ -573,6 +613,31 @@ def open_taskset(module: str, load_args: dict[str, Any] | None = None, notes: li
                 "worth telling the maintainer"
             )
     return cls(config(id=module, **(load_args or {})))
+
+
+def episode_reasons(module: str, taskset: Any, tasks: list[Any]) -> list[str]:
+    """Why a v1 taskset's reward depends on a whole episode rather than one reply: its own
+    `Env` subclass (a custom episode loop), tool servers on the taskset or its tasks. Empty
+    when a reply can be scored on its own (`V1TaskScorer`)."""
+    reasons = []
+    try:
+        from verifiers.v1.env import SingleAgentEnv
+        from verifiers.v1.utils.loaders import environment_class
+
+        env_class = environment_class(module)
+        if env_class is not SingleAgentEnv:
+            reasons.append(f"its own episode loop ({env_class.__name__})")
+    except Exception:  # noqa: BLE001 - an older v1 without these: judge by the tools alone
+        pass
+    toolsets, failed = [], []
+    for owner, config in [(taskset, taskset.config), *((task, task.config) for task in tasks)]:
+        try:
+            toolsets += type(owner).toolsets(config)
+        except Exception as exc:  # noqa: BLE001 - a tool server that cannot even be built: the trial episode shows why
+            failed.append(f"{type(owner).__name__}.toolsets() raised {type(exc).__name__}")
+    if toolsets or failed:
+        reasons.append(f"tool servers ({', '.join([*sorted({type(t).__name__ for t in toolsets}), *failed])})")
+    return reasons
 
 
 def submodule_taskset(module: str, base: type) -> type | None:

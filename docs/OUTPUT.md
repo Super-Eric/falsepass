@@ -50,6 +50,13 @@ Everything an audit writes lives in `audits/<env>/` (or the folder given with `-
 - `same_as_good`: a known-bad completion that is identical to a known-good one on the same
   task (for a policy: the same replies). It is marked `passed` and left out of the ceiling;
   the lazy-policy reward still counts it, since a fixed strategy earns it on every task.
+- `no_control`: a known-bad tool-policy row (T5, T6) on a task where refusing or doing
+  nothing is the right answer: declared by the adapter (`refusal_tasks`, filled from
+  `refusing_is_right` in the `init --policies` skeleton for v1), or inferred when "Done."
+  without a tool call earns the maximum on that task but not on every task. Marked `passed`
+  and left out of the ceiling; the headline counts them (`no_control`, `no_control_tasks`).
+  When doing nothing earns the maximum on every task, the rows stay counted: that is a false
+  pass.
 - `final_as_good`: a known-bad completion whose last reply equals a known-good one's but
   which said other things first: right by chance, or wrong tries before the right one (a
   real exploit if the grader pays it). It is counted; the headline adds a note when the

@@ -174,23 +174,36 @@ whole conversation) is kept: `falsepass_completion` shows it, and `falsepass rep
 replays the policy's turns as a fixed script, so a lead found by a policy is reproduced
 without falsepass.
 
-**v1 tool tasksets** (`verifiers.v1`, tools served over MCP, a scripted user): the policy
-skeleton above is for environments built with `vf.load_environment`, and `init --policies`
-says so instead of writing it. Until falsepass plays policies against v1 tasksets itself,
-the route that works is verifiers' own evaluation loop with a stand-in model: a small local
-OpenAI-compatible server (streaming chat completions) that answers with your scripted
-policy, chosen by model name, then
+**v1 tool tasksets** (`verifiers.v1`: tools served over MCP, a taskset's own episode
+loop, a scripted user). `falsepass init owner/environment` then `falsepass audit` already
+plays the generic tool policies (T5, T6) as whole episodes through the taskset's own loop,
+as `vf-eval` runs them: its harness, tool servers, scripted user, stop conditions and
+rewards. The model is a local endpoint on 127.0.0.1 that answers with the policy; nothing
+is billed or uploaded. The summary's note lists the tools offered.
 
-```bash
-vf-eval owner-environment -m <policy-name> --client.base-url http://127.0.0.1:PORT/v1 \
-    --env.agent.runtime.type subprocess --no-push
-```
+For a control and task-aware exploits, `falsepass init owner/environment --policies --force`
+writes a v1 skeleton. Policies there are `act(messages, tools)`: messages carry
+`tool_calls` and role `tool` results; return a string to end the turn or
+`call("tool_name", arg=value)` for a tool call. Fill in:
 
-`--env.agent.runtime.type subprocess` keeps the harness local (the default is a hosted
-sandbox that needs a Prime login), and `--no-push` keeps the results off the Hub. Each
-episode then runs through the taskset's own tools, scripted user and reward. Numbers a
-policy puts in tool arguments as JSON `NaN` or `Infinity` arrive as `null`; send them as
-strings (`"nan"`, `"1e999"`) to test the tools' parsing.
+- `solver(example)`: does the task from its own data (`example.raw.data`, the fields the
+  grader compares against). It should earn the maximum; set `max_reward` to what it earns.
+- `refusing_is_right(example)`: true for tasks where the correct episode moves nothing (a
+  scam to refuse, a request to decline). Known-bad policies are not judged there, and
+  T5/T6 rows on those tasks are marked `no_control` instead of counting as false passes.
+- `exploits(example)`: policies that never read the task data. Ideas that found real
+  holes: claim success without acting; act on everything the tools show; a number written
+  another way (`1, 2, 3, 4`, words); `nan`, `inf`, `-1`, `1e999` in an amount (send them as
+  strings: JSON has no NaN); a reply that lists every candidate answer.
+
+`LOAD_ARGS` takes the taskset's options (what `--env.taskset.<option>` sets on the
+command line), e.g. `{"families": ["pin_request"]}`. The harness runs in verifiers'
+subprocess runtime; when it can run code (a bash tool), the summary says so, and
+`runtime = "docker"` in env.toml (or `RUNTIME` in the adapter) isolates it. Extra
+`vf-eval` options go in env.toml as `vf_args = ["--env.option", "value"]`. Each episode is
+kept: `falsepass results <env> --completion <id>` shows the conversation, and `falsepass
+repro <env>` writes a script that replays the recorded tool calls through the same loop
+with verifiers alone.
 
 ## When the reference is not a reply
 

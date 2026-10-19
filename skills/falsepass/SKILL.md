@@ -30,6 +30,10 @@ cannot script. Say so, then write policies: `falsepass init <target> --policies 
 writes a skeleton (a solver, an honest loser, and exploit policies that never use the
 answer); see "Games, simulations and tool tasks" on the agents page of the docs. For a
 Q&A environment whose answer format can't be inferred, `--manual` writes a simpler one.
+A `verifiers.v1` tool or multi-turn taskset needs no adapter to start: automatic mode plays
+generic tool policies (T5, T6) as whole episodes through the taskset's own loop; for a
+solver as the control and task-aware exploits, `--policies` writes a v1 skeleton. T5/T6
+rows on tasks where refusing is right are marked `no_control` and not counted.
 
 ## 2. Read the results
 

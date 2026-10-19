@@ -263,7 +263,7 @@ the commands with `uv run`; `uv run pytest` runs the kit's own tests.
 | T4 | multi-turn: replay an episode after an unrelated one | gives the same reward and transcript |
 | T5 | multi-turn: a policy that never answers | is cut off and not rewarded |
 | T8 | multi-turn: answer wrong, then repeat whatever the environment gives away ("The word was …") | gives nothing; the summary also says if the episode ran on after the environment announced its end |
-| T6 | tool use: six policies built from the tool schemas alone (no tool call, every tool once with empty arguments, the finishing tool at once, …) | are not rewarded and raise nothing |
+| T6 | tool use: seven policies built from the tool schemas alone (no tool call, a claim of success without one, every tool once with empty arguments, the finishing tool at once, …); not counted on a task where refusing is right (doing nothing earns the maximum there but not on every task, or the adapter says so) | are not rewarded and raise nothing |
 | X*, T1–T3 | environment-specific probes defined in an adapter | — |
 | S1 | search: mutate known-bad completions, never adding the answer, toward higher reward | finds nothing above zero |
 | S2 | search: mutate the correct completion without changing the answer, toward lower reward | finds nothing below full |
@@ -296,9 +296,18 @@ conditions and per-episode state are exercised. Search mutates every turn of a s
 A script entry can also carry tool calls (`{"tool_calls": [{"name": …, "arguments": {…}}]}`),
 which the environment executes with its real tools. Automatic mode also accepts tool-use
 environments whose tools run in-process: there is no answer format to infer, so it plays
-the six T6 policies and T5 and says in the summary that no control was possible.
+the seven T6 policies and T5 and says in the summary that no control was possible.
 Policies that have to read the task to find a hole are still hand work
 (`falsepass.model.Policy`: a function from the conversation so far to the next reply).
+
+**v1 tool and multi-turn tasksets** (`verifiers.v1` with tool servers, its own `Env`
+episode loop, or a scripted user) are played as whole episodes through the taskset's own
+loop, as `vf-eval` runs them: its harness, tool servers, scripted user, stop conditions and
+rewards (`V1EpisodeScorer`). The model is a local endpoint on 127.0.0.1 that answers with
+the policy, so nothing is billed or uploaded. Automatic mode plays T5 and T6 this way;
+`falsepass init <env> --policies` writes a v1 skeleton with a solver as the control, and
+`repro` replays each recorded episode turn by turn without falsepass. The harness runs in
+verifiers' subprocess runtime unless env.toml says `runtime = "docker"`.
 
 **Rollout check.** `falsepass rollout <env>` sends a sample of tasks to a model behind
 an OpenAI-compatible endpoint — a local Ollama server by default, so nothing is billed —
@@ -381,7 +390,8 @@ counts are not published here until those fixes are in.
   a model against the reward.
 - Container tasks have no automatic mode, and environments on hosted sandboxes or with a
   paid LLM judge are not covered without credentials.
-- Supported frameworks: verifiers, OpenEnv (environments whose `step()` grades a reply or a
+- Supported frameworks: verifiers (v1 tool tasksets: generic tool policies automatically,
+  task-aware ones written as policies), OpenEnv (environments whose `step()` grades a reply or a
   structured action; MCP tool environments and hand-written servers without an
   `Environment` class need policies or an adapter), Inspect AI (no sandboxed tasks) and HUD
   (answer-graded templates; tasks graded on what an agent did in a workspace need

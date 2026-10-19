@@ -12,7 +12,8 @@ hand-written adapter that declares how its data is loaded:
     loader = {"kind": "v0", "module": "my_env", "load_args": {}, "getter": "get_dataset"}
 
 with example keys that end in the row's index (`train-17`). `kind` is `v0`, `v0-rollout`
-or `v1`. An adapter that samples or filters its data in some other way keeps a
+`v1` or `v1-episode` (a whole episode through the taskset's own loop; optional `taskset`,
+`runtime` and `args`, the extra `vf-eval` options). An adapter that samples or filters its data in some other way keeps a
 hand-written repro.
 """
 
@@ -142,13 +143,10 @@ async def score(key, completion):
     return state["reward"]
 '''
 
-LOAD_V1 = '''
+LOAD_V1_TASKS = '''
 import itertools
 
 import verifiers.v1 as vf
-from verifiers.v1.graph import MessageNode
-from verifiers.v1.runtimes.subprocess import SubprocessConfig, SubprocessRuntime
-from verifiers.v1.trace import AgentInfo, TraceTask
 from verifiers.v1.utils.loaders import taskset_class
 
 try:
@@ -166,6 +164,12 @@ except (AttributeError, TypeError):  # a Taskset in a submodule that the package
     config_type = concrete_type(taskset_type, vf.TasksetConfig, origin=vf.Taskset) or vf.TasksetConfig
 taskset = taskset_type(config_type(id=MODULE, **LOAD_ARGS))
 tasks = list(itertools.islice(iter(taskset.load()), {last} + 1))
+'''
+
+LOAD_V1 = LOAD_V1_TASKS + '''from verifiers.v1.graph import MessageNode
+from verifiers.v1.runtimes.subprocess import SubprocessConfig, SubprocessRuntime
+from verifiers.v1.trace import AgentInfo, TraceTask
+
 runtime = SubprocessRuntime(SubprocessConfig())
 
 
@@ -180,6 +184,83 @@ async def score(key, completion):
     await task.score(trace, runtime)
     return trace.reward
 '''
+
+LOAD_V1_EPISODE = LOAD_V1_TASKS + '''import contextlib
+import os
+import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from pydantic_config import cli
+from verifiers.v1.cli.resolve import narrow_config, with_positional_taskset
+from verifiers.v1.clients import ModelContext
+from verifiers.v1.configs.cli.eval import EvalConfig
+from verifiers.v1.utils.loaders import load_environment
+
+# Each episode runs through the environment's own loop (harness, tools, scripted user,
+# rewards), as `vf-eval` runs it. The model is a local endpoint that replays the recorded
+# assistant messages, one per model turn (the last one repeated).
+SCRIPTS = {}
+
+
+class Replay(BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers.get("content-length") or 0)))
+        script = SCRIPTS[body["model"]]
+        entry = script["lines"][min(script["calls"], len(script["lines"]) - 1)]
+        script["calls"] += 1
+        calls = [{"id": f"call_{script['calls']}_{k}", "type": "function", "index": k,
+                  "function": {"name": c["name"], "arguments": json.dumps(c.get("arguments") or {})}}
+                 for k, c in enumerate(entry.get("tool_calls") or [])]
+        message = {"role": "assistant", "content": entry.get("content") or ""}
+        if calls:
+            message["tool_calls"] = calls
+        finish = "tool_calls" if calls else "stop"
+        usage = {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+        base = {"id": "replay", "created": 0, "model": body["model"]}
+        if body.get("stream"):
+            chunk = {**base, "object": "chat.completion.chunk", "choices": [{"index": 0, "delta": message, "finish_reason": finish}]}
+            tail = {**base, "object": "chat.completion.chunk", "choices": [], "usage": usage}
+            data, ctype = f"data: {json.dumps(chunk)}\\n\\ndata: {json.dumps(tail)}\\n\\ndata: [DONE]\\n\\n".encode(), "text/event-stream"
+        else:
+            data = json.dumps({**base, "object": "chat.completion", "usage": usage,
+                               "choices": [{"index": 0, "message": message, "finish_reason": finish}]}).encode()
+            ctype = "application/json"
+        self.send_response(200)
+        self.send_header("content-type", ctype)
+        self.send_header("content-length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+
+server = ThreadingHTTPServer(("127.0.0.1", 0), Replay)
+threading.Thread(target=server.serve_forever, daemon=True).start()
+os.environ.setdefault("REPLAY_KEY", "unused")
+argv = with_positional_taskset([TASKSET, "-m", "replay", "--client.base-url", f"http://127.0.0.1:{server.server_address[1]}/v1",
+                                "--client.api-key-var", "REPLAY_KEY", "--no-push", "--env.agent.runtime.type", RUNTIME, *ARGS])
+sys.argv = [sys.argv[0], *argv]
+config = cli(narrow_config(EvalConfig, argv))
+if LOAD_ARGS:
+    config.env.taskset = type(config.env.taskset).model_validate({**config.env.taskset.model_dump(), **LOAD_ARGS})
+env = load_environment(config.env)
+stack = contextlib.AsyncExitStack()
+
+
+async def score(key, completion):
+    if not stack._exit_callbacks:
+        await stack.enter_async_context(env.serving())
+    lines = [{"content": completion}] if isinstance(completion, str) else [m for m in completion if m.get("role") == "assistant"]
+    name = f"replay-{len(SCRIPTS)}"
+    SCRIPTS[name] = {"lines": lines or [{"content": ""}], "calls": 0}
+    episode = await env.run_episode(tasks[int(re.findall(r"[0-9]+", key)[-1])], ModelContext(client=config.client, model=name, sampling=config.sampling))
+    if not episode.ok or not episode.traces:
+        raise RuntimeError("; ".join(str(e) for e in episode.errors) or "the episode did not finish")
+    return episode.traces[0].reward
+'''
+
 
 LOAD_INSPECT = '''
 import importlib
@@ -513,6 +594,11 @@ def generate(audit_dir: Path, probes: list[str] | None = None, per_group: int = 
         script += "".join(f"{name} = {json.dumps(value, ensure_ascii=True)}\n" for name, value in settings.items()) + LOAD_OPENENV
     elif loader["kind"] == "v1":
         script += LOAD_V1.replace("{last}", str(max(int(re.findall(r"[0-9]+", c["example"])[-1]) for c in cases)))
+    elif loader["kind"] == "v1-episode":
+        settings = {"TASKSET": loader.get("taskset") or loader["module"], "RUNTIME": loader.get("runtime", "subprocess"),
+                    "ARGS": loader.get("args", [])}  # fmt: skip
+        script += "".join(f"{name} = {json.dumps(value, ensure_ascii=True)}\n" for name, value in settings.items())
+        script += LOAD_V1_EPISODE.replace("{last}", str(max(int(re.findall(r"[0-9]+", c["example"])[-1]) for c in cases)))
     else:
         script += LOAD_V0.format(getter=loader["getter"])
         script += RUBRIC_SCORE + (SCORE_V0_ROLLOUT if loader["kind"] == "v0-rollout" else SCORE_V0)

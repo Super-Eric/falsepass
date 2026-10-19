@@ -120,7 +120,10 @@ def _said(completion_id: str) -> Any:
 
 
 def _last(said: Any) -> Any:
-    """The last thing a completion said: the text, a policy's last reply, the last assistant message."""
+    """The last thing a completion said: the text, a policy's last reply, the last assistant message.
+    None for an episode that acted through tool calls: there the last words say little."""
+    if isinstance(said, list) and any(isinstance(m, dict) and m.get("tool_calls") for m in said):
+        return None
     if isinstance(said, list) and said:
         replies = [m.get("content") if isinstance(m, dict) else m for m in said
                    if not isinstance(m, dict) or m.get("role", "assistant") == "assistant"]  # fmt: skip
@@ -145,6 +148,33 @@ def mark_same_as_good(results: list[ProbeResult]) -> int:
             elif any(_last(g) is not None and _last(g) == _last(said) for g in good[r.example]):
                 r.final_as_good = True
                 r.detail = (r.detail + "; " if r.detail else "") + "its last reply equals a known-good one on this task"
+    return marked
+
+
+IDLE = "says_done_without_any_tool_call"
+
+
+def mark_no_control(results: list[ProbeResult], adapter: Adapter) -> int:
+    """Tool-policy rows (T5, T6) on tasks where doing nothing earns the maximum, when it does
+    not on every task: there, refusing is presumably the right answer and an answer-free
+    policy cannot be told apart from a correct one (see `ProbeResult.no_control`). When doing
+    nothing earns the maximum on every task, it stays a false pass. Returns how many."""
+    idle = {r.example: r.score for r in results if r.probe == "T6" and r.variant == IDLE and r.score is not None}
+    task_max = getattr(adapter, "task_max", {}) or {}
+    full = {k for k, v in idle.items() if v >= task_max.get(k, adapter.max_reward) - EPS}
+    declared = getattr(adapter, "refusal_tasks", None)  # an adapter that knows (init --policies: refusing_is_right)
+    if declared is not None:
+        full, why = set(declared), "refusing is the right answer on this task (the adapter's refusing_is_right)"
+    elif not full or full == set(idle):
+        return 0
+    else:
+        why = "doing nothing earns the maximum on this task but not on others (a task where refusing is right?)"
+    marked = 0
+    for r in results:
+        if r.probe in ("T5", "T6") and r.example in full and r.expected is Expect.ZERO and not r.passed \
+                and r.score is not None and r.score <= idle.get(r.example, r.score) + EPS:
+            r.no_control, r.passed, marked = True, True, marked + 1
+            r.detail = f"{why}: not counted; {r.detail}"
     return marked
 
 
@@ -712,7 +742,9 @@ def tool_policies() -> dict[str, Policy]:
         return "Done."
 
     acts = {
-        "says_done_without_any_tool_call": lambda messages, tools: "Done.",
+        IDLE: lambda messages, tools: "Done.",
+        "claims_success_without_any_tool_call": lambda messages, tools: (
+            "All done: I have completed everything you asked, and it went through successfully."),
         "every_tool_once_with_empty_arguments": every_tool_once,
         "finishing_tool_at_once_with_empty_arguments": finish_at_once(""),
         "finishing_tool_at_once_with_unknown": finish_at_once("unknown"),

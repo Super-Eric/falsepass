@@ -12,7 +12,7 @@ def headline(results: list[dict[str, Any]]) -> dict[str, Any]:
     """Two numbers that describe a verifier:
     false-pass ceiling — the most reward any known-bad completion received;
     false-fail rate — the share of known-good completions denied full reward."""
-    counted = [r for r in results if not r.get("same_as_good")]  # see ProbeResult.same_as_good
+    counted = [r for r in results if not r.get("same_as_good") and not r.get("no_control")]  # see ProbeResult
     bad = [r for r in counted if r["expected"] == KNOWN_BAD and r["score"] is not None]
     good = [r for r in counted if r["expected"] == KNOWN_GOOD]
     worst = max(bad, key=lambda r: r["score"], default=None)
@@ -30,6 +30,8 @@ def headline(results: list[dict[str, Any]]) -> dict[str, Any]:
         "known_bad": len(bad),
         "scoring_errors": sum(bool(r["errors"]) for r in results),
         "same_as_good": sum(bool(r.get("same_as_good")) for r in results),
+        "no_control": sum(bool(r.get("no_control")) for r in results),
+        "no_control_tasks": len({r["example"] for r in results if r.get("no_control")}),
         **({"false_pass_note": "the ceiling comes from a row whose last reply equals a known-good reply on that task: "
                                "correct by chance, or wrong tries before the right one (read it)",
             "false_pass_ceiling_other": other["score"] if other else None,
@@ -59,7 +61,7 @@ def term_leak(results: list[dict[str, Any]], weights: dict[str, float]) -> list[
     Rows are (term, share of known-bad runs with a non-zero value, mean value, weight)."""
     values: dict[str, list[float]] = defaultdict(list)
     for r in results:
-        if r["expected"] == KNOWN_BAD and r["score"] is not None:
+        if r["expected"] == KNOWN_BAD and r["score"] is not None and not r.get("no_control"):
             for term, value in (r.get("metrics") or {}).items():
                 if term != "num_turns":
                     values[term].append(float(value))
@@ -226,6 +228,10 @@ def summary(payload: dict[str, Any]) -> str:
         *([f"- **Known-bad rows not counted:** {head['same_as_good']} said exactly what a known-good completion said "
            "on the same task (marked passed; left out of the ceiling, counted in the lazy-policy reward, which a fixed "
            "strategy earns on every task)"] if head.get("same_as_good") else []),
+        *([f"- **Tool-policy rows not counted:** {head['no_control']} on {head['no_control_tasks']} tasks where refusing or "
+           "doing nothing is the right answer (declared by the adapter, or inferred: \"Done.\" without a tool call earns the "
+           "maximum there but not on every task), so an answer-free policy cannot be told apart from a correct one there "
+           "(marked passed; read those tasks)"] if head.get("no_control") else []),
         *([f"- **Note on the ceiling:** {head['false_pass_note']}; without such rows it is "
            f"{_fmt(head['false_pass_ceiling_other'])} (via {head['false_pass_other_via']})"] if head.get("false_pass_note") else []),
         "",

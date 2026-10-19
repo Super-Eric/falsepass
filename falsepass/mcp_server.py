@@ -294,7 +294,9 @@ def build():
         class or factory and the action class when detection picks the wrong one), `manual` (also write an
         adapter.py skeleton for a Q&A environment automatic mode cannot script), `policies`
         (the same for games, simulations and tool tasks: a skeleton built around policies;
-        use it when an audit comes back "inconclusive"), `force` (rewrite an existing
+        use it when an audit comes back "inconclusive", or for a verifiers v1 tool taskset
+        once the automatic run of generic tool policies is done, to add a solver as the control
+        and task-aware exploits; v1 episodes run through the taskset's own loop), `force` (rewrite an existing
         audit's env.toml, e.g. to add answers; adapter.py is kept)."""
         args = ["init", target, "--json"]
         for flag, value in (("--name", name), ("--version", version), ("--framework", framework), ("--task", task), ("--answers", answers),

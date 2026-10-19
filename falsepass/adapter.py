@@ -34,6 +34,10 @@ class Adapter:
     # Leave at 0 unless the env grades by similarity and partial credit is by design.
     bad_tolerance: float = 0.0
     has_judge: bool = False  # enables P8 (judge injection)
+    # Played with policies (games, tool tasks): no text probes, only the tool-policy probes
+    # (T5, T6) and `episode_probes`, the adapter's own policy probes (see `init --policies`).
+    tool_mode: bool = False
+    episode_probes: list[ExtraProbe] = []
 
     # --- loading -----------------------------------------------------------------
     def load(self, n: int, seed: int) -> tuple["Scorer", list[Example]]:
