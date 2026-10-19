@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `overview` counts a finding whose heading carries a qualifier after the rating
+  (`[Low, non-default]`); it was left out before.
 - v1 episodes without tools (the model answers in text inside the taskset's loop): automatic
   mode also plays the answer-free replies P3, P4 and A1 through the loop, not only T5 and T6.
   Hygiene no longer flags an empty prompt there (the loop sends the first message).

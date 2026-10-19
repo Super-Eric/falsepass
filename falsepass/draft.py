@@ -178,7 +178,8 @@ def findings(report: Path) -> dict[str, int]:
     """Count findings by severity from the `### F<n> — title  [Severity]` headings of a report."""
     import re
 
-    found = re.findall(r"^### F\d+ — .*\[(Critical|High|Medium|Low)\]\s*$", report.read_text(), re.M)
+    # "[Low]", or with a qualifier after it: "[Low, non-default]", "[High; provisional]"
+    found = re.findall(r"^### F\d+ — .*\[(Critical|High|Medium|Low)(?:[,;][^\]]*)?\]\s*$", report.read_text(), re.M)
     return {level: found.count(level) for level in SEVERITIES}
 
 

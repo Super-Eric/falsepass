@@ -77,7 +77,7 @@ def test_overview_has_one_row_per_audit_with_status(audit_dir):
     assert "`owner/demo`" in table and "probe run only" in table and "1/1" in table
     draft.draft(audit_dir)
     assert "| draft only |" in draft.overview(audit_dir.parent)
-    (audit_dir / "REPORT.md").write_text("# x\n\n### F1 — a thing  [High]\n\n### F2 — another  [Low]\n\n### F3 — third  [Low]\n")
+    (audit_dir / "REPORT.md").write_text("# x\n\n### F1 — a thing  [High]\n\n### F2 — another  [Low]\n\n### F3 — third  [Low, non-default]\n")
     table = draft.overview(audit_dir.parent)
     assert "1 High, 2 Low" in table and "1 environments with a reviewed report; 3 findings: 0 Critical, 1 High, 0 Medium, 2 Low" in table
 
