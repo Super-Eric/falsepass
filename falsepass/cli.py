@@ -522,7 +522,8 @@ def scaffold(args) -> int:
     audit_dir.mkdir(parents=True, exist_ok=True)
     keys = ("id", "framework", "task", "package", "version", "module", "index", "verifiers", "python", "inspect_ai", "hud",
             "openenv", "app", "env_class", "action_class", "factory", "dataset", "split", "dataset_config", "functions", "weights",
-            "answer_column", "prompt_column", "map", "pythonpath", "source", "answers", "extra")  # fmt: skip
+            "answer_column", "prompt_column", "map", "pythonpath", "source", "answers", "extra", "wheel_sha256",
+            "project_urls")  # fmt: skip
     required = ("index",) if info.get("framework", "verifiers") == "verifiers" else ()
     lines = [f"{key} = {json.dumps(info[key])}" for key in keys if info.get(key) or key in required]
     declared = f"# declared by the package: {info['declared']}\n" if info.get("declared") else ""
@@ -551,6 +552,7 @@ def scaffold(args) -> int:
                           "automatic_likely": kind["automatic"] if kind else None,
                           **({"task_data_fields": hub.task_data_fields(info["sources"])} if args.manual and info.get("sources") else {}),
                           **({"automatic_unlikely_because": why} if why else {}),
+                          **({"outside_hosts": kind["outside_hosts"]} if kind and kind.get("outside_hosts") else {}),
                           "others": info.get("others", []), "next": f"falsepass audit {ref}"}, indent=1))  # fmt: skip
         return 0
     fields = hub.task_data_fields(info["sources"]) if (args.manual and info.get("sources")) else {}
@@ -581,6 +583,9 @@ def scaffold(args) -> int:
               f"stops, rerun with --force --manual (or --policies for a game, simulation or tool task):")
     else:
         print(f"created {audit_dir}/env.toml — no adapter needed for single-turn environments with reference answers:")
+    if kind and kind.get("outside_hosts"):
+        print(f"  (the code calls an outside service: {', '.join(kind['outside_hosts'])}. An audit should not reach it: "
+              "v1 episodes block outside hosts; otherwise give the adapter a local stand-in)")
     if info.get("source"):
         print(f"  (installed from {info['source']} on every run, so edits are picked up)")
     if info.get("others"):

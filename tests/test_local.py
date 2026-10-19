@@ -189,3 +189,20 @@ def test_init_dir_puts_the_audit_elsewhere_and_says_so(tmp_path, monkeypatch, ca
     out = _json.loads(capsys.readouterr().out)
     assert (tmp_path / "elsewhere" / "falsepass-toy-env" / "env.toml").is_file() and not (tmp_path / "audits").exists()
     assert out["next"] == f"falsepass audit {tmp_path / 'elsewhere' / 'falsepass-toy-env'}"
+
+
+def test_a_hub_wheel_is_described_with_its_hash_and_project_urls(monkeypatch):
+    import hashlib
+    import io
+    import zipfile
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as wheel:
+        wheel.writestr("demo/__init__.py", "def load_environment(): pass\n")
+        wheel.writestr("demo-1.0.dist-info/METADATA", "Name: demo\nRequires-Dist: verifiers>=0.1.8\nProject-URL: Source, https://github.com/o/demo\n")
+    data = buffer.getvalue()
+    monkeypatch.setattr(hub, "_wheels", lambda env_id: ("index/", "demo", {"1.0": "wheel-url"}))
+    monkeypatch.setattr(hub, "_get", lambda url: data)
+    info = hub.describe("o/demo")
+    assert info["wheel_sha256"] == hashlib.sha256(data).hexdigest()
+    assert info["project_urls"] == ["Source, https://github.com/o/demo"]

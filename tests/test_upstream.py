@@ -50,3 +50,25 @@ def test_finds_the_tree_under_a_prefix_ignores_line_endings_and_reports_facts(tm
 def test_identifiers_prefer_long_public_names():
     files = {"a.py": "class MathsTask:\n    def inner_method(self): pass\n\ndef load_environment(): pass\ndef score_one_answer(): pass\n"}
     assert upstream.identifiers(files) == ["score_one_answer", "inner_method", "MathsTask"]
+
+
+def test_repositories_the_package_names_are_tried_first(tmp_path: Path):
+    audit = tmp_path / "demo"
+    (audit / "src" / "demo").mkdir(parents=True)
+    (audit / "env.toml").write_text('[env]\nid = "o/demo"\npackage = "demo"\nmodule = "demo"\nversion = "1"\n'
+                                    'project_urls = ["Source, https://github.com/Named/home.git"]\n')
+    (audit / "src" / "demo" / "env.py").write_text('"""Lives in github.com/someone/envs; see https://github.com/sponsors/x. Also github.com/someone/envs."""\na = 1\n')
+    assert upstream.declared(audit / "src", ["Source, https://github.com/Named/home.git"]) == ["Named/home", "someone/envs"]
+    gh = FakeGitHub({"hub/demo/demo/env.py": '"""Lives in github.com/someone/envs; see https://github.com/sponsors/x. Also github.com/someone/envs."""\na = 1\n'})
+    [match] = upstream.locate(audit, gh)
+    assert match.repo == "someone/envs" and match.same == ["demo/env.py"]
+
+
+def test_of_two_copies_of_the_tree_the_identical_one_is_compared(tmp_path: Path):
+    audit = tmp_path / "demo"
+    (audit / "src" / "demo").mkdir(parents=True)
+    (audit / "env.toml").write_text('[env]\nid = "o/demo"\npackage = "demo"\nmodule = "demo"\nversion = "1"\n')
+    (audit / "src" / "demo" / "env.py").write_text("a = 1\n")
+    gh = FakeGitHub({"demo/env.py": "a = 2\n", "hub/demo/demo/env.py": "a = 1\n"})
+    [match] = upstream.locate(audit, gh, repo="someone/envs")
+    assert match.prefix == "hub/demo/" and match.verdict == "identical to the audit"

@@ -289,6 +289,11 @@ def test_classify_reads_environment_kind_from_source():
     assert hub.classify({"e.py": single})["automatic"]
     assert not hub.classify({"e.py": game})["has_reference"] and not hub.classify({"e.py": game})["automatic"]
     assert hub.classify({"e.py": tools})["needs"] == ["tools"]
+    game_server = b"import httpx\nBASE = 'https://play.game.example.net/api'\nDATA = 'https://huggingface.co/datasets/x'\nr = httpx.post(BASE)\n"
+    kind = hub.classify({"e.py": single + game_server})
+    assert kind["needs"] == ["outside service"] and kind["outside_hosts"] == ["play.game.example.net"] and not kind["automatic"]
+    data_only = b"import requests\nrows = requests.get('https://huggingface.co/datasets/x/raw/main/a.json').json()\n"
+    assert hub.classify({"e.py": single + data_only})["automatic"]
 
 
 def test_static_scan_flags_reward_terms_that_accept_but_never_read_the_answer(tmp_path):

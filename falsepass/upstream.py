@@ -2,7 +2,9 @@
 
 A fix can only be offered upstream when the source is in a public repository and that
 repository still holds the code that was audited. This finds candidate repositories on
-GitHub (code search for the package name in a pyproject.toml, then repository search),
+GitHub (repositories the package itself names: its project URLs and any github.com link in
+its source or docstrings; then code search for the package name in a pyproject.toml and for
+distinctive identifiers),
 compares every audited Python file with the repository's default branch (line endings
 ignored), and reports what a contributor needs to know: default branch, licence, last
 push, open pull requests, and how many recently merged pull requests came from outside.
@@ -13,6 +15,7 @@ Read-only GitHub API calls through the `gh` CLI; nothing is written anywhere.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import tomllib
 from dataclasses import dataclass, field
@@ -74,6 +77,25 @@ def audited_files(src: Path) -> dict[str, str]:
         for p in sorted(src.rglob("*.py"))
         if "__pycache__" not in p.parts
     }
+
+
+GITHUB_REPO = re.compile(r"github\.com[/:]([A-Za-z0-9-]+)/([A-Za-z0-9._-]+)")
+NOT_A_REPO = {"sponsors", "orgs", "settings", "features", "topics", "marketplace", "apps", "login"}
+
+
+def declared(src: Path, project_urls: list[str]) -> list[str]:
+    """Repositories the package names itself (project URLs, links in its source, docstrings
+    or README), in order of first mention. A link may point at a dependency rather than the
+    source; `compare` sorts that out."""
+    texts = list(project_urls)
+    texts += [p.read_text(errors="replace") for p in sorted(src.rglob("*")) if p.is_file() and p.suffix in (".py", ".md", ".toml", ".txt")]
+    found: list[str] = []
+    for text in texts:
+        for owner, repo in GITHUB_REPO.findall(text):
+            name = f"{owner}/{repo.rstrip('.').removesuffix('.git')}"
+            if owner.lower() not in NOT_A_REPO and name.lower() not in (f.lower() for f in found):
+                found.append(name)
+    return found
 
 
 COMMON_NAMES = {"load_environment", "main", "Task", "Taskset", "Env", "Config", "setup", "score", "reward", "parse"}
@@ -150,13 +172,21 @@ def compare(gh: GitHub, repo: str, files: dict[str, str]) -> Match:
     if not prefixes:
         match.missing = list(files)
     else:
-        match.prefix = max(prefixes, key=lambda p: (prefixes[p], -len(p)))
-        for rel, text in files.items():
-            if match.prefix + rel not in tree:
-                match.missing.append(rel)
-                continue
-            upstream = gh.api(f"repos/{repo}/contents/{match.prefix + rel}?ref={branch}", raw=True)
-            (match.same if normalise(upstream) == normalise(text) else match.differ).append(rel)
+        # Several copies of the tree (a development folder and a published one): the one with
+        # the most files identical to the audit, then the shortest path.
+        most = max(prefixes.values())
+        best: tuple[int, int] | None = None
+        for prefix in sorted((p for p in prefixes if prefixes[p] == most), key=len)[:5]:
+            same, differ, missing = [], [], []
+            for rel, text in files.items():
+                if prefix + rel not in tree:
+                    missing.append(rel)
+                    continue
+                upstream = gh.api(f"repos/{repo}/contents/{prefix + rel}?ref={branch}", raw=True)
+                (same if normalise(upstream) == normalise(text) else differ).append(rel)
+            if best is None or (len(same), -len(prefix)) > best:
+                best = (len(same), -len(prefix))
+                match.prefix, match.same, match.differ, match.missing = prefix, same, differ, missing
     match.facts = facts(gh, repo, info)
     if match.prefix or match.same:
         match.facts |= packaging(gh, repo, tree, match.prefix, branch)
@@ -190,7 +220,9 @@ def locate(audit_dir: Path, gh: GitHub | None = None, repo: str | None = None, l
     files = audited_files(audit_dir / "src")
     if not files:
         raise RuntimeError(f"no audited Python files under {audit_dir / 'src'}")
-    repos = [repo] if repo else candidates(gh, env["package"], env.get("module", ""), env["id"].split("/")[0], files, limit)
+    named = declared(audit_dir / "src", env.get("project_urls", []))
+    searched = [] if repo else candidates(gh, env["package"], env.get("module", ""), env["id"].split("/")[0], files, limit)
+    repos = [repo] if repo else [*named, *(r for r in searched if r.lower() not in {n.lower() for n in named})]
     matches = [compare(gh, r, files) for r in repos]
     for m in matches:
         m.facts["audited_version"] = env["version"]

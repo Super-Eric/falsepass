@@ -354,8 +354,9 @@ A probe run produces **leads, not findings**. To turn one into a finding:
 
 ## From a report to a fix upstream
 
-`falsepass upstream <env>` searches GitHub for the environment's source (package name in a
-`pyproject.toml`, then its most distinctive class and function names), compares every
+`falsepass upstream <env>` searches GitHub for the environment's source (repositories the
+package names itself in its project URLs or a github.com link in its source or docstrings,
+then the package name in a `pyproject.toml`, then its most distinctive class and function names), compares every
 audited file with the repository's default branch, line endings ignored, and prints what
 a contributor needs: default branch, licence, last push, open pull requests, how many
 recent merges came from outside. `falsepass verify-fix <env> --source <patched folder>`

@@ -455,8 +455,9 @@ def build():
 
     @tool
     def falsepass_upstream(env: str, repo: str = "", limit: int = 5, workdir: str = ".") -> Any:
-        """Find the environment's source repository on GitHub (code search for the package
-        name, then for its most distinctive class and function names), compare every audited
+        """Find the environment's source repository on GitHub (repositories the package
+        names in its project URLs or source first, then code search for the package name and
+        for its most distinctive class and function names), compare every audited
         file with the repository's default branch, and report what a contributor needs:
         default branch, licence, last push, open pull requests, how many recent merges came
         from outside. `repo` (owner/name) checks one repository instead of searching. Needs
@@ -467,7 +468,8 @@ def build():
     @tool
     def falsepass_discover(days: int = 90, limit: int = 40, hub: str = "prime", workdir: str = ".") -> Any:
         """Recently maintained environments: `hub` "prime" (the Prime Intellect Hub, with what
-        each needs: sandbox, tools, LLM judge, API key, reference answers; needs the `prime`
+        each needs: sandbox, tools, LLM judge, API key, an outside service its code calls,
+        reference answers; needs the `prime`
         CLI) or "hf" (OpenEnv Spaces on the Hugging Face Hub, most liked first, each with
         the `hf:owner/space` target for falsepass_init; the public listing only)."""
         args = ["discover", "--days", str(days), "--limit", str(limit), "--hub", hub]

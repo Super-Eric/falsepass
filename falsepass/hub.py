@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import re
 import tomllib
@@ -221,7 +222,8 @@ def describe(env_id: str, version: str | None = None) -> dict:
     if version not in wheels:
         raise RuntimeError(f"version {version} not found; available: {sorted(wheels, key=_version_key)}")
 
-    archive = zipfile.ZipFile(io.BytesIO(_get(wheels[version])))
+    wheel = _get(wheels[version])
+    archive = zipfile.ZipFile(io.BytesIO(wheel))
     names = archive.namelist()
     metadata = archive.read(next(n for n in names if n.endswith(".dist-info/METADATA"))).decode()
     top_level = sorted({n.split("/")[0].removesuffix(".py") for n in names if ".dist-info" not in n and n.endswith(".py")})
@@ -235,6 +237,7 @@ def describe(env_id: str, version: str | None = None) -> dict:
         "sources": sources,
         "releases": sorted(wheels, key=_version_key),
         "project_urls": project_urls,
+        "wheel_sha256": hashlib.sha256(wheel).hexdigest(),  # which bytes were audited, for the report
         "id": env_id,
         "package": package,
         "version": version,
@@ -254,6 +257,24 @@ INFRASTRUCTURE = {
     "llm judge": r"JudgeRubric|vf\.Judge|judge_model|JudgeConfig",
     "api key": r"API_KEY|api_key_var|OPENAI_|ANTHROPIC_",
 }
+
+
+HTTP_CLIENT = r"\brequests\.(?:get|post|put|patch|request|Session)\b|\bhttpx\.(?:get|post|put|request|Client|AsyncClient)\b" \
+              r"|aiohttp\.ClientSession|\burlopen\(|websockets?\.connect"
+# Hosts that serve data, packages or documentation, not a service that takes part in an episode.
+DATA_HOSTS = ("huggingface.co", "hf.co", "github.com", "githubusercontent.com", "pypi.org", "pythonhosted.org", "arxiv.org",
+              "example.com", "example.org", "kaggle.com", "zenodo.org", "readthedocs.io", "wikipedia.org")
+
+
+def outside_service(code: str) -> list[str]:
+    """Hosts an environment's code may call while it runs: an HTTP client in the source and a
+    URL that is not local and not a data or documentation host. A game server, a judge service
+    or a live API decides the outcome there, and an audit must not reach it (falsepass blocks
+    outside hosts during v1 episodes)."""
+    if not re.search(HTTP_CLIENT, code):
+        return []
+    hosts = set(re.findall(r"https?://([A-Za-z0-9.-]+\.[A-Za-z]{2,})", code))
+    return sorted(h for h in hosts if not h.endswith(DATA_HOSTS) and h not in ("localhost",))
 
 
 def task_data_fields(sources: dict[str, bytes]) -> dict[str, list[str]]:
@@ -292,6 +313,9 @@ def classify(sources: dict[str, bytes]) -> dict:
         # v1: the harness decides the turn structure; a reward on the last reply is single-answer
         turns = "single-turn" if generation == "v1" and "last_reply" in code else "unknown"
     needs = [name for name, pattern in INFRASTRUCTURE.items() if re.search(pattern, code)]
+    services = outside_service(code)
+    if services:
+        needs.append("outside service")
     lines = sum(content.count(b"\n") for name, content in sources.items() if name.endswith(".py"))
     # A usable reference: an `answer` field on the task data, or rows built with a non-empty answer.
     has_reference = bool(
@@ -301,7 +325,7 @@ def classify(sources: dict[str, bytes]) -> dict:
     )
     automatic = generation in ("v0", "v1") and turns in ("single-turn", "multi-turn") and not needs and has_reference
     return {"generation": generation, "turns": turns, "needs": needs, "python_lines": lines,
-            "has_reference": has_reference, "automatic": automatic}
+            "has_reference": has_reference, "automatic": automatic, "outside_hosts": services}
 
 
 SPACES_API = "https://huggingface.co/api/spaces"

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- `init` flags an environment whose code calls an outside service (an HTTP client and a URL
+  that is not local and not a data or documentation host): `outside service` among the needs
+  in `discover` and `init`, the hosts in `init`'s output and `--json` (`outside_hosts`).
+- env.toml records the audited wheel's `wheel_sha256` and the package's `project_urls`.
+- `upstream` tries the repositories the package names itself (project URLs, github.com links
+  in its source, docstrings or README) before searching.
+- `upstream`: when a repository holds the audited files twice (a development folder and a
+  published copy), the copy with the most identical files is compared, not the shortest path.
+
 ## 0.11.0 — 2026-10-19
 
 - **v1 tool and multi-turn tasksets are played as whole episodes.** A `verifiers.v1` taskset

@@ -160,11 +160,16 @@ named `<probes>+template-<hash>.json`.
 
 `name` is what every other command takes. Names are forgiving: `arc_easy` finds `arc-easy`.
 `automatic_likely` is read from the package source (single- or multi-turn, a reference
-answer in the data, no sandbox, tools, judge or API key): `false` means the automatic run
+answer in the data, no sandbox, tools, judge, API key or outside service): `false` means the automatic run
 will probably stop and an adapter (`--manual` or `--policies`) is needed; `null` when there
 is no wheel to read (local folders, Inspect registry names). With `false`,
 `automatic_unlikely_because` says why (e.g. "sandbox, no reference answer found in the
-source").
+source"). `outside_hosts` lists the hosts of an outside service the code calls (an HTTP
+client in the source and a URL that is not local and not a data or documentation host: a game
+server, a judge service, a live API); an audit should not reach them.
+
+env.toml records `wheel_sha256` (the exact bytes audited) and the package's `project_urls`
+for a Hub environment.
 
 ## Exit codes
 
