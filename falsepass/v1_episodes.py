@@ -249,6 +249,7 @@ class V1EpisodeScorer:
 
     multi_turn = True
     concurrent_safe = True
+    episodes_independent = True  # verifiers builds each episode's state afresh; vf-eval runs them concurrently too
 
     def __init__(self, taskset: str, load_args: dict[str, Any] | None = None, runtime: str = "subprocess",
                  args: list[str] | None = None, network: bool | list[str] = False) -> None:  # fmt: skip

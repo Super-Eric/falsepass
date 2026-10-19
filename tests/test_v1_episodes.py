@@ -169,3 +169,13 @@ def test_outside_hosts_are_listed_and_blocked(tmp_path: Path, monkeypatch):
     block_network(["allowed.example.net"])
     assert os.environ["HTTPS_PROXY"] == "http://127.0.0.1:9"
     assert {"127.0.0.1", "localhost", "pypi.org", "allowed.example.net"} <= set(os.environ["NO_PROXY"].split(","))
+
+
+def test_reach_counts_tool_policies_in_tool_mode(toy_tasks, tmp_path: Path, monkeypatch):
+    from falsepass import reach
+
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["init", str(TOY)]) == 0
+    digest = reach.run(tmp_path / "audits" / "falsepass-v1-tool-toy", ["T6/says_done_without_any_tool_call"], tasks=3)
+    row = next(r for r in digest["rows"] if r["variant"] == "says_done_without_any_tool_call")
+    assert row["tasks"] == 3 and row["full_reward"] == 3 and len(digest["rows"]) == 1

@@ -179,9 +179,10 @@ def _await_audit(env: str, workdir: str, wait: float) -> dict[str, Any]:
     if job["state"] == "failed":
         tail = "\n".join(_log_tail(workdir, env, 30))
         command = job.get("command", "audit")
+        specific = any(line.startswith("falsepass:") for line in tail.splitlines()[-5:])  # a stop message that says what to do
         hint = ("\n\nCommon causes: a missing dependency (falsepass_init with `extra`), a dataset that needs a login, or "
                 "an environment automatic mode cannot script (falsepass_init with manual=true writes an adapter skeleton)."
-                if command == "audit" else "")  # fmt: skip
+                if command == "audit" and not specific else "")  # fmt: skip
         raise RuntimeError(f"the {command} job of {env} failed after {elapsed} s (exit code {job.get('exit_code')}). End of "
                            f"{_audit_dir(workdir, env) / 'job.log'}:\n{tail}{hint}")  # fmt: skip
     if job.get("command") == "verify-fix":
@@ -375,7 +376,7 @@ def build():
                         wait: int = 45, workdir: str = ".") -> Any:  # fmt: skip
         """Write audits/<env>/repro_auto.py: a script that depends only on the environment's
         own packages and re-scores the exact failing completions. `probe` limits it to some
-        probe codes, e.g. ["P5"]. Identical output from two clean runs is what makes a lead
+        probes, e.g. ["P5"] or ["X1/denies_both_figures"] (code/variant). Identical output from two clean runs is what makes a lead
         reproducible: with `run`=true the script is also run twice, each in a fresh
         virtualenv, in the background like an audit (status "running": call
         falsepass_audit_status). The result says whether the runs were identical, where the

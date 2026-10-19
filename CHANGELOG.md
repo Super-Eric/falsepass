@@ -27,6 +27,17 @@
   not only `agent`; a custom `Env` episode loop is recognised (it was missed when the env had
   no tools).
 - New T6 policy `claims_success_without_any_tool_call`.
+- From the eighth dogfood round (v1 tool tasksets): a run where at least half the probe rows
+  produced no score (the environment raised, an episode did not finish) is `inconclusive`, with
+  the first error, instead of "finished" with a false-fail rate of 1; rows without a score no
+  longer count as refused correct answers; v1 episodes run concurrently (`--jobs`); `reach`
+  counts tool-mode policies (T5, T6, an adapter's own) and keeps doing-nothing as the refusal
+  control; `repro --probe` (MCP `probe`) takes `code/variant`; a container task that is also
+  played through tools is pointed at policies as well as container mode; `src/` also gets the
+  wheel's non-Python code (`.js`, `.mjs`, `.wasm`, ...) that a grader may run; a package index
+  answering 429 is retried (`UV_HTTP_RETRIES=10`); a failed MCP audit no longer appends the
+  generic "common causes" footer to a specific stop message; the stop message says when an
+  outside call (an LLM judge) was blocked.
 - A local environment folder is installed editable in the audit's virtualenv: uv cached the
   build of a folder and did not notice edits to its code, so a run could test an older
   version of the folder than the one on disk.

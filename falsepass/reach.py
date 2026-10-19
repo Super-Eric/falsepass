@@ -10,8 +10,9 @@ scores only what it was asked for, plus the reference (P1) as a control, and wri
 `{answer_in_format}` and `{wrong_in_format}` by the same written in the answer format the audit
 uses (`\\boxed{42}`, `#### 42`, ...). Every other brace stays as written.
 
-Per-example probes only (P1-P9, P13-P17, A1, X1): the slower probes that repeat or replay
-an episode (P10, P11, T4-T8) and tool-mode policies are not counted this way.
+Per-example probes only (P1-P9, P13-P17, A1, X1; in tool mode T5, T6 and the adapter's own
+policy probes): the slower probes that repeat or replay an episode (P10, P11, T4, T7, T8) are
+not counted this way.
 """
 
 from __future__ import annotations
@@ -44,8 +45,8 @@ def _label(wanted: list[str], templates: list[str]) -> str:
 
 
 def _probe_list(adapter: Any) -> list:
-    if getattr(adapter, "tool_mode", False):
-        raise RuntimeError("reach counts per-example probes; this environment is played with tool policies (T5, T6)")
+    if getattr(adapter, "tool_mode", False):  # played with policies: the generic ones and the adapter's own (X1)
+        return list(probes.TOOL_MODE) + list(getattr(adapter, "episode_probes", []))
     if getattr(adapter, "answer_free", False):
         return list(probes.ANSWER_FREE)
     return probes.PER_EXAMPLE + list(getattr(adapter, "per_example_probes", []))
@@ -91,7 +92,7 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
         if unknown:
             raise RuntimeError(f"no per-example probe row matches {unknown}; this environment has: "
                                + ", ".join(sorted({f"{r.probe}/{r.variant}" for r in catalog})))  # fmt: skip
-        control = [] if getattr(adapter, "answer_free", False) else ["P1"]
+        control = [] if getattr(adapter, "answer_free", False) or getattr(adapter, "tool_mode", False) else ["P1"]
         probes.ONLY = set(wanted) | set(control)
         parallel = jobs > 1 and concurrent_ok(adapter, scorer)
         results = score_examples(adapter, scorer, loop, probe_list, examples, jobs if parallel else 1, "reach")
@@ -101,6 +102,7 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
         loop.close()
 
     probes.mark_same_as_good(results)  # against the P1 control's completion on each task
+    probes.mark_no_control(results, adapter)  # tool rows on tasks where refusing is right
     rows: dict[tuple[str, str, str], list] = defaultdict(list)
     for r in results:
         if r.detail != probes.SKIPPED:

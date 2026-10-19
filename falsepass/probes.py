@@ -639,6 +639,8 @@ async def t5_turn_limit(adapter: Adapter, scorer: Scorer, ex: Example) -> list[P
     """A policy that never finishes the task must be cut off, and must not be rewarded."""
     if not getattr(scorer, "multi_turn", False):
         return []
+    if not wanted("T5", "never_answers"):
+        return [ProbeResult("T5", "turn_limit", "never_answers", ex.key, Expect.ZERO, None, True, SKIPPED, answer_free=True)]
     script = [{"role": "assistant", "content": "Let me think about this a little longer."}]
     score = await scorer.score(ex, script)
     turns = score.info.get("turns")
@@ -759,8 +761,12 @@ async def t6_tool_policies(adapter: Adapter, scorer: Scorer, ex: Example) -> lis
     not make the environment or its reward code raise."""
     if not getattr(adapter, "tool_mode", False):
         return []
+    any_tool_row = not ONLY or any(w.split("/")[0] in ("T5", "T6") for w in ONLY)
     results = []
     for name, policy in tool_policies().items():
+        if not (wanted("T6", name) or (name == IDLE and any_tool_row)):  # doing nothing tells refusal tasks apart
+            results.append(ProbeResult("T6", "tool_policy", name, ex.key, Expect.ZERO, None, True, SKIPPED, answer_free=True))
+            continue
         score = await scorer.score(ex, policy)
         detail = f"stopped after {score.info.get('turns')} model turns ({score.info.get('stop')}); reward {score.reward}"
         said = [m["content"] for m in score.info.get("transcript", []) if m.get("role") == "assistant"]

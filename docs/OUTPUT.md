@@ -64,7 +64,9 @@ Everything an audit writes lives in `audits/<env>/` (or the folder given with `-
 
 ## falsepass results --json
 
-A digest of the same run, small enough to hand to a model (numbers from `falsepass demo`):
+A digest of the same run, small enough to hand to a model (numbers from `falsepass demo`).
+When the control failed, or at least half the probe rows produced no score, the digest has
+`"status": "inconclusive"`, a `reason`, `next`, and no headline (see the agents page):
 
 ```json
 {

@@ -14,7 +14,7 @@ def headline(results: list[dict[str, Any]]) -> dict[str, Any]:
     false-fail rate — the share of known-good completions denied full reward."""
     counted = [r for r in results if not r.get("same_as_good") and not r.get("no_control")]  # see ProbeResult
     bad = [r for r in counted if r["expected"] == KNOWN_BAD and r["score"] is not None]
-    good = [r for r in counted if r["expected"] == KNOWN_GOOD]
+    good = [r for r in counted if r["expected"] == KNOWN_GOOD and r["score"] is not None]  # no score: an error, counted apart
     worst = max(bad, key=lambda r: r["score"], default=None)
     other = max((r for r in bad if not r.get("final_as_good")), key=lambda r: r["score"], default=None)
     # A fixed strategy earns its reward on every task, including those where it happens to be
@@ -124,7 +124,7 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
             "detail": first.get("detail"), "example": first.get("example"),
             "completion": completion[:example_chars] if isinstance(completion, str) and full is None else completion,
             "completion_id": first.get("completion_id") or None,
-            **({} if first.get("completion_id") else {"completion_note": "not kept: completions over 60,000 characters "
+            **({} if first.get("completion_id") or not completion else {"completion_note": "not kept: completions over 60,000 characters "
                 "(generated payloads such as P10's 2 MB reply) are stored as a preview only; the probe code rebuilds them"}),
             "answer_free": bool(first.get("answer_free")),
             **({"errors": first["errors"][:2]} if first.get("errors") else {}),
@@ -152,6 +152,17 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
                     "https://super-eric.github.io/falsepass/docs/agents/#games-simulations-and-tool-tasks",
         }  # fmt: skip
         failing = []
+    elif unscored(payload["results"]):
+        rows, none, first = unscored(payload["results"])
+        extra = {
+            "status": "inconclusive",
+            "reason": f"{none} of {rows} probe rows produced no score (the environment raised or an episode did not finish), "
+                      f"so the numbers say little; first error: {first}",
+            "failing_omitted": len(failing),
+            "next": "Fix what stops the environment (the error above; `falsepass results <env> --completion <id>` shows a "
+                    "row), then audit again. A runtime or packaging error is the environment's set-up, not its grader.",
+        }  # fmt: skip
+        failing = []
     elif len(failing) > MAX_FAILING:
         extra = {"failing_omitted": len(failing) - MAX_FAILING}
         failing = failing[:MAX_FAILING]
@@ -163,12 +174,23 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
             "adapter": {k: adapter[k] for k in ("format", "answers", "turns", "validity", "note") if adapter.get(k)}
             if isinstance(adapter, dict) else adapter,
         },
-        "headline": None if validity.startswith("inconclusive") else headline(payload["results"]),
+        "headline": None if validity.startswith("inconclusive") or extra.get("status") == "inconclusive" else headline(payload["results"]),
         "failing": failing,
         "static_hints": [{k: h[k] for k in ("rule", "file", "line", "evidence", "meaning", "verdict") if k in h}
                          for h in payload.get("static", [])],  # fmt: skip
         "note": "Leads, not findings: rerun with `falsepass repro`, read the reward code, then judge defect vs design.",
     }
+
+
+def unscored(results: list[dict[str, Any]]) -> tuple[int, int, str] | None:
+    """(rows, rows without a score, the first error) when at least half the probe rows (P12
+    dataset checks aside) produced no score; else None."""
+    rows = [r for r in results if r["probe"] != "P12"]
+    none = [r for r in rows if r["score"] is None]
+    if not rows or len(none) * 2 < len(rows):
+        return None
+    first = next((e for r in none for e in r.get("errors") or []), "none recorded")
+    return len(rows), len(none), str(first)[:400]
 
 
 def _fmt(value: float | None) -> str:
@@ -216,6 +238,8 @@ def summary(payload: dict[str, Any]) -> str:
         f"{meta['examples']} examples, seed {meta['seed']}",
         "",
         *_adapter_lines(meta.get("adapter")),
+        *([f"- **⚠ Result inconclusive: {unscored(results)[1]} of {unscored(results)[0]} probe rows produced no score** (the "
+           f"environment raised or an episode did not finish); first error: {unscored(results)[2]}"] if unscored(results) else []),
         *_weight_lines(meta),
         f"- **False-pass ceiling:** {_fmt(head['false_pass_ceiling'])} of {_fmt(meta['max_reward'])} "
         f"(highest reward given to a known-bad completion; via {head['false_pass_via']})",

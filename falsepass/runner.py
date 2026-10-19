@@ -27,6 +27,8 @@ def concurrent_ok(adapter: Adapter, scorer: Any) -> bool:
     that says it is safe (each call builds its own state). Multi-turn rollouts, tool-mode
     policies and frameworks that run a whole task loop stay one at a time: their
     environments may keep state between episodes, and that is what some probes look for."""
+    if getattr(scorer, "episodes_independent", False):  # each episode builds its own state (v1 episodes)
+        return True
     return (
         bool(getattr(scorer, "concurrent_safe", False))
         and not getattr(scorer, "multi_turn", False)

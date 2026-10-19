@@ -143,6 +143,11 @@ and an empty reply earned about the same) or, for tool tasks, runs only the gene
 policies. The digest then lists only `facts_that_hold`: rows built without the answer,
 such as "an empty reply earned 1.0 on 20 of 20 tasks", which are true either way.
 
+A run is also `"status": "inconclusive"` when at least half its probe rows produced no score
+(the environment raised, or an episode did not finish): `reason` quotes the first error. That
+is the environment's set-up failing (a runtime, a package, a blocked outside call), not its
+grader; fix it and audit again.
+
 The next step is to write policies, which takes a capable agent a few minutes per
 environment:
 

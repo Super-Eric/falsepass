@@ -539,7 +539,8 @@ def select(results: list[dict[str, Any]], completions: dict[str, Any], probes: l
             if not stored["script"]:
                 continue
             stored = stored["script"]
-        if r["passed"] or r["completion_id"] not in completions or (probes and r["probe"] not in probes):
+        wanted = not probes or r["probe"] in probes or f'{r["probe"]}/{r["variant"]}' in probes  # P5 or P5/all_in_one_slot
+        if r["passed"] or r["completion_id"] not in completions or not wanted:
             continue
         if taken.get(group, 0) >= per_group:
             continue

@@ -280,9 +280,14 @@ class AutoAdapter(Adapter):
         if tasks and type(tasks[0]).NEEDS_CONTAINER:
             # Graded on what is left in a box, not on text: text probes would all score 0
             # and say nothing. See falsepass/container.py.
+            tools = episode_reasons(self.module, taskset, tasks[:1])
             raise ContainerTask(
-                f"{type(tasks[0]).__name__} is graded on files left in a container: run `falsepass container "
-                "<env>` (needs Docker), or write submissions with falsepass.container.score_submission"
+                f"{type(tasks[0]).__name__} needs a container (NEEDS_CONTAINER). If its reward reads files a submission "
+                "leaves in the box, run `falsepass container <env>` (needs Docker) or write submissions with "
+                "falsepass.container.score_submission"
+                + (f"; it is also played as episodes ({'; '.join(tools)}): for a game or an app played through tools, "
+                   "write policies (`falsepass init <env> --force --policies`, RUNTIME = \"docker\" in adapter.py), since "
+                   "container mode only scores files" if tools else "")
             )
         from falsepass.scorers import scripted_user_turns
 
@@ -326,6 +331,11 @@ class AutoAdapter(Adapter):
                    "environment needs one, run it against a local stand-in (`vf_args = [\"--env.<option>\", \"http://127.0.0.1:...\"]` "
                    "in env.toml) or, knowing it may act there (register, post, publish), allow it with `network = [\"host\"]`."
                    if hosts and network is not True else "")  # fmt: skip
+        if not blocked and network is not True and re.search(r"Connect(ion)?Error|Connection error|connection attempts", " ".join(tried.errors)):
+            blocked = (" Outside hosts are blocked during episodes, and this looks like a call to one: an LLM judge, a "
+                       "hosted model or another service. falsepass makes no model calls and spends nothing; give the "
+                       "environment a local stand-in through its own options (`vf_args` in env.toml), or allow a host "
+                       "with `network = [\"host\"]` knowing it may be billed or act there.")  # fmt: skip
         if tried.reward is None:
             raise ContainerTask(  # not a container either, but nothing to fall back to v0 for
                 f"{type(tasks[0]).__name__} is played as whole episodes ({'; '.join(reasons)}), and a trial episode did not "

@@ -625,3 +625,30 @@ def test_wrong_answers_keep_the_kind_of_the_reference():
     adapter.pool = [Example("a", "q", "Yes"), Example("b", "q", "$47$"), Example("c", "q", "$12$")]
     adapter.open_ended, adapter.closed = False, False
     assert adapter.wrong_answer(adapter.pool[1]) == "$12$"  # not "Yes" for a numeric answer
+
+
+def test_a_run_where_most_rows_have_no_score_is_inconclusive():
+    def row(probe, expected, score, errors=()):
+        return {"probe": probe, "name": "n", "variant": "v", "example": "t-0", "expected": expected, "score": score,
+                "passed": score is not None and (score >= 1 if expected == "full" else score <= 0), "detail": "",
+                "completion": "x", "metrics": {}, "errors": list(errors), "answer_free": False, "completion_id": ""}
+    rows = [row("X1", "full", None, ["ToolsetError: cannot package"]), row("X1", "zero", None, ["ToolsetError"]),
+            row("T6", "zero", 0.0), row("P12", "zero", None)]
+    payload = {"meta": {"environment": "e", "date": "d", "falsepass": "f", "versions": {}, "examples": 1, "max_reward": 1.0,
+                        "seed": 0, "python": "3", "adapter": None}, "results": rows}
+    digest = report.digest(payload)
+    assert digest["status"] == "inconclusive" and "2 of 3 probe rows produced no score" in digest["reason"]
+    assert "ToolsetError: cannot package" in digest["reason"] and digest["headline"] is None
+    assert "Result inconclusive" in report.summary(payload)
+    head = report.headline(rows[:3] + [row("P1", "full", 1.0)])
+    assert head["false_fail_rate"] == 0.0 and head["known_good"] == 1  # an error is not a refused correct answer
+
+
+def test_repro_selects_by_probe_or_probe_and_variant():
+    from falsepass import repro
+
+    rows = [{"probe": "X1", "name": "policy", "variant": v, "example": "task-1", "expected": "zero", "score": 1.0,
+             "passed": False, "completion_id": v} for v in ("a", "b")]
+    stored = {"a": "A", "b": "B"}
+    assert [c["variant"] for c in repro.select(rows, stored, ["X1/b"], 2)] == ["b"]
+    assert len(repro.select(rows, stored, ["X1"], 2)) == 2

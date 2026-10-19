@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shlex
 import subprocess
 import sys
@@ -610,6 +611,8 @@ def demo(target: Path) -> int:
 def main(argv: list[str] | None = None) -> int:
     from falsepass import build_version
 
+    os.environ.setdefault("UV_HTTP_RETRIES", "10")  # a package index answering 429 is retried, not fatal (uv backs off)
+
     parser = argparse.ArgumentParser(
         prog="falsepass", description="Probe RL environment verifiers for false passes and false fails.",
         epilog="Results are leads to reproduce and read, not verdicts. Docs: https://github.com/Super-Eric/falsepass",
@@ -680,7 +683,7 @@ def main(argv: list[str] | None = None) -> int:
     disc.add_argument("-o", "--output", type=Path, help="also write the full list as JSON")
     repro = sub.add_parser("repro", help="write a stand-alone reproduction script for the failing probes")
     repro.add_argument("env")
-    repro.add_argument("--probe", action="append", help="only these probe codes, e.g. --probe P6 (repeatable)")
+    repro.add_argument("--probe", action="append", help="only these probes, e.g. --probe P6 or --probe P5/all_in_one_slot (repeatable)")
     repro.add_argument("--per-group", type=int, default=2, help="examples per failing probe variant")
     repro.add_argument("--run", action="store_true",
                        help="then run it twice, each in a fresh virtualenv, compare stdout and store the first run "
