@@ -175,3 +175,17 @@ def test_python_follows_requires_python_only_when_it_rules_out_312():
 def test_wheel_module_prefers_the_one_named_after_the_package():
     assert hub.wheel_module(["cortifybench", "cortifybench_env"], "cortifybench-env") == "cortifybench_env"
     assert hub.wheel_module(["aevion_chess_env"], "aevion-chess-mate") == "aevion_chess_env"
+
+
+def test_init_dir_puts_the_audit_elsewhere_and_says_so(tmp_path, monkeypatch, capsys):
+    import json as _json
+    from pathlib import Path as _Path
+
+    from falsepass import cli
+
+    toy = _Path(__file__).resolve().parent.parent / "examples" / "toy-env"
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["init", str(toy), "--dir", str(tmp_path / "elsewhere"), "--json"]) == 0
+    out = _json.loads(capsys.readouterr().out)
+    assert (tmp_path / "elsewhere" / "falsepass-toy-env" / "env.toml").is_file() and not (tmp_path / "audits").exists()
+    assert out["next"] == f"falsepass audit {tmp_path / 'elsewhere' / 'falsepass-toy-env'}"

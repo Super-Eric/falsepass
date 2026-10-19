@@ -23,7 +23,9 @@ falsepass audit environment               # 25 tasks; add --search 120 for mutat
 falsepass results environment --json      # headline numbers and failing probes
 ```
 
-Work in a scratch directory: `init` creates `audits/<name>/` in the current directory.
+Work in a scratch directory: `init` creates `audits/<name>/` in the current directory
+(`--dir PATH` puts it elsewhere; then give later commands the folder's path). If an audit
+stops, `audits/<name>/stopped.md` keeps the reason.
 If `audit` stops at the control ("inconclusive", "needs a hand-written adapter"), the
 environment is multi-turn, tool-use, sandboxed or judge-only in a way automatic mode
 cannot script. Say so, then write policies: `falsepass init <target> --policies --force`

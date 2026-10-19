@@ -498,7 +498,8 @@ def scaffold(args) -> int:
         if getattr(args, key, None):
             info[key] = getattr(args, key)
     name = args.name or info["id"].split("/")[-1].lower().replace("_", "-")
-    audit_dir = Path("audits") / name
+    audit_dir = Path(args.dir or "audits") / name
+    ref = name if not args.dir else str(audit_dir.resolve())  # what later commands are given: a name under ./audits, or the path
     existing = audit_dir / "env.toml"
     if existing.is_file() and not args.force and not (args.manual or args.policies):
         old = tomllib.loads(existing.read_text())["env"]
@@ -506,9 +507,9 @@ def scaffold(args) -> int:
             if args.json:
                 print(json.dumps({"name": name, "folder": str(audit_dir.resolve()), "framework": old.get("framework", "verifiers"),
                                   "env": old, "manual": (audit_dir / "adapter.py").is_file(), "existing": True,
-                                  "others": info.get("others", []), "next": f"falsepass audit {name}"}, indent=1))  # fmt: skip
+                                  "others": info.get("others", []), "next": f"falsepass audit {ref}"}, indent=1))  # fmt: skip
             else:
-                print(f"{audit_dir} is already set up for {info['id']}; next: falsepass audit {name}")
+                print(f"{audit_dir} is already set up for {info['id']}; next: falsepass audit {ref}")
             return 0
     if audit_dir.exists() and not args.force and not fresh_clone:
         print(f"falsepass: {audit_dir} already exists. Pass --force to rewrite its env.toml (stored results are kept "
@@ -550,7 +551,7 @@ def scaffold(args) -> int:
                           "automatic_likely": kind["automatic"] if kind else None,
                           **({"task_data_fields": hub.task_data_fields(info["sources"])} if args.manual and info.get("sources") else {}),
                           **({"automatic_unlikely_because": why} if why else {}),
-                          "others": info.get("others", []), "next": f"falsepass audit {name}"}, indent=1))  # fmt: skip
+                          "others": info.get("others", []), "next": f"falsepass audit {ref}"}, indent=1))  # fmt: skip
         return 0
     fields = hub.task_data_fields(info["sources"]) if (args.manual and info.get("sources")) else {}
     if args.policies:
@@ -584,7 +585,7 @@ def scaffold(args) -> int:
         print(f"  (installed from {info['source']} on every run, so edits are picked up)")
     if info.get("others"):
         print(f"  (task {info['task']}; the others can be audited with --task and --name: {', '.join(info['others'])})")
-    print(f"  falsepass audit {name}")
+    print(f"  falsepass audit {ref}")
     return 0
 
 
@@ -643,6 +644,7 @@ def main(argv: list[str] | None = None) -> int:
                                      "an Inspect registry name such as inspect_evals/gsm8k, a HUD environment folder, an OpenEnv Space "
                                      "(hf:owner/space) or folder, or a file of reward functions (TRL GRPOTrainer style, with --dataset)")
     init.add_argument("--name", help="folder name under audits/ (default: the environment name)")
+    init.add_argument("--dir", help="where the audit folder goes (default ./audits); later commands then take the folder's path")
     init.add_argument("--version", help="environment version (default: latest on the Hub)")
     init.add_argument("--verifiers", help="verifiers version to pin (default: inferred from the wheel)")
     init.add_argument("--manual", action="store_true", help="also write an adapter.py skeleton to fill in")

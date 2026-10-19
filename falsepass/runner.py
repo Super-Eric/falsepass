@@ -252,7 +252,12 @@ def main(argv: list[str] | None = None) -> int:
                       max(1, args.jobs))
     except RuntimeError as stop:  # falsepass's own "cannot audit this as it stands" messages: no traceback
         print(f"falsepass: {stop}", file=sys.stderr)
+        if args.out is None:  # kept next to any earlier results, so the overview and a reader see why it stopped
+            (args.audit_dir / "stopped.md").write_text(f"# Audit stopped\n\n{date.today()} · falsepass "
+                                                       f"{falsepass.build_version()}\n\n{stop}\n")  # fmt: skip
         return 1
+    if args.out is None:
+        (args.audit_dir / "stopped.md").unlink(missing_ok=True)
     print(report.summary(payload))
     met = report.gate(payload["results"], args.fail_on)
     for condition in met:

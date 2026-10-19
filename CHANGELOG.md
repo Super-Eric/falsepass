@@ -42,6 +42,9 @@
   (the taskset's own `max_turns` comes first; 40 cut a 42-turn game short); T6 plays only
   "Done." when an episode offers no tools; the reward-terms table counts negative values
   (penalties) as paying.
+- `init --dir PATH` puts the audit folder somewhere other than `./audits` and names the path in
+  the next command. An audit that stops writes `stopped.md` (date, build, the reason) next to
+  any earlier results, removed by the next successful run; the overview shows the reason.
 - A local environment folder is installed editable in the audit's virtualenv: uv cached the
   build of a folder and did not notice edits to its code, so a run could test an older
   version of the folder than the one on disk.

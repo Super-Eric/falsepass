@@ -212,7 +212,11 @@ def overview(audits: Path) -> str:
             status = _status(audit_dir / "REPORT.md", counts)
             title = (audit_dir / "REPORT.md").read_text().splitlines()[0]
             name = title.removeprefix("# Audit:").split("@")[0].strip()
-            rows.append(f"| `{name}` | scripted policies, no probe run | — | — | — | — | — | — | {status} |")
+            how = "scripted policies, no probe run"
+            if (audit_dir / "stopped.md").is_file():  # an automatic run was tried and stopped: say why, in short
+                reason = (audit_dir / "stopped.md").read_text().strip().splitlines()[-1]
+                how += f"; automatic run stopped: {reason[:90]}{'…' if len(reason) > 90 else ''}"
+            rows.append(f"| `{name}` | {how} | — | — | — | — | — | — | {status} |")
             continue
         payload = json.loads((audit_dir / "probe-results.json").read_text())
         meta, head = payload["meta"], report.headline(payload["results"])
