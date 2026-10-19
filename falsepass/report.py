@@ -24,7 +24,8 @@ def headline(results: list[dict[str, Any]]) -> dict[str, Any]:
         "lazy_policy_reward": lazy_value,
         "lazy_policy_via": lazy_via,
         "false_pass_ceiling": worst["score"] if worst else None,
-        "false_pass_via": f'{worst["probe"]} {worst["name"]}/{worst["variant"]}' if worst else None,
+        "false_pass_via": (f'{worst["probe"]} {worst["name"]}/{worst["variant"]}' if worst and worst["score"] > 0
+                           else "no known-bad row was paid" if worst else None),
         "false_fail_rate": (sum(not r["passed"] for r in good) / len(good)) if good else None,
         "known_good": len(good),
         "known_bad": len(bad),

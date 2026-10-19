@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- v1 episodes without tools (the model answers in text inside the taskset's loop): automatic
+  mode also plays the answer-free replies P3, P4 and A1 through the loop, not only T5 and T6.
+  Hygiene no longer flags an empty prompt there (the loop sends the first message).
+- The policy skeletons file the solver as the control, `X0 control/solver`, apart from the
+  known-bad `X1` rows. When no known-bad row is paid, the summary says so instead of naming
+  an arbitrary row as the ceiling's source.
+- The draft's command hints use the path an audit was set up with (`init --dir`), not its bare
+  name; `upstream` says when no repository holds the audited files.
 - `init` also copies `.lean`, `.v`, `.pddl`, `.smt2`, `.npz` and `.npy` files from the wheel
   into `src/` (under the same size caps): a Lean taskset read its `Network.lean` and per-task
   `Weights.lean` at import, so `src/` could not load without them.

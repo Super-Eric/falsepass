@@ -163,7 +163,7 @@ def run(
         if getattr(adapter, "answer_free", False) or getattr(adapter, "tool_mode", False):  # no references to be "empty"
             hygiene_results = [r for r in hygiene_results if r.variant != "empty_answer"]
         if (getattr(adapter, "loader", None) or {}).get("kind") == "v1-episode":  # the task is its world, not its prompt
-            hygiene_results = [r for r in hygiene_results if r.variant != "duplicate_prompt"]
+            hygiene_results = [r for r in hygiene_results if r.variant not in ("duplicate_prompt", "empty_prompt")]
         results.extend(hygiene_results)
         no_reference = getattr(adapter, "tool_mode", False) or getattr(adapter, "answer_free", False)
         lint = None if no_reference else rewardlint_bridge.run(adapter, scorer, examples[0], loop, jobs if parallel else 1)

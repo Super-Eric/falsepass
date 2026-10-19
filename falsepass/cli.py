@@ -248,7 +248,7 @@ def special_number_scripts(example):
 
 
 async def policy_probes(adapter, scorer, ex):
-    found = [await check("X1", "policy", "solver", Expect.FULL, solver(ex), adapter, scorer, ex)]
+    found = [await check("X0", "control", "solver", Expect.FULL, solver(ex), adapter, scorer, ex)]
     found.append(await check("X1", "policy", "gives_up", Expect.ZERO, gives_up(ex), adapter, scorer, ex))
     for name, policy in exploits(ex).items():
         found.append(await check("X1", "policy", name, Expect.ZERO, policy, adapter, scorer, ex, answer_free=True))
@@ -259,7 +259,7 @@ async def policy_probes(adapter, scorer, ex):
 
 class Env(Adapter):
     name = "{id}"
-    max_reward = 1.0  # what the solver earns; set it to the real figure once the X1 solver rows show it
+    max_reward = 1.0  # what the solver earns; set it to the real figure once the X0 control rows show it
     per_example_probes = [policy_probes]
     # how `falsepass repro` reloads the same rows (keys must end in the row index)
     loader = {{"kind": "v0-rollout", "module": "{package}", "load_args": {{}}, "getter": "get_dataset"}}
@@ -365,7 +365,7 @@ def exploits(example):
 
 
 async def policy_probes(adapter, scorer, ex):
-    found = [await check("X1", "policy", "solver", Expect.FULL, solver(ex), adapter, scorer, ex)]
+    found = [await check("X0", "control", "solver", Expect.FULL, solver(ex), adapter, scorer, ex)]
     bad = Expect.LAZY if refusing_is_right(ex) else Expect.ZERO
     found.append(await check("X1", "policy", "gives_up", bad, gives_up(ex), adapter, scorer, ex, answer_free=True))
     # Under a reward that measures an outcome (scale_points set), a fixed strategy keeps what it
@@ -378,7 +378,7 @@ async def policy_probes(adapter, scorer, ex):
 
 class Env(Adapter):
     name = "{id}"
-    max_reward = 1.0  # what the solver earns; set it to the real figure once the X1 solver rows show it
+    max_reward = 1.0  # what the solver earns; set it to the real figure once the X0 control rows show it
     # A reward with no fixed scale (a cost with maximum 0, a game score): define
     # scale_points(self, example) -> (floor policy, reference policy), e.g. (gives_up(example),
     # solver(example)); every score is then reported from 0 (floor) to 1 (reference), and the
@@ -432,7 +432,9 @@ def missing_audit(env: str, needs: str = "env.toml") -> int:
         print(f"falsepass: an audit of {set_up.name} is still running (started from the MCP server); "
               "its output is in job.log. Try again when it has finished.", file=sys.stderr)  # fmt: skip
         return 1
-    print(f"falsepass: {set_up} has no completed audit yet. Run `falsepass audit {set_up.name}` first "
+    from falsepass import draft
+
+    print(f"falsepass: {set_up} has no completed audit yet. Run `falsepass audit {draft.command_ref(set_up)}` first "
           "(if it stopped at the control, this environment needs a hand-written adapter: `falsepass init --manual`).",
           file=sys.stderr)  # fmt: skip
     return 1

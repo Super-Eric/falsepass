@@ -184,7 +184,9 @@ loop, a scripted user). `falsepass init owner/environment` then `falsepass audit
 plays the generic tool policies (T5, T6) as whole episodes through the taskset's own loop,
 as `vf-eval` runs them: its harness, tool servers, scripted user, stop conditions and
 rewards. The model is a local endpoint on 127.0.0.1 that answers with the policy; nothing
-is billed or uploaded. The summary's note lists the tools offered.
+is billed or uploaded. The summary's note lists the tools offered. When the taskset offers
+no tools (the model answers in text inside the loop), the answer-free replies P3, P4 and A1
+are played as well, each sent as every reply of the episode.
 
 For a control and task-aware exploits, `falsepass init owner/environment --policies --force`
 writes a v1 skeleton. Policies there are `act(messages, tools)`: messages carry
@@ -193,6 +195,7 @@ writes a v1 skeleton. Policies there are `act(messages, tools)`: messages carry
 
 - `solver(example)`: does the task from its own data (`example.raw.data`, the fields the
   grader compares against). It should earn the maximum; set `max_reward` to what it earns.
+  Its rows are the control, `X0 control/solver`, kept apart from the known-bad `X1` rows.
 - `refusing_is_right(example)`: true for tasks where the correct episode moves nothing (a
   scam to refuse, a request to decline). Known-bad policies are not judged there, and
   T5/T6 rows on those tasks are marked `no_control` instead of counting as false passes.
@@ -213,7 +216,9 @@ with, posts to or plays on an outside service fails to reach it instead of actin
 your run. The summary lists the hosts its source names. To test such an environment, point it
 at a local stand-in through its own option (`vf_args`), or, knowing what it will do there,
 allow named hosts with `network = ["host"]` in env.toml (`NETWORK` in a policy adapter). The
-guard is best effort: a client that ignores proxy settings is not stopped. Each episode is
+guard is best effort: a client that ignores proxy settings is not stopped. Episodes run up to
+8 at once; they wait mostly on the local policy endpoint, so `--jobs 32` is usually safe and
+faster on a large run (`reach --tasks all` counts every task). Each episode is
 kept: `falsepass results <env> --completion <id>` shows the conversation, and `falsepass
 repro <env>` writes a script that replays the recorded tool calls through the same loop
 with verifiers alone.

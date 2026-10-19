@@ -72,3 +72,12 @@ def test_of_two_copies_of_the_tree_the_identical_one_is_compared(tmp_path: Path)
     gh = FakeGitHub({"demo/env.py": "a = 2\n", "hub/demo/demo/env.py": "a = 1\n"})
     [match] = upstream.locate(audit, gh, repo="someone/envs")
     assert match.prefix == "hub/demo/" and match.verdict == "identical to the audit"
+
+
+def test_a_search_hit_without_the_audited_files_is_not_presented_as_the_source(tmp_path: Path):
+    audit = tmp_path / "demo"
+    (audit / "src" / "demo").mkdir(parents=True)
+    (audit / "env.toml").write_text('[env]\nid = "o/demo"\npackage = "demo"\nmodule = "demo"\nversion = "1"\n')
+    (audit / "src" / "demo" / "env.py").write_text("a = 1\n")
+    text = upstream.describe(upstream.locate(audit, FakeGitHub({"other/file.py": ""}), repo="other/unrelated"))
+    assert text.startswith("no repository found that holds the audited files")

@@ -234,6 +234,8 @@ def describe(matches: list[Match]) -> str:
     if not matches:
         return "no candidate repository found"
     rows = []
+    if not any(m.same or m.differ for m in matches):
+        rows.append("no repository found that holds the audited files (the nearest search hit, for reference:)")
     for m in matches:
         f = m.facts
         rows.append(f"{m.repo}  {m.verdict}  (path {m.prefix or '/'}: {len(m.same)} same, {len(m.differ)} differ, {len(m.missing)} missing)")

@@ -15,6 +15,16 @@ from typing import Any
 
 from falsepass import report
 
+
+def command_ref(audit_dir: Path) -> str:
+    """What later commands take for this audit: its name when it sits in ./audits, else its path."""
+    try:
+        here = (Path("audits") / audit_dir.name).resolve() == audit_dir.resolve()
+    except OSError:
+        here = False
+    return audit_dir.name if here else str(audit_dir.resolve())
+
+
 MEANING = {
     "P1": "the reference answer is not given full reward",
     "P2": "a harmless variation of the correct answer loses reward",
@@ -43,6 +53,7 @@ MEANING = {
     "S1": "search found a rewarded completion that never mentions the reference",
     "S2": "search found a correct completion that loses reward",
     "S3": "search found a rewarded completion that mentions the reference without committing to it",
+    "X0": "control (a policy that solves the task)",
     "X1": "environment-specific probe",
 }
 NEEDS_JUDGEMENT = {"P2", "S2", "P14", "T7"}  # strictness versus defect is a human call; P14/T7 only matter for some harnesses
@@ -123,7 +134,7 @@ def draft(audit_dir: Path) -> Path:
             + "; ".join(f"{v} {sum(1 for r in failed if r['variant'] == v)}/{sum(1 for r in rows if r['variant'] == v)}, "
                         f"{_stats([r for r in failed if r['variant'] == v])}" for v in variants),
             f"- Example `{first['example']}`, variant `{first['variant']}`: {first['detail'] or 'see results'}",
-            f"- Completion (start and end; full text: `falsepass results {audit_dir.name} --completion {first.get('completion_id') or '?'}`): "
+            f"- Completion (start and end; full text: `falsepass results {command_ref(audit_dir)} --completion {first.get('completion_id') or '?'}`): "
             f"`{_inline(completions.get(first.get('completion_id') or ''), first['completion'], preview)}`",
         ]
         for h in backing:

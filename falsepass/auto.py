@@ -344,11 +344,16 @@ class AutoAdapter(Adapter):
             )
         self.tool_mode, self.multi_turn = True, True
         tools = tried.info.get("tools") or []
+        if not tools:  # answered in text: answer-free replies are played as fixed replies too
+            from falsepass import probes
+
+            self.format_name, self.format = "plain reply", lambda answer: answer
+            self.episode_probes = [probes.p3_empty, probes.p4_echo, probes.a1_answer_free_spray]
         self.load_notes.append(
             f"played as whole episodes through the taskset's own loop ({'; '.join(reasons)}; "
             f"{len(tools)} tools offered{': ' + ', '.join(tools[:12]) if tools else ''}{', ...' if len(tools) > 12 else ''}), "
-            f"runtime {runtime}: generic tool policies only (T5, T6); for task-aware policies write an adapter "
-            "(falsepass init <env> --force --policies)"
+            f"runtime {runtime}: generic policies only (T5, T6{', and answer-free replies P3, P4, A1 sent as every reply' if not tools else ''}); "
+            "for task-aware policies write an adapter (falsepass init <env> --force --policies)"
         )
         self.load_notes += trial.notes
         if hosts and network is not True:
@@ -401,9 +406,12 @@ class AutoAdapter(Adapter):
         if self.tool_mode:
             self.inferred = {
                 "validity": "no control: the reference cannot be replayed without a policy that solves the task, so the "
-                            "maximum reward is assumed to be 1.0 and only the tool-policy probes (T5, T6) were run",
-                "format": "tool calls", "reference_reward_by_format": {}, "examples_tried": 0, "answers": "given through tool calls",
-                "turns": "multi-turn with tools: generic policies call the environment's own tools",
+                            "maximum reward is assumed to be 1.0 and only answer-free policies were run ("
+                            + ("T5, T6, P3, P4, A1" if self.episode_probes else "T5, T6") + ")",
+                "format": "plain replies, played as whole episodes" if self.episode_probes else "tool calls", "reference_reward_by_format": {}, "examples_tried": 0,
+                "answers": "not available" if self.episode_probes else "given through tool calls",
+                "turns": ("whole episodes without tools: each fixed reply is sent at every turn" if self.episode_probes
+                          else "multi-turn with tools: generic policies call the environment's own tools"),
                 "note": "; ".join(self.load_notes),
             }  # fmt: skip
             return
