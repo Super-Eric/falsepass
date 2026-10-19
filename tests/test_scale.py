@@ -77,3 +77,10 @@ def test_without_scale_points_nothing_changes(tmp_path: Path):
     payload = runner.run(folder, n=3, few=1, jobs=1)
     assert "scale" not in payload["meta"]
     assert not any(r["passed"] for r in payload["results"] if r["probe"] == "P1" and r["example"] != "t-0")  # raw maximum is 0
+
+
+def test_the_pooled_share_divides_total_gains():
+    rows = [{"probe": "X1", "name": "policy", "variant": "half", "example": "a", "score": 3.0, "metrics": {"raw_reward": -0.7}},
+            {"probe": "X1", "name": "policy", "variant": "half", "example": "b", "score": 0.5, "metrics": {"raw_reward": -5.0}}]
+    points = {"a": [-1.0, -0.9], "b": [-10.0, 0.0]}  # on a, the reference barely beats the floor: the ratio swings to 3
+    assert abs(report.pooled_share(rows, points, "X1 policy/half") - (0.3 + 5.0) / (0.1 + 10.0)) < 1e-12

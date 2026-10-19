@@ -197,7 +197,21 @@ def _fmt(value: float | None) -> str:
     return "—" if value is None else f"{value:.3f}".rstrip("0").rstrip(".")
 
 
-def _weight_lines(meta: dict[str, Any]) -> list[str]:
+def pooled_share(results: list[dict[str, Any]], points: dict[str, list[float]], via: str | None) -> float | None:
+    """For one strategy on the reference-relative scale: its total gain over the floor divided
+    by the reference's total gain, Σ(raw − floor) / Σ(reference − floor). Steadier than the mean
+    of per-task ratios, which a task where the reference barely beats the floor can swing."""
+    gained = possible = 0.0
+    for r in results:
+        if f'{r["probe"]} {r["name"]}/{r["variant"]}' != via or r["score"] is None or r["example"] not in points:
+            continue
+        floor, reference = points[r["example"]]
+        gained += (r.get("metrics") or {}).get("raw_reward", floor) - floor
+        possible += reference - floor
+    return gained / possible if possible > 0 else None
+
+
+def _weight_lines(meta: dict[str, Any], results: list[dict[str, Any]] | None = None) -> list[str]:
     """Say so when the rubric can pay more than the reference earned: the reference used
     for the audit may then not be a full solution (e.g. `answer` is only a name or a key)."""
     scaled = meta.get("scale")
@@ -210,6 +224,9 @@ def _weight_lines(meta: dict[str, Any]) -> list[str]:
             + (f"; {len(excluded)} left out (first: {next(iter(excluded))}: {next(iter(excluded.values()))})" if excluded else "")
             + ". Under a reward that measures an outcome, a fixed strategy keeps what it really achieves: read the "
             "lazy-policy figure as where answer-free strategies fall between the floor and the reference."
+            + (f" Pooled over its tasks (total gain over the floor ÷ the reference's), the lazy-policy strategy reaches "
+               f"{_fmt(pooled)} of the reference." if (pooled := pooled_share(results or [], scaled.get("points") or {},
+                                                                              headline(results)["lazy_policy_via"] if results else None)) is not None else "")
         ]
     positive = sum(w for w in (meta.get("weights") or {}).values() if w and w > 0)
     if positive > meta["max_reward"] + 1e-9:
@@ -251,7 +268,7 @@ def summary(payload: dict[str, Any]) -> str:
         *_adapter_lines(meta.get("adapter")),
         *([f"- **⚠ Result inconclusive: {unscored(results)[1]} of {unscored(results)[0]} probe rows produced no score** (the "
            f"environment raised or an episode did not finish); first error: {unscored(results)[2]}"] if unscored(results) else []),
-        *_weight_lines(meta),
+        *_weight_lines(meta, results),
         f"- **False-pass ceiling:** {_fmt(head['false_pass_ceiling'])} of {_fmt(meta['max_reward'])} "
         f"(highest reward given to a known-bad completion; via {head['false_pass_via']})",
         f"- **Lazy-policy reward:** {_fmt(head['lazy_policy_reward'])} "

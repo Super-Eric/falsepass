@@ -243,8 +243,11 @@ left out (listed in `meta.scale.excluded`). Pick a reference that uses only what
 shows, and a floor a model could fall back on without working the task. Under such a reward
 a fixed strategy keeps what it really achieves, as a fixed label keeps its base rate on a
 yes/no task: read the lazy-policy figure as where answer-free strategies fall between the
-two points, and look for what the grader pays beyond the outcome reached. `falsepass repro`
-replays raw rewards.
+two points, and look for what the grader pays beyond the outcome reached. In the v1 policy
+skeleton, `exploits` are then judged as fixed strategies (`lazy`: only their mean is read).
+The summary also gives the lazy-policy strategy's pooled share, Σ(raw − floor) /
+Σ(reference − floor), which a task where the reference barely beats the floor cannot swing
+the way it swings a mean of per-task ratios. `falsepass repro` replays raw rewards.
 
 ## When the reference is not a reply
 

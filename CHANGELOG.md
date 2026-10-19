@@ -10,7 +10,9 @@
   on every task first, and every score is reported as `(raw - floor) / (reference - floor)`
   (0 = the floor, 1 = the reference). The raw reward stays in `metrics.raw_reward`; tasks
   where the reference does not beat the floor are left out and listed (`meta.scale`). `audit`
-  and `reach` use it; the summary says so. `falsepass.scale`, `tests/test_scale.py`.
+  and `reach` use it; the summary says so and gives the lazy-policy strategy's pooled share
+  of the reference's gain. In the v1 policy skeleton the exploits are then judged as fixed
+  strategies (`lazy`). `falsepass.scale`, `tests/test_scale.py`.
 - `init` flags an environment whose code calls an outside service (an HTTP client and a URL
   that is not local and not a data or documentation host): `outside service` among the needs
   in `discover` and `init`, the hosts in `init`'s output and `--json` (`outside_hosts`).
