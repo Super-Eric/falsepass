@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.12.0 — 2026-10-29
 
 - A run with no control where every reply scored the same on each task (a simulation played
   without a solver) ends `"status": "inconclusive"` with a pointer to policies and
