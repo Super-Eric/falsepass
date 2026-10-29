@@ -159,7 +159,7 @@ def run(
             run_probes([search.make_probe(search_calls, seed)], examples[:search_examples], "mutation search")
         probes.mark_same_as_good(results)
         probes.mark_no_control(results, adapter)
-        hygiene_results = hygiene.check_dataset(adapter.hygiene_examples(100)) if adapter.hygiene_examples(1) else []
+        hygiene_results = hygiene.check_dataset(adapter.hygiene_examples(hygiene.ROWS)) if adapter.hygiene_examples(1) else []
         if getattr(adapter, "answer_free", False) or getattr(adapter, "tool_mode", False):  # no references to be "empty"
             hygiene_results = [r for r in hygiene_results if r.variant != "empty_answer"]
         if (getattr(adapter, "loader", None) or {}).get("kind") == "v1-episode":  # the task is its world, not its prompt

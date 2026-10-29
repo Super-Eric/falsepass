@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Tasks without a reference answer are no longer left out silently: the summary's note says how
+  many of the tasks loaded were dropped, and that the lazy-policy reward and every row cover only
+  the rest (a premise-checking taskset whose flawed tasks, three in four, carry no reference).
+- P12 (dataset hygiene) reads every row the audit loaded (up to 2000), not the first 100, and
+  each of its rows says how many rows were checked.
 - Given the folder passed to `init --dir` instead of the audit folder inside it, `audit`,
   `results` and the other commands name the audit folder to pass instead of listing `audits/`.
 - `overview` counts a finding whose heading carries a qualifier after the rating

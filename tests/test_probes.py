@@ -98,6 +98,17 @@ def test_hygiene_finds_duplicates_and_conflicts():
     variants = {r.variant for r in hygiene.check_dataset(examples)}
     assert variants == {"conflicting_labels", "near_duplicate_prompt", "empty_prompt", "empty_answer"}
     assert hygiene.check_dataset(examples[2:3])[0].passed
+    assert all("(among 5 rows checked)" in r.detail for r in hygiene.check_dataset(examples))
+
+
+def test_tasks_without_a_reference_are_counted_when_left_out():
+    from falsepass.auto import AutoAdapter
+
+    adapter = AutoAdapter({"id": "t", "framework": "verifiers"})
+    adapter.pool = [Example("a", "q1", "7"), Example("b", "q2", ""), Example("c", "q3", "")]
+    adapter._classify_pool()
+    assert [e.key for e in adapter.pool] == ["a"]
+    assert any(n.startswith("2 of 3 tasks loaded have no reference answer") for n in adapter.load_notes)
 
 
 def test_headline_reports_ceiling_and_false_fail_rate():

@@ -16,6 +16,9 @@ def _finding(variant: str, keys: list[str], detail: str) -> ProbeResult:
     return ProbeResult("P12", "dataset_hygiene", variant, ", ".join(keys[:5]), Expect.ZERO, None, False, detail)
 
 
+ROWS = 2000  # rows checked: the whole pool an automatic audit loads (auto.MAX_ROWS)
+
+
 def check_dataset(examples: list[Example]) -> list[ProbeResult]:
     """Return one failing result per defect found, or a single passing result."""
     findings: list[ProbeResult] = []
@@ -50,6 +53,8 @@ def check_dataset(examples: list[Example]) -> list[ProbeResult]:
             )  # fmt: skip
 
     if findings:
+        for f in findings:  # a count is only meaningful against the rows that were read
+            f.detail += f" (among {len(examples)} rows checked)"
         return findings
     return [
         ProbeResult("P12", "dataset_hygiene", "all_checks", f"{len(examples)} examples", Expect.ZERO, None, True,
