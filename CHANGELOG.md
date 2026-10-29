@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Given the folder passed to `init --dir` instead of the audit folder inside it, `audit`,
+  `results` and the other commands name the audit folder to pass instead of listing `audits/`.
 - `overview` counts a finding whose heading carries a qualifier after the rating
   (`[Low, non-default]`); it was left out before.
 - v1 episodes without tools (the model answers in text inside the taskset's loop): automatic

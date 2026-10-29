@@ -423,6 +423,12 @@ def missing_audit(env: str, needs: str = "env.toml") -> int:
     """Explain why `env` can't be used, and what to run instead."""
     set_up = find_audit(env)
     if set_up is None:
+        # A folder given to `init --dir` holds the audit one level down.
+        inside = sorted(p.parent for p in Path(env).glob("*/env.toml")) if Path(env).is_dir() else []
+        if inside:
+            print(f"falsepass: {env!r} is not an audit folder, but it contains one: "
+                  f"{', '.join(str(p) for p in inside)}. Pass that path instead.", file=sys.stderr)  # fmt: skip
+            return 1
         known = sorted(p.name for p in Path("audits").glob("*") if (p / "env.toml").is_file()) if Path("audits").is_dir() else []
         print(f"falsepass: no audit named {env!r} in {Path.cwd() / 'audits'} (set up here: {', '.join(known) or 'none'}). "
               f"Run `falsepass init <target>` first; it prints the name to use.", file=sys.stderr)  # fmt: skip
