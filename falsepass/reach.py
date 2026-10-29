@@ -154,6 +154,8 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
             "tasks_counted": len(examples),
             "tasks_in_dataset": len(pool) if pool is not None else (len(examples) if everything else None),
             "all_tasks": everything, "seed": seed, "jobs": jobs if parallel else 1,
+            # Counted nowhere above: a fixed reply such as an abstention may be right on exactly these.
+            "tasks_without_reference": getattr(adapter, "without_reference", 0),
             "max_reward": adapter.max_reward, "bad_tolerance": adapter.bad_tolerance,
             "format": fmt, "audit_format": audited,
             "note": f"the answer format inferred here ({fmt}) differs from the audit's ({audited}): the counts "
@@ -179,6 +181,9 @@ def describe(payload: dict[str, Any]) -> str:
     lines = [f"{meta['environment']}: {meta['tasks_counted']} tasks counted ({scope}); answer format: {meta['format']}"]
     if meta["note"]:
         lines.append(f"note: {meta['note']}")
+    if meta.get("tasks_without_reference"):
+        lines.append(f"not counted: {meta['tasks_without_reference']} tasks have no reference answer and are left out of "
+                     "every row, templates included; score a fixed reply on them by hand")
     if meta.get("scale"):
         lines.append(f"rewards on the reference-relative scale: 0 = {meta['scale']['floor']}, 1 = {meta['scale']['reference']}"
                      + (f"; {len(meta['scale']['excluded'])} tasks left out (the reference does not beat the floor, or not scored)"

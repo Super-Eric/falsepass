@@ -70,7 +70,8 @@ Everything an audit writes lives in `audits/<env>/` (or the folder given with `-
 ## falsepass results --json
 
 A digest of the same run, small enough to hand to a model (numbers from `falsepass demo`).
-When the control failed, or at least half the probe rows produced no score, the digest has
+When the control failed, at least half the probe rows produced no score, or (with no
+control) every reply scored the same on each task, the digest has
 `"status": "inconclusive"`, a `reason`, `next`, and no headline (see the agents page):
 
 ```json
@@ -129,6 +130,7 @@ and `stderr` instead, and nothing is stored.
 ```json
 {"meta": {"environment": "owner/env", "date": "…", "falsepass": "…", "asked": ["P15/denied"],
           "tasks_counted": 500, "tasks_in_dataset": 500, "all_tasks": true, "seed": 0, "jobs": 8,
+          "tasks_without_reference": 0,
           "max_reward": 1.0, "bad_tolerance": 0.0, "format": "reasoning+boxed",
           "audit_format": "reasoning+boxed", "note": "", "versions": {"verifiers": "…"}},
  "rows": [{"probe": "P1", "name": "ground_truth", "variant": "reference", "control": true,

@@ -80,6 +80,29 @@ def test_inconclusive_digest_keeps_only_what_holds():
     assert "--policies" in digest["next"]
 
 
+def _row(probe, variant, example, score, errors=()):
+    return {"probe": probe, "name": "n", "variant": variant, "expected": "zero", "passed": score in (None, 0.0),
+            "score": score, "detail": "", "example": example, "completion": "x", "completion_id": "",
+            "answer_free": True, "metrics": {}, "errors": list(errors)}
+
+
+def test_a_no_control_run_where_every_reply_scores_the_same_is_inconclusive():
+    rows = [_row(p, "v", e, s) for e, s in (("a", -0.07), ("b", -0.02)) for p in ("P3", "P4", "T5")]
+    payload = {"meta": {"environment": "t", "adapter": {"validity": "no control: the reference cannot be replayed"}},
+               "results": rows, "static": []}
+    digest = report.digest(payload)
+    assert digest["status"] == "inconclusive" and "scored the same on each of 2 tasks" in digest["reason"]
+    assert "scale_points" in digest["next"] and digest["failing"] == []
+    rows[0]["score"] = -0.5  # one reply differs: the run says something
+    assert report.digest(payload).get("status") != "inconclusive"
+
+
+def test_a_trace_falsepass_cannot_build_is_not_blamed_on_the_environment():
+    rows = [_row("P1", "reference", "a", None, ["could not build trace: AttributeError: 'T' object has no attribute 'key'"])] * 3
+    digest = report.digest({"meta": {"environment": "t", "adapter": {"validity": "ok"}}, "results": rows, "static": []})
+    assert digest["status"] == "inconclusive" and "falsepass's side" in digest["next"]
+
+
 def test_a_policy_episode_is_kept_and_replayed_as_a_script():
     from falsepass import probes, repro
     from falsepass.model import Policy

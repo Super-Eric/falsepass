@@ -153,11 +153,14 @@ class AutoAdapter(Adapter):
         if not (self.tool_mode or self.answer_free):
             total = len(self.pool)
             self.pool = [e for e in self.pool if e.answer.strip()]
-            if self.pool and (dropped := total - len(self.pool)):
+            self.without_reference = total - len(self.pool)
+            if self.pool and (dropped := self.without_reference):
                 # Seen in a premise-checking taskset: the flawed tasks (74%) had no reference, so the
                 # answer-free figures covered the solvable tasks only and said nothing about it.
                 self.load_notes.append(
-                    f"{dropped} of {total} tasks loaded have no reference answer and were left out: no probe ran on "
+                    f"{dropped} of {total} tasks loaded"
+                    + (f" (the first {MAX_ROWS} rows; the dataset may hold more)" if total >= MAX_ROWS else "")
+                    + " have no reference answer and were left out: no probe ran on "
                     "them, so the lazy-policy reward and every row cover only tasks with a reference. If their correct "
                     "reply is not a value (an abstention, a refusal, a flag), score a fixed reply on them by hand"
                 )

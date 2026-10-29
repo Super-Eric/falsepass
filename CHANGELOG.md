@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- A run with no control where every reply scored the same on each task (a simulation played
+  without a solver) ends `"status": "inconclusive"` with a pointer to policies and
+  `scale_points`, instead of a "finished" headline built on one score.
+- verifiers 0.3.0 v1 tasks (no `key` or `hash` attribute) can be scored: the trace uses the
+  example's key. A trace falsepass cannot build is reported as falsepass's side, not as the
+  environment's set-up.
+- MCP `falsepass_audit` takes `source` (a patched local copy), like `audit --source`.
+- `reach` reports `tasks_without_reference` and says those tasks are not counted, templates
+  included; the audit's note says when the 2000-row cap was reached.
+- An unfilled `--manual` skeleton stops with "adapter.py: fill in render() …", not an empty
+  message.
 - Tasks without a reference answer are no longer left out silently: the summary's note says how
   many of the tasks loaded were dropped, and that the lazy-policy reward and every row cover only
   the rest (a premise-checking taskset whose flawed tasks, three in four, carry no reference).

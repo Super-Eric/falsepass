@@ -155,13 +155,32 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
         failing = []
     elif unscored(payload["results"]):
         rows, none, first = unscored(payload["results"])
+        own = first.startswith("could not build trace")
         extra = {
             "status": "inconclusive",
-            "reason": f"{none} of {rows} probe rows produced no score (the environment raised or an episode did not finish), "
-                      f"so the numbers say little; first error: {first}",
+            "reason": f"{none} of {rows} probe rows produced no score ("
+                      + ("falsepass could not build a trace for this taskset's tasks" if own
+                         else "the environment raised or an episode did not finish")
+                      + f"), so the numbers say little; first error: {first}",
             "failing_omitted": len(failing),
-            "next": "Fix what stops the environment (the error above; `falsepass results <env> --completion <id>` shows a "
-                    "row), then audit again. A runtime or packaging error is the environment's set-up, not its grader.",
+            "next": ("This is falsepass's side, not the environment's: the taskset's tasks do not have the shape the "
+                     "trace builder expects (often a different verifiers version). Write an adapter that scores through "
+                     "the environment's own loader (`falsepass init <target> --manual --force`; MCP: manual=true, "
+                     "force=true) and report the error at https://github.com/Super-Eric/falsepass/issues" if own else
+                     "Fix what stops the environment (the error above; `falsepass results <env> --completion <id>` shows a "
+                     "row), then audit again. A runtime or packaging error is the environment's set-up, not its grader."),
+        }  # fmt: skip
+        failing = []
+    elif validity.startswith("no control") and (flat := flat_scores(payload["results"])):
+        extra = {
+            "status": "inconclusive",
+            "reason": f"every reply tried scored the same on each of {flat} tasks: the replies did not reach what is "
+                      "graded, and with no reference to replay nothing here shows whether the reward can be gamed",
+            "failing_omitted": len(failing),
+            "next": "Write policies that play the task (`falsepass init <target> --policies --force`; MCP: policies=true, "
+                    "force=true). For a reward with no fixed maximum (a cost, a P&L, a game score) give the adapter "
+                    "`scale_points(example)` so scores are read against a floor and a reference strategy: "
+                    "https://super-eric.github.io/falsepass/docs/agents/#games-simulations-and-tool-tasks",
         }  # fmt: skip
         failing = []
     elif len(failing) > MAX_FAILING:
@@ -181,6 +200,20 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
                          for h in payload.get("static", [])],  # fmt: skip
         "note": "Leads, not findings: rerun with `falsepass repro`, read the reward code, then judge defect vs design.",
     }
+
+
+def flat_scores(results: list[dict[str, Any]]) -> int | None:
+    """The number of tasks when every scored probe row (P12 aside) earned the same score on each
+    task, on at least two tasks with at least two rows each; else None. Seen on a hedging
+    simulation played without a solver: ten different replies, one score per task."""
+    by: dict[str, set[float]] = defaultdict(set)
+    rows: dict[str, int] = defaultdict(int)
+    for r in results:
+        if r["probe"] != "P12" and r["score"] is not None:
+            by[r["example"]].add(round(r["score"], 9))
+            rows[r["example"]] += 1
+    tasks = [k for k in by if rows[k] >= 2]
+    return len(tasks) if len(tasks) >= 2 and all(len(by[k]) == 1 for k in tasks) else None
 
 
 def unscored(results: list[dict[str, Any]]) -> tuple[int, int, str] | None:

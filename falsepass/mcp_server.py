@@ -331,7 +331,8 @@ def build():
         return result
 
     @tool
-    def falsepass_audit(env: str, n: int = 25, search: int = 0, wait: int = 45, workdir: str = ".") -> Any:
+    def falsepass_audit(env: str, n: int = 25, search: int = 0, wait: int = 45, workdir: str = ".",
+                        source: str = "") -> Any:  # fmt: skip
         """Probe one environment set up with falsepass_init: installs it in a throw-away
         virtualenv and scores known-good and known-bad completions with its own reward code.
 
@@ -341,8 +342,11 @@ def build():
         hints (status "finished"); otherwise {"status": "running", ...}: then call
         falsepass_audit_status. Calling it again while an audit of `env` runs does not start
         a second one. `n` is the number of tasks sampled; `search` > 0 adds mutation search
-        (scorer calls per direction and example; 120 is a good value)."""
-        started = _start_audit(env, ["-n", str(n), *(["--search", str(search)] if search else [])], workdir)
+        (scorer calls per direction and example; 120 is a good value). `source` installs the
+        environment from a local folder (a patched copy, relative to `workdir`) instead of its
+        release: the whole probe suite against a fix."""
+        local = ["--source", str((Path(workdir).expanduser() / source).resolve())] if source else []
+        started = _start_audit(env, [*local, "-n", str(n), *(["--search", str(search)] if search else [])], workdir)
         if started.get("status") == "error":
             raise RuntimeError(f"{started['error']}. {started['next']}")
         if started.get("command", "audit") != "audit":

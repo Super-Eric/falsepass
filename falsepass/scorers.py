@@ -414,7 +414,9 @@ class V1TaskScorer:
 
         task = example.raw
         trace = vf.Trace(
-            task=TraceTask(type=type(task).__name__, data=task.data, key=task.key, hash=task.hash),
+            # verifiers 0.3.0 tasks have neither attribute; the example's key stands in.
+            task=TraceTask(type=type(task).__name__, data=task.data, key=getattr(task, "key", None) or example.key,
+                           hash=getattr(task, "hash", None) or example.key),
             agent=AgentInfo(config=vf.AgentConfig()),
         )
         # A task driven by a scripted user has no prompt: the trace opens with its first turn,

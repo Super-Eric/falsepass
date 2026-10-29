@@ -145,8 +145,17 @@ such as "an empty reply earned 1.0 on 20 of 20 tasks", which are true either way
 
 A run is also `"status": "inconclusive"` when at least half its probe rows produced no score
 (the environment raised, or an episode did not finish): `reason` quotes the first error. That
-is the environment's set-up failing (a runtime, a package, a blocked outside call), not its
-grader; fix it and audit again.
+is usually the environment's set-up failing (a runtime, a package, a blocked outside call),
+not its grader; fix it and audit again. When the error is "could not build trace", it is
+falsepass's side instead, and `next` says what to do. And it is `"inconclusive"` when no
+reference could be replayed and every reply tried scored the same on each task (a
+simulation or a P&L: the replies never reached what is graded); write policies, and for a
+reward with no fixed maximum give `scale_points`.
+
+Tasks that carry no reference answer (for example the flawed items of a premise-checking
+set, whose right reply is an abstention) are left out of an automatic audit and of `reach`.
+The summary's note and reach's `tasks_without_reference` say how many; a fixed reply that is
+right on exactly those tasks is not measured, so score it by hand.
 
 The next step is to write policies, which takes a capable agent a few minutes per
 environment:
@@ -412,7 +421,8 @@ The output is a list of leads. Before an agent reports anything:
    and run `falsepass verify-fix <env> --source <copy>` (MCP `falsepass_verify_fix`). It reruns the repro script
    (`repro.py`, else `repro_auto.py`) unpatched once if no output is stored yet, then with
    the patch, and prints the lines that changed (the repro only: `falsepass audit <env>
-   --source <copy>` runs the whole probe suite on the patch). A folder without `pyproject.toml` is laid
+   --source <copy>`, MCP `falsepass_audit` with `source`, runs the whole probe suite on the
+   patch; a fix to the prompt shows only there, since the repro replays the old prompt's text). A folder without `pyproject.toml` is laid
    over the released package, so its dependencies stay as released. Add `--known-good`
    to also score every correct-answer row (P1, P2, P14) on every task with and without the
    patch (`--known-good 500` for a sample): it lists the tasks whose correct answer the

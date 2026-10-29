@@ -109,6 +109,7 @@ def test_tasks_without_a_reference_are_counted_when_left_out():
     adapter._classify_pool()
     assert [e.key for e in adapter.pool] == ["a"]
     assert any(n.startswith("2 of 3 tasks loaded have no reference answer") for n in adapter.load_notes)
+    assert adapter.without_reference == 2
 
 
 def test_headline_reports_ceiling_and_false_fail_rate():

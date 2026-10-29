@@ -130,11 +130,11 @@ class Env(Adapter):
 
     def render(self, answer, example):
         """Write `answer` exactly the way the environment's prompt asks for it."""
-        raise NotImplementedError
+        raise NotImplementedError("adapter.py: fill in render(), which writes an answer the way the prompt asks for it")
 
     def wrong_answer(self, example):
         """Return an answer that is definitely wrong for this example."""
-        raise NotImplementedError
+        raise NotImplementedError("adapter.py: fill in wrong_answer(), which returns an answer that is wrong for the task")
 
 
 ADAPTER = Env()
@@ -176,11 +176,11 @@ class Env(Adapter):
 
     def render(self, answer, example):
         """Write `answer` exactly the way the environment's prompt asks for it."""
-        raise NotImplementedError
+        raise NotImplementedError("adapter.py: fill in render(), which writes an answer the way the prompt asks for it")
 
     def wrong_answer(self, example):
         """Return an answer that is definitely wrong for this example."""
-        raise NotImplementedError
+        raise NotImplementedError("adapter.py: fill in wrong_answer(), which returns an answer that is wrong for the task")
 
 
 ADAPTER = Env()

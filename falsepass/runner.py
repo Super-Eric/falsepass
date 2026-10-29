@@ -253,7 +253,7 @@ def main(argv: list[str] | None = None) -> int:
         payload = run(args.audit_dir, args.n, args.seed, args.few, args.package, args.search, args.search_examples, args.out,
                       max(1, args.jobs))
     except RuntimeError as stop:  # falsepass's own "cannot audit this as it stands" messages: no traceback
-        print(f"falsepass: {stop}", file=sys.stderr)
+        print(f"falsepass: {stop or type(stop).__name__}", file=sys.stderr)
         if args.out is None:  # kept next to any earlier results, so the overview and a reader see why it stopped
             (args.audit_dir / "stopped.md").write_text(f"# Audit stopped\n\n{date.today()} · falsepass "
                                                        f"{falsepass.build_version()}\n\n{stop}\n")  # fmt: skip
