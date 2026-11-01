@@ -73,9 +73,14 @@ def self_install_args() -> list[str]:
     return ["--with", f"falsepass=={dist.version}"]
 
 
+OFFLINE = False  # --offline: the dataset library reads its cache without asking the Hugging Face Hub first
+OFFLINE_ENV = {"HF_HUB_OFFLINE": "1", "HF_DATASETS_OFFLINE": "1"}
+
+
 def uv_command(audit_dir: Path, extra: list[str], module: str = "falsepass.runner", source: str | Path | None = None) -> list[str]:
     env = tomllib.loads((audit_dir / "env.toml").read_text())["env"]
     command = [
+        *(["env", *(f"{k}={v}" for k, v in OFFLINE_ENV.items())] if OFFLINE else []),
         "uv", "run", "--isolated", "--no-project", "--python", env.get("python", "3.12"),
         *self_install_args(), "--with", "rewardlint", *install_args(env, source),
     ]  # fmt: skip
@@ -770,7 +775,15 @@ def main(argv: list[str] | None = None) -> int:
     scan = sub.add_parser("scan", help="static pre-scan of reward source (no environment install needed)")
     scan.add_argument("path", type=Path, help="a Python file or a source directory")
     scan.add_argument("--json", action="store_true", help="print the hints as JSON")
+    for runs_env in (audit, roll, prop, repro, reach, box, fix):
+        runs_env.add_argument("--offline", action="store_true",
+                              help="read Hugging Face datasets from the local cache without checking the Hub first "
+                                   "(HF_HUB_OFFLINE=1): seconds saved per run once the data is cached; a dataset not cached yet fails to load")
     args, extra = parser.parse_known_args(argv)
+    global OFFLINE
+    OFFLINE = bool(getattr(args, "offline", False))
+    if OFFLINE:
+        os.environ.update(OFFLINE_ENV)  # every child (uv, the runner, a repro script) inherits it
 
     if args.command in ("repro", "draft"):
         from falsepass import draft, repro
@@ -957,7 +970,11 @@ def main(argv: list[str] | None = None) -> int:
         print(shlex.join(command))
         return 0
     sys.stdout.flush()
-    return subprocess.call(command)
+    import time
+
+    from falsepass.runner import LAUNCHED_AT
+
+    return subprocess.call(command, env={**os.environ, LAUNCHED_AT: str(time.time())})  # the runner reports the set-up time
 
 
 if __name__ == "__main__":

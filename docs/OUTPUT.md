@@ -46,6 +46,13 @@ Everything an audit writes lives in `audits/<env>/` (or the folder given with `-
   "points": {"task-3": [floor, reference]}, "excluded": {"task-0": "why"}}`. Every `score` is
   then `(raw - floor) / (reference - floor)` on its task, `max_reward` is 1.0, and the raw
   reward is in `metrics.raw_reward`.
+- `meta.timings`: where the time went, in seconds: `total_s` (this run), `set_up_s` (resolving
+  and installing the virtualenv, when started through the CLI), `phases` (`load`, `prepare`,
+  `probes`, `slower_probes`, `hygiene`, `rewardlint`, `close`, `static`), `jobs` (tasks scored
+  at once; 1 where the scorer is not safe to run concurrently) and `hub_checked` (the dataset
+  library was loaded with nothing telling it to stay offline, so a Hub-hosted dataset was checked
+  with the Hub; `--offline` skips that once the data is cached). The summary's **Time** line and
+  the digest's `timings.words` say the same in words.
 - `answer_free`: the completion was built without the reference answer, so a policy that
   knows nothing about the task could produce it. These feed the lazy-policy number.
 - `metrics`: the value of each reward term, so a leak can be traced to the term that pays.

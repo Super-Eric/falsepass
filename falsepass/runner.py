@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import importlib.util
 import json
 import os
 import platform
 import sys
+import time
 from datetime import date
 from importlib import metadata
 from pathlib import Path
@@ -20,6 +22,36 @@ from falsepass.model import ProbeResult
 
 DEFAULT_JOBS = min(8, os.cpu_count() or 1)
 INSPECT_MARK = ".installed-inspect-task"  # in a src/ the runner wrote; such a src/ is rewritten on every run
+LAUNCHED_AT = "FALSEPASS_LAUNCHED_AT"  # set by the CLI before the virtualenv is built: the set-up time is measured from it
+
+
+class Stopwatch:
+    """Seconds spent in each phase of a run, for `meta.timings` (where the time went: the
+    virtualenv, loading, the probes, rewardlint) so a reader knows what a rerun costs."""
+
+    def __init__(self) -> None:
+        self.started = time.perf_counter()
+        self.phases: dict[str, float] = {}
+        self.hub_checked = False  # the dataset library was loaded and nothing told it to stay offline
+        launched = os.environ.get(LAUNCHED_AT)
+        self.set_up = round(max(0.0, time.time() - float(launched)), 1) if launched else None
+
+    @contextlib.contextmanager
+    def phase(self, name: str):
+        started = time.perf_counter()
+        try:
+            yield
+        finally:
+            self.phases[name] = round(self.phases.get(name, 0.0) + time.perf_counter() - started, 1)
+
+    def summary(self, jobs: int) -> dict[str, Any]:
+        return {
+            "total_s": round(time.perf_counter() - self.started, 1),  # this process; the set-up came before it
+            **({"set_up_s": self.set_up} if self.set_up is not None else {}),
+            "phases": dict(self.phases),
+            "jobs": jobs,
+            "hub_checked": self.hub_checked,
+        }
 
 
 def concurrent_ok(adapter: Adapter, scorer: Any) -> bool:
@@ -129,24 +161,29 @@ def run(
     results are the same as with `jobs=1`, in the same order."""
     out = out or audit_dir
     out.mkdir(parents=True, exist_ok=True)
+    watch = Stopwatch()
     adapter = load_adapter(audit_dir)
     probes.STORE.clear()
-    scorer, examples = adapter.load(n, seed)
-    write_inspect_sources(audit_dir, adapter, scorer)
+    with watch.phase("load"):
+        scorer, examples = adapter.load(n, seed)
+        write_inspect_sources(audit_dir, adapter, scorer)
+    watch.hub_checked = "datasets" in sys.modules and os.environ.get("HF_HUB_OFFLINE", "0").lower() not in ("1", "true", "yes", "on")
     loop = asyncio.new_event_loop()
     results: list[ProbeResult] = []
 
     parallel = jobs > 1 and concurrent_ok(adapter, scorer)
 
     def run_probes(probe_list, subset, label: str = "probes", together: bool = False) -> None:
-        results.extend(score_examples(adapter, scorer, loop, probe_list, subset, jobs if together and parallel else 1, label))
+        with watch.phase(label.replace(" ", "_")):
+            results.extend(score_examples(adapter, scorer, loop, probe_list, subset, jobs if together and parallel else 1, label))
 
     try:
-        if hasattr(adapter, "prepare"):
-            loop.run_until_complete(adapter.prepare(scorer, examples))
-        scorer, examples, scaled = scale.apply(adapter, scorer, examples, loop, jobs if parallel else 1)
-        if getattr(adapter, "tool_mode", False):
-            run_probes(probes.TOOL_MODE + list(getattr(adapter, "episode_probes", [])), examples)
+        with watch.phase("prepare"):
+            if hasattr(adapter, "prepare"):
+                loop.run_until_complete(adapter.prepare(scorer, examples))
+            scorer, examples, scaled = scale.apply(adapter, scorer, examples, loop, jobs if parallel else 1)
+        if getattr(adapter, "tool_mode", False):  # episodes run at once where the scorer builds each afresh (v1 episodes)
+            run_probes(probes.TOOL_MODE + list(getattr(adapter, "episode_probes", [])), examples, together=True)
         elif getattr(adapter, "answer_free", False):
             run_probes(probes.ANSWER_FREE + list(getattr(adapter, "answer_free_probes", [])), examples, together=True)
             run_probes(probes.ANSWER_FREE_FEW, examples[:few], "slower probes", together=True)
@@ -159,16 +196,19 @@ def run(
             run_probes([search.make_probe(search_calls, seed)], examples[:search_examples], "mutation search")
         probes.mark_same_as_good(results)
         probes.mark_no_control(results, adapter)
-        hygiene_results = hygiene.check_dataset(adapter.hygiene_examples(hygiene.ROWS)) if adapter.hygiene_examples(1) else []
+        with watch.phase("hygiene"):
+            hygiene_results = hygiene.check_dataset(adapter.hygiene_examples(hygiene.ROWS)) if adapter.hygiene_examples(1) else []
         if getattr(adapter, "answer_free", False) or getattr(adapter, "tool_mode", False):  # no references to be "empty"
             hygiene_results = [r for r in hygiene_results if r.variant != "empty_answer"]
         if (getattr(adapter, "loader", None) or {}).get("kind") == "v1-episode":  # the task is its world, not its prompt
             hygiene_results = [r for r in hygiene_results if r.variant not in ("duplicate_prompt", "empty_prompt")]
         results.extend(hygiene_results)
         no_reference = getattr(adapter, "tool_mode", False) or getattr(adapter, "answer_free", False)
-        lint = None if no_reference else rewardlint_bridge.run(adapter, scorer, examples[0], loop, jobs if parallel else 1)
+        with watch.phase("rewardlint"):
+            lint = None if no_reference else rewardlint_bridge.run(adapter, scorer, examples[0], loop, jobs if parallel else 1)
     finally:
-        loop.run_until_complete(scorer.close())
+        with watch.phase("close"):
+            loop.run_until_complete(scorer.close())
         loop.close()
 
     from falsepass import static
@@ -182,20 +222,22 @@ def run(
         if env.get("framework") == "hud" and task_file:  # the environment and its tasks share a folder
             task_file = str(Path(task_file).parent if task_file.endswith(".py") else task_file)
         source = Path(env.get("source") or (task_file if task_file.endswith(".py") or env.get("framework") == "hud" else "") or source)
-    hints = [h.to_dict() for h in static.scan(source)] if source.exists() else []
-    if getattr(adapter, "framework", "") == "reward":  # hints inside reward functions that were not selected say nothing here
-        from falsepass import reward_support
+    with watch.phase("static"):
+        hints = [h.to_dict() for h in static.scan(source)] if source.exists() else []
+        if getattr(adapter, "framework", "") == "reward":  # hints inside reward functions that were not selected say nothing here
+            from falsepass import reward_support
 
-        selected = set((getattr(adapter, "loader", None) or {}).get("functions", []))
-        others: dict[str, set[str]] = {}
-        for h in hints:
-            file = source / h["file"] if source.is_dir() else source
-            if h["file"] not in others:
-                try:
-                    others[h["file"]] = set(reward_support.declared_functions(file)) - selected
-                except (OSError, SyntaxError):
-                    others[h["file"]] = set()
-        hints = [h for h in hints if h["where"].split(" ")[0] not in others.get(h["file"], set())]
+            selected = set((getattr(adapter, "loader", None) or {}).get("functions", []))
+            others: dict[str, set[str]] = {}
+            for h in hints:
+                file = source / h["file"] if source.is_dir() else source
+                if h["file"] not in others:
+                    try:
+                        others[h["file"]] = set(reward_support.declared_functions(file)) - selected
+                    except (OSError, SyntaxError):
+                        others[h["file"]] = set()
+            hints = [h for h in hints if h["where"].split(" ")[0] not in others.get(h["file"], set())]
+    timings = watch.summary(jobs if parallel else 1)
     payload = {
         "static": static.cross_check(hints, [r.to_dict() for r in results]),
         "meta": {
@@ -213,6 +255,7 @@ def run(
             "adapter": getattr(adapter, "inferred", None) or "hand-written",
             "loader": getattr(adapter, "loader", None),
             **({"scale": scaled} if scaled else {}),
+            "timings": timings,
         },
         "results": [r.to_dict() for r in results],
         "rewardlint": lint,
@@ -223,6 +266,7 @@ def run(
     )
     (out / "probe-results.json").write_text(json.dumps(payload, indent=1, ensure_ascii=True))
     (out / "summary.md").write_text(report.summary(payload))
+    print(f"falsepass: {report.timing_words(timings)}", file=sys.stderr, flush=True)
     return payload
 
 

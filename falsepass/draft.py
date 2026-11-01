@@ -143,6 +143,8 @@ def draft(audit_dir: Path) -> Path:
             lines.append("- Judgement needed: is this variation one the prompt allows? If the prompt forbids it, this is strictness, not a defect.")
         if isinstance(adapter, dict) and "open-ended" in adapter.get("answers", "") and name == "task_independence":
             lines.append("- Note: for open-ended tasks this shows the reward barely depends on which task was set. It is not a wrong answer being accepted.")
+        if probe in report.OTHER_ANSWER_PROBES and report.structured_answers(meta):
+            lines.append(f"- Note: {report.STRUCTURED_NOTE}.")
         lines += ["- Cause: TODO (read the reward code)", "- Impact on training: TODO", "- Suggested fix: TODO", ""]
     if number == 0:
         lines += ["None: every probe passed.", ""]

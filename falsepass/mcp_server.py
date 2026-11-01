@@ -11,6 +11,7 @@ Register it with an MCP client, e.g. Claude Code:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
@@ -18,7 +19,24 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
+
+try:
+    from pydantic import Field
+except ImportError:  # without the `mcp` extra: build() says what to install
+    Field = None
+
+
+def _arg(text: str) -> Any:
+    """One line about a tool argument, shown in the tool's input schema."""
+    return Field(description=text) if Field is not None else text
+
+
+Env = Annotated[str, _arg("the audit's name as falsepass_init returned it: the folder under workdir/audits/")]
+Workdir = Annotated[str, _arg("the folder whose audits/ holds the audits (default: the current directory)")]
+Wait = Annotated[int, _arg("seconds to wait for the background job before returning its progress instead (max 600)")]
+Offline = Annotated[bool, _arg("read Hugging Face datasets from the local cache without checking the Hub first: seconds "
+                               "saved per run once the data is cached (a dataset not cached yet fails to load)")]
 
 INSTRUCTIONS = """\
 falsepass checks the reward code of RL environments and eval tasks (verifiers / Prime
@@ -37,7 +55,8 @@ only have source code.
 An audit can take several minutes (it installs the environment first). falsepass_audit
 waits up to `wait` seconds; if the audit is still running it returns
 {"status": "running", ...} and the audit carries on in the background. Then call
-falsepass_audit_status with the same env until it returns the results.
+falsepass_audit_status with the same env until it returns the results; falsepass_cancel
+stops a job that is no longer wanted.
 
 How to read results: everything is a lead, not a verdict. A grader may be strict or
 lenient on purpose (partial credit, letter case); say so instead of calling it a defect.
@@ -158,6 +177,41 @@ def _start_audit(env: str, args: list[str], workdir: str, command: str = "audit"
         return job
 
 
+def _cancel(env: str, workdir: str) -> dict[str, Any]:
+    """Stop the running job of `env`: SIGTERM to its process group (the CLI, uv and the
+    runner it started), SIGKILL if it is still there 5 s later; record it as cancelled."""
+    import signal
+
+    job = _job_state(workdir, env)
+    if job is None:
+        raise RuntimeError(f"no job of {env!r} has been started from this workdir")
+    if job["state"] != "running":
+        return {"status": job["state"], "env": env, "command": job.get("command", "audit"), "note": "no job was running"}
+    pid, key = job["pid"], str(_audit_dir(workdir, env) / "job.json")
+    proc = _jobs.get(key)
+
+    def gone() -> bool:  # our own child must be reaped to be seen as gone
+        return proc.poll() is not None if proc is not None else not _alive(pid)
+
+    for sig, patience in ((signal.SIGTERM, 5.0), (getattr(signal, "SIGKILL", signal.SIGTERM), 2.0)):
+        try:
+            os.killpg(os.getpgid(pid), sig)
+        except (AttributeError, OSError):  # no process groups (Windows), or the group is already gone
+            with contextlib.suppress(OSError):
+                os.kill(pid, sig)
+        deadline = time.time() + patience
+        while not gone() and time.time() < deadline:
+            time.sleep(0.1)
+        if gone():
+            break
+    _jobs.pop(key, None)
+    job.update(state="cancelled", ended=time.time(), exit_code=None)
+    _write_job(Path(key), job)
+    command = job.get("command", "audit")
+    return {"status": "cancelled", "env": env, "command": command, "elapsed_s": round(job["ended"] - job["started"]),
+            "next": f"Results stored by earlier runs stay. Start the {command} again when wanted."}  # fmt: skip
+
+
 def _await_audit(env: str, workdir: str, wait: float) -> dict[str, Any]:
     """Wait up to `wait` seconds, then report: the results digest, a failure, or progress."""
     deadline = time.time() + max(0.0, min(wait, 600))
@@ -168,6 +222,9 @@ def _await_audit(env: str, workdir: str, wait: float) -> dict[str, Any]:
     if job is None:
         raise RuntimeError(f"no audit of {env!r} has been started from this workdir; call falsepass_audit first")
     elapsed = round((job.get("ended") or time.time()) - job["started"])
+    if job["state"] == "cancelled":
+        return {"status": "cancelled", "env": env, "command": job.get("command", "audit"), "elapsed_s": elapsed,
+                "next": "The job was stopped with falsepass_cancel; start it again when wanted."}  # fmt: skip
     if job["state"] == "running":
         return {"status": "running", "env": env, "elapsed_s": elapsed, "log_tail": _log_tail(workdir, env),
                 "next": f"The {job.get('command', 'audit')} job continues in the background. Call falsepass_audit_status(env={env!r}) to wait for it."}  # fmt: skip
@@ -250,12 +307,22 @@ def build():
             except Exception as failure:  # the client shows the reason only for a ToolError
                 raise ToolError(_safe(str(failure) if isinstance(failure, RuntimeError) else f"{type(failure).__name__}: {failure}")) from failure
 
-        wrapped.__name__, wrapped.__doc__, wrapped.__signature__ = function.__name__, function.__doc__, inspect.signature(function)
-        wrapped.__annotations__ = function.__annotations__
+        # Annotations are strings here (`from __future__ import annotations`): resolve them in this
+        # module, where `_arg`, `Env` and the rest live, so the SDK's schema builder need not.
+        import typing
+
+        hints = typing.get_type_hints(function, include_extras=True)
+        signature = inspect.signature(function)
+        wrapped.__name__, wrapped.__doc__ = function.__name__, function.__doc__
+        wrapped.__signature__ = signature.replace(
+            parameters=[p.replace(annotation=hints.get(p.name, p.annotation)) for p in signature.parameters.values()],
+            return_annotation=hints.get("return", signature.return_annotation),
+        )
+        wrapped.__annotations__ = hints
         return server.tool(name=function.__name__, description=description)(wrapped)
 
     @tool
-    def falsepass_scan(path: str, workdir: str = ".") -> Any:
+    def falsepass_scan(path: Annotated[str, _arg("a .py file or a folder of reward code, relative to workdir")], workdir: Workdir = ".") -> Any:
         """Static pre-scan of reward source code (a .py file or a folder). Nothing is
         installed or run. Returns hints: patterns worth a look, each to be confirmed by an audit."""
         return {"hints": _json(_run(["scan", path, "--json"], workdir, timeout=300)),
@@ -263,13 +330,31 @@ def build():
 
     @tool
     def falsepass_init(
-        target: str, name: str | None = None, version: str | None = None, framework: str | None = None,
-        task: str | None = None, answers: str | None = None, extra: list[str] | None = None,
-        without: list[str] | None = None, env_class: str | None = None, action_class: str | None = None,
-        dataset: str | None = None, functions: list[str] | None = None, weights: list[float] | None = None,
-        split: str | None = None, answer_column: str | None = None, prompt_column: str | None = None,
-        dataset_config: str | None = None, map: str | None = None, path: list[str] | None = None,
-        manual: bool = False, policies: bool = False, force: bool = False, workdir: str = ".",
+        target: Annotated[str, _arg("what to audit: a Prime Hub slug owner/environment, an OpenEnv Space hf:owner/space, a local "
+                                    "folder, an Inspect task file or registry name, a HUD folder, or a file or module of reward "
+                                    "functions (with `dataset`)")],
+        name: Annotated[str | None, _arg("folder name under audits/ (default: from the environment)")] = None,
+        version: Annotated[str | None, _arg("Hub version to install (default: the latest)")] = None,
+        framework: Annotated[str | None, _arg('"verifiers", "openenv", "reward", "inspect" or "hud", when detection is wrong')] = None,
+        task: Annotated[str | None, _arg("Inspect: which @task of the file")] = None,
+        answers: Annotated[str | None, _arg("HUD and OpenEnv: a JSON file of reference answers (task key to answer, or a list in task order)")] = None,
+        extra: Annotated[list[str] | None, _arg('more requirements to install, e.g. ["inspect-evals[math]"]')] = None,
+        without: Annotated[list[str] | None, _arg("requirement names to drop from the environment's own, e.g. a pin that does not resolve")] = None,
+        env_class: Annotated[str | None, _arg('OpenEnv: "module:Class", the environment class or factory, when detection picks the wrong one')] = None,
+        action_class: Annotated[str | None, _arg('OpenEnv: "module:Class", the action class')] = None,
+        dataset: Annotated[str | None, _arg("reward functions: a .jsonl/.json/.csv/.parquet file, hf:owner/name, or call:function in the file")] = None,
+        functions: Annotated[list[str] | None, _arg("reward functions: the functions of the file to use (default: all)")] = None,
+        weights: Annotated[list[float] | None, _arg("reward functions: one weight per function")] = None,
+        split: Annotated[str | None, _arg("reward functions: the dataset split")] = None,
+        answer_column: Annotated[str | None, _arg("reward functions: the dataset column that holds the reference answer")] = None,
+        prompt_column: Annotated[str | None, _arg("reward functions: the dataset column that holds the prompt")] = None,
+        dataset_config: Annotated[str | None, _arg("reward functions: the Hugging Face dataset config name")] = None,
+        map: Annotated[str | None, _arg("reward functions: a row-mapping function in the file")] = None,
+        path: Annotated[list[str] | None, _arg("folders put on sys.path for a package that is imported rather than installed, e.g. a clone's src")] = None,
+        manual: Annotated[bool, _arg("also write an adapter.py skeleton, for a Q&A environment automatic mode cannot script")] = False,
+        policies: Annotated[bool, _arg("write a policy-based adapter.py skeleton, for a game, simulation or tool task")] = False,
+        force: Annotated[bool, _arg("rewrite an existing audit's env.toml (adapter.py is kept)")] = False,
+        workdir: Workdir = ".",
     ) -> Any:  # fmt: skip
         """Set up audits/<name>/ for an environment and return the name to audit it with.
 
@@ -331,8 +416,12 @@ def build():
         return result
 
     @tool
-    def falsepass_audit(env: str, n: int = 25, search: int = 0, wait: int = 45, workdir: str = ".",
-                        source: str = "") -> Any:  # fmt: skip
+    def falsepass_audit(env: Env, n: Annotated[int, _arg("tasks sampled from the dataset (default 25)")] = 25,
+                        search: Annotated[int, _arg("mutation search: scorer calls per direction and task (0 = off; 120 is a good value)")] = 0,
+                        wait: Wait = 45, workdir: Workdir = ".",
+                        source: Annotated[str, _arg("install the environment from this local folder (a patched copy, relative to "
+                                                    "workdir) instead of its release")] = "",
+                        offline: Offline = False) -> Any:  # fmt: skip
         """Probe one environment set up with falsepass_init: installs it in a throw-away
         virtualenv and scores known-good and known-bad completions with its own reward code.
 
@@ -346,7 +435,7 @@ def build():
         environment from a local folder (a patched copy, relative to `workdir`) instead of its
         release: the whole probe suite against a fix."""
         local = ["--source", str((Path(workdir).expanduser() / source).resolve())] if source else []
-        started = _start_audit(env, [*local, "-n", str(n), *(["--search", str(search)] if search else [])], workdir)
+        started = _start_audit(env, [*local, "-n", str(n), *(["--search", str(search)] if search else []), *(["--offline"] * offline)], workdir)
         if started.get("status") == "error":
             raise RuntimeError(f"{started['error']}. {started['next']}")
         if started.get("command", "audit") != "audit":
@@ -354,14 +443,22 @@ def build():
         return _await_audit(env, workdir, wait)
 
     @tool
-    def falsepass_audit_status(env: str, wait: int = 45, workdir: str = ".") -> Any:
+    def falsepass_audit_status(env: Env, wait: Wait = 45, workdir: Workdir = ".") -> Any:
         """Wait up to `wait` seconds (max 600) for the job started by falsepass_audit or
         falsepass_reach, then return its results (status "finished") or progress (status
         "running": call again). A failed job is returned as an error with the end of its log."""
         return _await_audit(env, workdir, wait)
 
     @tool
-    def falsepass_results(env: str, workdir: str = ".") -> Any:
+    def falsepass_cancel(env: Env, workdir: Workdir = ".") -> Any:
+        """Stop the background job of `env` (an audit, reach, repro or verify-fix, started by
+        this server or an earlier one): its process group gets SIGTERM, and SIGKILL if it is
+        still there 5 s later. Results stored by earlier runs stay; the job is recorded as
+        "cancelled" and a new one can be started."""
+        return _cancel(env, workdir)
+
+    @tool
+    def falsepass_results(env: Env, workdir: Workdir = ".") -> Any:
         """The last completed probe run of an environment (headline, failing probes, static
         hints). While an audit is still running, its progress instead."""
         job = _job_state(workdir, env)
@@ -370,14 +467,19 @@ def build():
         return _json(_run(["results", env, "--json"], workdir, timeout=120))
 
     @tool
-    def falsepass_completion(env: str, completion_id: str, workdir: str = ".") -> Any:
+    def falsepass_completion(env: Env, completion_id: Annotated[str, _arg("a completion_id from the results digest")],
+                             workdir: Workdir = ".") -> Any:  # fmt: skip
         """The full text of one completion from the last run (a `completion_id` from the
         results): the digest shows only its start and end."""
         return {"completion_id": completion_id, "text": _ok(_run(["results", env, "--completion", completion_id], workdir, timeout=60))["stdout"]}
 
     @tool
-    def falsepass_repro(env: str, probe: list[str] | None = None, run: bool = False, script: str = "",
-                        wait: int = 45, workdir: str = ".") -> Any:  # fmt: skip
+    def falsepass_repro(env: Env,
+                        probe: Annotated[list[str] | None, _arg('limit the script to these probes, e.g. ["P5"] or '
+                                                                '["X1/denies_both_figures"] (code, or code/variant)')] = None,
+                        run: Annotated[bool, _arg("true: also run the script twice in fresh virtualenvs and compare (in the background)")] = False,
+                        script: Annotated[str, _arg("run an existing script in the audit folder instead, e.g. repro.py")] = "",
+                        wait: Wait = 45, workdir: Workdir = ".", offline: Offline = False) -> Any:  # fmt: skip
         """Write audits/<env>/repro_auto.py: a script that depends only on the environment's
         own packages and re-scores the exact failing completions. `probe` limits it to some
         probes, e.g. ["P5"] or ["X1/denies_both_figures"] (code/variant). Identical output from two clean runs is what makes a lead
@@ -389,7 +491,7 @@ def build():
         args = [a for code in probe or [] for a in ("--probe", code)] + (["--script", script] if script else [])
         if not run:
             return {"message": _ok(_run(["repro", env, *args], workdir, timeout=120))["stdout"].strip()}
-        started = _start_audit(env, ["--run", *args], workdir, command="repro")
+        started = _start_audit(env, ["--run", *args, *(["--offline"] * offline)], workdir, command="repro")
         if started.get("status") == "error":
             raise RuntimeError(f"{started['error']}. {started['next']}")
         if started.get("command", "audit") != "repro":
@@ -397,8 +499,13 @@ def build():
         return _await_audit(env, workdir, wait)
 
     @tool
-    def falsepass_reach(env: str, probe: list[str] | None = None, templates: list[str] | None = None,
-                        expect: str = "zero", tasks: int = 0, wait: int = 45, workdir: str = ".") -> Any:
+    def falsepass_reach(env: Env,
+                        probe: Annotated[list[str] | None, _arg('probe rows to count, e.g. ["P15/denied"] (code, or code/variant as in the results)')] = None,
+                        templates: Annotated[list[str] | None, _arg("completions of your own to count, with {answer}, {wrong}, "
+                                                                    "{answer_in_format} or {wrong_in_format} filled per task")] = None,
+                        expect: Annotated[str, _arg('for templates: "zero" counts where they are paid, "full" where they are not paid in full')] = "zero",
+                        tasks: Annotated[int, _arg("how many tasks to score (0 = every task in the dataset)")] = 0,
+                        wait: Wait = 45, workdir: Workdir = ".", offline: Offline = False) -> Any:  # fmt: skip
         """After an audit: how many tasks a failing probe reaches. Scores only the rows asked
         for, e.g. probe=["P15/denied"] (a code, or code/variant as in the results), plus the
         reference (P1) as a control, on every task (`tasks`=0) or a sample of `tasks`.
@@ -418,7 +525,7 @@ def build():
         if expect not in ("zero", "full"):
             raise RuntimeError('expect is "zero" or "full"')
         args = [a for code in probe or [] for a in ("--probe", code)] + [a for text in templates or [] for a in ("--template", text)]
-        args += ["--expect", expect, "--tasks", str(tasks) if tasks > 0 else "all"]
+        args += ["--expect", expect, "--tasks", str(tasks) if tasks > 0 else "all", *(["--offline"] * offline)]
         started = _start_audit(env, args, workdir, command="reach")
         if started.get("status") == "error":
             raise RuntimeError(f"{started['error']}. {started['next']}")
@@ -427,7 +534,12 @@ def build():
         return _await_audit(env, workdir, wait)
 
     @tool
-    def falsepass_verify_fix(env: str, source: str, known_good: int = -1, wait: int = 45, workdir: str = ".") -> Any:
+    def falsepass_verify_fix(env: Env,
+                             source: Annotated[str, _arg("a patched package folder, or a patched copy of the audit's src/ "
+                                                         "(laid over the release); relative to workdir")],
+                             known_good: Annotated[int, _arg("-1: off; 0: also score every correct-answer row with and without "
+                                                             "the patch; N: on a sample of N tasks")] = -1,
+                             wait: Wait = 45, workdir: Workdir = ".", offline: Offline = False) -> Any:  # fmt: skip
         """Check a patch: rerun the stored repro (repro.py, else repro_auto.py) with the
         environment taken from `source` and list the lines that change (no stored output:
         the unpatched script runs first and is stored as the baseline). `source` is a
@@ -439,6 +551,7 @@ def build():
         path = Path(source).expanduser()
         path = path if path.is_absolute() else Path(workdir).expanduser() / path
         args = ["--source", str(path.resolve())] + (["--known-good", str(known_good) if known_good > 0 else "all"] if known_good >= 0 else [])
+        args += ["--offline"] * offline
         started = _start_audit(env, args, workdir, command="verify-fix")
         if started.get("status") == "error":
             raise RuntimeError(f"{started['error']}. {started['next']}")
@@ -447,7 +560,7 @@ def build():
         return _await_audit(env, workdir, wait)
 
     @tool
-    def falsepass_draft(env: str, workdir: str = ".") -> Any:
+    def falsepass_draft(env: Env, workdir: Workdir = ".") -> Any:
         """Write audits/<env>/REPORT.draft.md from the last run: each failing probe group as a
         candidate finding with the confirmed static hints attached, and the places marked
         where a person has to judge (defect or design choice, severity). Returns the file
@@ -458,7 +571,8 @@ def build():
         return {"file": str(path), "text": path.read_text()}
 
     @tool
-    def falsepass_upstream(env: str, repo: str = "", limit: int = 5, workdir: str = ".") -> Any:
+    def falsepass_upstream(env: Env, repo: Annotated[str, _arg("owner/name: check this repository instead of searching")] = "",
+                           limit: Annotated[int, _arg("candidate repositories to compare (default 5)")] = 5, workdir: Workdir = ".") -> Any:  # fmt: skip
         """Find the environment's source repository on GitHub (repositories the package
         names in its project URLs or source first, then code search for the package name and
         for its most distinctive class and function names), compare every audited
@@ -470,7 +584,11 @@ def build():
         return {"report": _ok(_run(args, workdir, timeout=600))["stdout"]}
 
     @tool
-    def falsepass_discover(days: int = 90, limit: int = 40, hub: str = "prime", workdir: str = ".") -> Any:
+    def falsepass_discover(days: Annotated[int, _arg("environments updated within this many days")] = 90,
+                           limit: Annotated[int, _arg("at most this many environments")] = 40,
+                           hub: Annotated[str, _arg('"prime" (the Prime Intellect Hub; needs the prime CLI) or "hf" (OpenEnv Spaces '
+                                                    'on the Hugging Face Hub)')] = "prime",
+                           workdir: Workdir = ".") -> Any:  # fmt: skip
         """Recently maintained environments: `hub` "prime" (the Prime Intellect Hub, with what
         each needs: sandbox, tools, LLM judge, API key, an outside service its code calls,
         reference answers; needs the `prime`

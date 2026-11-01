@@ -484,13 +484,17 @@ class AutoAdapter(Adapter):
             # leaves the grader reading the reference's own tags.
             notes.append("the reference answers carry answer markup of their own, so probes that place a wrong "
                          "answer in the format may not present a competing answer: check P5, P6 and P9 rows by hand")
+        # A plan, a schedule, an action: several answers may be valid for one task, and the wrong
+        # answer automatic mode can offer is another task's reference (see draft and digest notes).
+        structured = not self.closed and not self.open_ended and sum(_json_object(ex.answer) for ex in trial) > len(trial) / 2
         self.inferred = {
             "validity": validity,
             "format": best,
             "reference_reward_by_format": table,
             "examples_tried": len(trial),
             "answers": "closed set: " + ", ".join(self.labels) if self.closed
-            else "open-ended passages" if self.open_ended else "open",
+            else "open-ended passages" if self.open_ended
+            else "JSON objects: another task's reference stands in for a wrong answer" if structured else "open",
             "turns": "multi-turn: the answer is given at every turn through the env's own rollout loop"
             if self.multi_turn else "single-turn",
             "note": "; ".join(notes),

@@ -1,6 +1,7 @@
 """What an agent sees: previews that keep the answer, safe text, forgiving names, clear errors."""
 
 import json
+import os
 
 from falsepass import cli, report
 from falsepass.mcp_server import _safe
@@ -142,3 +143,46 @@ def test_policy_skeleton_is_valid_python(tmp_path, monkeypatch, capsys):
     source = (tmp_path / "audits" / name / "adapter.py").read_text()
     ast.parse(source)
     assert "policies.after_the_end" in source and "special_number_scripts" in source
+
+
+def test_offline_keeps_the_dataset_library_off_the_hub(tmp_path, monkeypatch, capsys):
+    """`--offline` puts HF_HUB_OFFLINE=1 in front of the isolated command (and in the
+    environment every child inherits), so a cached dataset loads without a Hub round trip."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("HF_DATASETS_OFFLINE", raising=False)
+    folder = tmp_path / "audits" / "x"
+    folder.mkdir(parents=True)
+    folder.joinpath("env.toml").write_text('[env]\nid = "o/x"\npackage = "x"\nversion = "1.0"\nmodule = "x"\n'
+                                           'index = "https://example.invalid/simple/"\nverifiers = "0.4.0"\n')
+    assert cli.main(["audit", "x", "--print-command"]) == 0
+    assert capsys.readouterr().out.startswith("uv run --isolated")
+    assert cli.main(["audit", "x", "--offline", "--print-command"]) == 0
+    assert capsys.readouterr().out.startswith("env HF_HUB_OFFLINE=1 HF_DATASETS_OFFLINE=1 uv run --isolated")
+    assert os.environ["HF_HUB_OFFLINE"] == "1"
+    assert cli.main(["reach", "x", "--probe", "P3", "--print-command"]) == 0  # the flag is per call
+    assert capsys.readouterr().out.startswith("uv run --isolated")
+
+
+def test_structured_answers_get_a_validity_note(tmp_path):
+    """A plan or an action can have several valid forms; the only wrong answer automatic mode has
+    is another task's reference. The digest and the draft say so instead of calling it a false pass."""
+    from falsepass import draft
+
+    row = {"probe": "P6", "name": "format_only", "variant": "wrong_in_format", "example": "task-0", "expected": "zero",
+           "score": 1.0, "passed": False, "detail": "expected zero, got 1.0", "completion": '{"a": 1}', "metrics": {},
+           "errors": [], "answer_free": False, "completion_id": ""}
+    meta = {"environment": "o/e", "date": "2026-11-01", "versions": {}, "examples": 1, "seed": 0, "python": "3.12",
+            "falsepass": "0", "max_reward": 1.0, "bad_tolerance": 0.0, "weights": {},
+            "adapter": {"validity": "ok", "format": "plain reply", "examples_tried": 1, "reference_reward_by_format": {},
+                        "answers": "JSON objects: another task's reference stands in for a wrong answer", "turns": "single-turn", "note": ""}}
+    payload = {"meta": meta, "results": [row, {**row, "probe": "P3", "name": "empty", "variant": "empty"}], "static": [], "rewardlint": None}
+    failing = {f["probe"]: f for f in report.digest(payload)["failing"]}
+    assert "validity grader" in failing["P6"]["note"] and "note" not in failing["P3"]
+    folder = tmp_path / "e"
+    folder.mkdir()
+    (folder / "probe-results.json").write_text(json.dumps(payload))
+    text = draft.draft(folder).read_text()
+    assert text.count("- Note: the reference is a structured answer") == 1  # on P6, not on P3
+    plain = {**payload, "meta": {**meta, "adapter": {**meta["adapter"], "answers": "open"}}}
+    assert "note" not in report.digest(plain)["failing"][0]

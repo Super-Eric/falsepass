@@ -129,6 +129,7 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
                 "(generated payloads such as P10's 2 MB reply) are stored as a preview only; the probe code rebuilds them"}),
             "answer_free": bool(first.get("answer_free")),
             **({"errors": first["errors"][:2]} if first.get("errors") else {}),
+            **({"note": STRUCTURED_NOTE} if probe in OTHER_ANSWER_PROBES and structured_answers(payload["meta"]) else {}),
         })  # fmt: skip
     # False passes first (a known-bad completion paid), the most consistent ones on top; then false fails.
     failing.sort(key=lambda f: (f["expected"] != "zero", -f["failed"] / f["runs"]))
@@ -195,6 +196,7 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
             if isinstance(adapter, dict) else adapter,
         },
         "headline": None if validity.startswith("inconclusive") or extra.get("status") == "inconclusive" else headline(payload["results"]),
+        **({"timings": {**meta["timings"], "words": timing_words(meta["timings"])}} if meta.get("timings") else {}),
         "failing": failing,
         "static_hints": [{k: h[k] for k in ("rule", "file", "line", "evidence", "meaning", "verdict") if k in h}
                          for h in payload.get("static", [])],  # fmt: skip
@@ -225,6 +227,49 @@ def unscored(results: list[dict[str, Any]]) -> tuple[int, int, str] | None:
         return None
     first = next((e for r in none for e in r.get("errors") or []), "none recorded")
     return len(rows), len(none), str(first)[:400]
+
+
+def duration(seconds: float) -> str:
+    """Seconds as people read them: 8.5 s, 42 s, 2 min 10 s, 1 h 5 min."""
+    seconds = max(0.0, float(seconds))
+    if seconds < 10:
+        return f"{seconds:.1f} s"
+    if seconds < 60:
+        return f"{seconds:.0f} s"
+    minutes, rest = divmod(int(round(seconds)), 60)
+    if minutes < 60:
+        return f"{minutes} min {rest} s" if rest else f"{minutes} min"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours} h {minutes} min" if minutes else f"{hours} h"
+
+
+def timing_words(timings: dict[str, Any] | None) -> str:
+    """One line on where the time went: the whole run, its three longest parts, the jobs."""
+    if not timings:
+        return ""
+    phases = {k.replace("_", " "): v for k, v in (timings.get("phases") or {}).items()}
+    if timings.get("set_up_s") is not None:
+        phases["set-up (virtualenv)"] = timings["set_up_s"]
+    longest = [(name, s) for name, s in sorted(phases.items(), key=lambda kv: -kv[1])[:3] if s >= 0.5]
+    parts = ", ".join(f"{name} {duration(s)}" for name, s in longest)
+    jobs = timings.get("jobs") or 1
+    whole = duration(timings.get("total_s", 0.0) + (timings.get("set_up_s") or 0.0))
+    words = f"{whole} in all" + (f" ({parts})" if parts else "") + (f"; {jobs} tasks at a time" if jobs > 1 else "; one task at a time")
+    if timings.get("hub_checked") and (timings.get("phases") or {}).get("load", 0.0) >= 5:
+        words += (". If the data comes from the Hugging Face Hub, the load includes the dataset library's check with the Hub: "
+                  "once the data is cached, --offline (MCP: offline=true) skips it")
+    return words
+
+
+OTHER_ANSWER_PROBES = ("P5", "P6", "P7", "X1")  # the rows whose "wrong" answer is a complete other answer
+STRUCTURED_NOTE = ("the reference is a structured answer (a plan, an action) and the wrong answer here is another task's "
+                   "reference: a validity grader accepts any valid answer, so check whether this one is valid for this task "
+                   "before calling it a false pass. If it is, the task has several right answers, not a lenient grader")
+
+
+def structured_answers(meta: dict[str, Any]) -> bool:
+    adapter = meta.get("adapter")
+    return isinstance(adapter, dict) and str(adapter.get("answers", "")).startswith("JSON objects")
 
 
 def _fmt(value: float | None) -> str:
@@ -300,6 +345,7 @@ def summary(payload: dict[str, Any]) -> str:
         f"{meta['examples']} examples, seed {meta['seed']}",
         "",
         *_adapter_lines(meta.get("adapter")),
+        *([f"- **Time:** {timing_words(meta['timings'])}"] if meta.get("timings") else []),
         *([f"- **⚠ Result inconclusive: {unscored(results)[1]} of {unscored(results)[0]} probe rows produced no score** (the "
            f"environment raised or an episode did not finish); first error: {unscored(results)[2]}"] if unscored(results) else []),
         *_weight_lines(meta, results),

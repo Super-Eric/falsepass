@@ -57,7 +57,8 @@ rows on tasks where refusing is right are marked `no_control` and not counted.
   usually at the end). `falsepass results environment --completion <completion_id>`
   prints it in full.
 - Through MCP, an audit runs in the background: if `falsepass_audit` returns
-  `"status": "running"`, call `falsepass_audit_status` until it finishes.
+  `"status": "running"`, call `falsepass_audit_status` until it finishes;
+  `falsepass_cancel` stops a job that is no longer wanted.
 
 ## 3. Confirm before you claim
 

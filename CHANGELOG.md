@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+- When the reference answers are JSON objects (a plan, a schedule, an action), the inferred
+  adapter says so (`answers`: "JSON objects: another task's reference stands in for a wrong
+  answer"), and the digest and the draft put a note on paid P5, P6, P7 and X1 rows: a validity
+  grader accepts any valid answer, so check whether the paid one is valid for the task before
+  calling it a false pass (a dogfood round read such rows as "a wrong answer in the right
+  format is rewarded").
+- MCP: `falsepass_cancel` stops the background job of an environment (audit, reach, repro,
+  verify-fix); `falsepass_audit_status` then reports `"status": "cancelled"`. Every tool
+  argument now carries a description in the input schema (`Annotated` fields), not only in
+  the tool's text.
+- Tool-mode policies (T5, T6, an adapter's own) on a scorer that builds each episode afresh
+  (v1 episodes) now run up to `--jobs` episodes at once, as `reach` already did. They ran one at
+  a time: 25 tasks of a 10 s episode took 45 minutes, now 10. Same results, same order.
+- `--offline` on `audit`, `reach`, `repro`, `verify-fix`, `rollout`, `propose` and `container`
+  (MCP: `offline=true`) reads Hugging Face datasets from the local cache without asking the Hub
+  first (`HF_HUB_OFFLINE=1`): that check took 1.5–15 s per run on a slow connection, the cached
+  load 0.4 s. The **Time** line says when it may apply.
+- Every run records where its time went: `meta.timings` in probe-results.json (`total_s`,
+  `set_up_s` for the virtualenv, seconds per phase: load, prepare, probes, slower probes,
+  hygiene, rewardlint, close, static; `jobs`), a **Time** line in the summary, `timings` in
+  the digest, and one line at the end of the log.
+
 ## 0.12.0 — 2026-10-29
 
 - A run with no control where every reply scored the same on each task (a simulation played
@@ -88,7 +112,7 @@
   answering 429 is retried (`UV_HTTP_RETRIES=10`); a failed MCP audit no longer appends the
   generic "common causes" footer to a specific stop message; the stop message says when an
   outside call (an LLM judge) was blocked.
-- From the hedge-gym and second-strike audits: an episode's runaway cap is 400 model turns
+- From two audits of multi-turn tasksets: an episode's runaway cap is 400 model turns
   (the taskset's own `max_turns` comes first; 40 cut a 42-turn game short); T6 plays only
   "Done." when an episode offers no tools; the reward-terms table counts negative values
   (penalties) as paying.

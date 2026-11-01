@@ -67,8 +67,9 @@ running audit is found again by `falsepass_audit_status`.
 |---|---|---|
 | `falsepass_scan` | `path` | static hints for a source folder or file; nothing is installed |
 | `falsepass_init` | `target` (Prime Hub id, OpenEnv Space `hf:owner/space` or folder, a file of reward functions with `dataset`, local folder, Inspect task, HUD folder); optional `name`, `version`, `framework`, `task`, `answers`, `extra`, `without`, `dataset`, `functions`, `weights`, `split`, `dataset_config`, `answer_column`, `prompt_column`, `map`, `path`, `env_class`, `action_class`, `manual`, `policies`, `force` | `{"name": ..., "folder": ..., "framework": ..., "env": {...}, "next": ...}`: `name` is what the other tools take |
-| `falsepass_audit` | `env`, `n` (tasks, default 25), `search` (mutation budget), `wait` (seconds, default 45) | the results digest below with `"status": "finished"`, or `"status": "running"` if the audit needs longer |
+| `falsepass_audit` | `env`, `n` (tasks, default 25), `search` (mutation budget), `wait` (seconds, default 45), `source` (a patched local copy), `offline` (a cached Hugging Face dataset without the Hub check; also on reach, repro and verify_fix) | the results digest below with `"status": "finished"`, or `"status": "running"` if the audit needs longer |
 | `falsepass_audit_status` | `env`, `wait` | the same, for an audit already started: results, or `"running"` with the latest progress lines |
+| `falsepass_cancel` | `env` | stops the background job of `env` (audit, reach, repro or verify-fix); results stored earlier stay |
 | `falsepass_results` | `env` | the digest of the last run (progress instead while one is running) |
 | `falsepass_completion` | `env`, `completion_id` | the full text of one completion; the digest shows only its start and end |
 | `falsepass_reach` | `env`, `probe` (e.g. `["P15/denied"]`) and/or `templates` (completions of your own, e.g. `["\\boxed{{answer} \\text{ is wrong}}"]`), `expect` (`zero` or `full`, for templates), `tasks` (0 = every task), `wait` | per probe row, per template and for the reference (P1) as a control: tasks counted, how many failed, full-reward and error counts, the failing task keys, up to three failing completions, and for a template the text it became on the first task; runs in the background like an audit |
@@ -86,7 +87,10 @@ longer than many clients allow for one tool call. It therefore runs in the backg
 `{"status": "running", "elapsed_s": ..., "log_tail": [...]}`. Call
 `falsepass_audit_status` with the same `env` until it finishes. Calling
 `falsepass_audit` again while one is running doesn't start a second audit. The job is
-recorded in `audits/<env>/job.json`, its output in `audits/<env>/job.log`.
+recorded in `audits/<env>/job.json`, its output in `audits/<env>/job.log`. The result's
+`timings` (and the summary's **Time** line) say where the time went: the virtualenv, the
+probes, rewardlint, and how many tasks ran at once, so you know what a rerun or a larger
+`n` costs.
 
 When something goes wrong (no such audit, a failed install, a dataset that needs a
 login), the tool returns an MCP error whose text says what happened and what to try
@@ -113,6 +117,7 @@ environment.
 falsepass init owner/environment          # or hf:owner/space (OpenEnv), ./folder, task.py, inspect_evals/<task>, a HUD folder
 falsepass audit environment --fail-on 'ceiling>0.1'   # exit 1 when the condition is met
 falsepass audit environment --jobs 1      # one task at a time (default: up to 8 at once where safe)
+falsepass audit environment --offline     # a cached Hugging Face dataset without the Hub check (also reach, repro --run, verify-fix)
 falsepass results environment --json      # compact digest, small enough for a context window
 falsepass scan path/to/source --json      # static pre-scan only
 ```
