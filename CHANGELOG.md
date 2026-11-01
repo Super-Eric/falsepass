@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.13.0 — 2026-11-01
 
 - From the tenth dogfood round: `falsepass_audit` keeps the digest's own status (an
   `inconclusive` run was returned as `finished`); a no-control run is inconclusive only when
