@@ -22,7 +22,8 @@
 - Every run records where its time went: `meta.timings` in probe-results.json (`total_s`,
   `set_up_s` for the virtualenv, seconds per phase: load, prepare, probes, slower probes,
   hygiene, rewardlint, close, static; `jobs`), a **Time** line in the summary, `timings` in
-  the digest, and one line at the end of the log.
+  the digest, and one line at the end of the log. `reach` records the same (`meta.timings`,
+  a `time:` line).
 
 ## 0.12.0 — 2026-10-29
 

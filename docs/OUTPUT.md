@@ -159,6 +159,8 @@ exceed `failed`. `not_applicable` counts tasks where the probe writes no such co
 `tasks_counted`. The answer format is inferred again for this run; `note` says so when
 it differs from the audit's. `latest.json` is the same document plus `file`, its path.
 
+`meta.timings` is the audit's (total, set-up, seconds per phase: `load`, `prepare`, `catalog`,
+`reach`, `close`; `jobs`; `hub_checked`), and the text output ends with a `time:` line.
 With `--template`, `meta` also has `templates` and `template_expect`, and each template
 is a row with `probe` "U1", `variant` "t1", "t2", ... in the order given, plus `template`
 (the text as given) and `first_completion` (what it became on the first task). The file is

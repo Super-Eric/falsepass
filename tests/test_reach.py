@@ -38,6 +38,9 @@ def test_reach_counts_what_a_full_run_finds_and_nothing_else(tmp_path: Path):
     assert rows[asked]["failed_tasks"] == [r["example"] for r in expected if not r["passed"]]
     assert rows[asked]["examples"] and rows[asked]["examples"][0]["completion"]
     assert json.loads((tmp_path / "one" / "latest.json").read_text())["rows"] == one["rows"]
+    timings = one["meta"]["timings"]  # where the time went, as in an audit
+    assert set(timings["phases"]) >= {"load", "prepare", "catalog", "reach", "close"} and timings["jobs"] == 1
+    assert many["meta"]["timings"]["jobs"] == 8 and "\ntime: " in reach.describe(one)
     assert probes.ONLY == set()  # the filter is reset for whatever runs next
 
 

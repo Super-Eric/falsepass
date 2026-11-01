@@ -31,7 +31,7 @@ from typing import Any
 import falsepass
 from falsepass import probes, scale
 from falsepass.model import Expect
-from falsepass.runner import DEFAULT_JOBS, _version, concurrent_ok, load_adapter, score_examples
+from falsepass.runner import DEFAULT_JOBS, Stopwatch, _version, concurrent_ok, load_adapter, score_examples
 
 ALL = 10**9  # "every task": larger than any dataset; the loaders cap at the dataset's size
 EXAMPLES_KEPT = 3  # full completions kept per variant, for reading and for a repro
@@ -71,21 +71,25 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
 
         auto.MAX_ROWS = ALL  # the audit samples from the first 2000 rows; reach counts or samples from all of them
     probes.STORE.clear()
+    watch = Stopwatch()
     # A hand-written adapter's `load(n)` returns min(n, rows) tasks, as the skeletons do.
-    scorer, examples = adapter.load(tasks or ALL, seed)
+    with watch.phase("load"):
+        scorer, examples = adapter.load(tasks or ALL, seed)
     everything = tasks is None or len(examples) < tasks  # asked for more than there are: every task was counted
     loop = asyncio.new_event_loop()
     try:
-        if hasattr(adapter, "prepare"):
-            loop.run_until_complete(adapter.prepare(scorer, examples))
-            _use_audit_format(audit_dir, adapter)
-        scorer, examples, scaled = scale.apply(adapter, scorer, examples, loop,
-                                               jobs if jobs > 1 and concurrent_ok(adapter, scorer) else 1)
+        with watch.phase("prepare"):
+            if hasattr(adapter, "prepare"):
+                loop.run_until_complete(adapter.prepare(scorer, examples))
+                _use_audit_format(audit_dir, adapter)
+            scorer, examples, scaled = scale.apply(adapter, scorer, examples, loop,
+                                                   jobs if jobs > 1 and concurrent_ok(adapter, scorer) else 1)
         probe_list = _probe_list(adapter) + ([probes.u1_template] if templates else [])
         probes.TEMPLATES, probes.TEMPLATE_EXPECT = templates, Expect(expect)
         # What can be asked for: run the probes on one task with nothing scored.
         probes.ONLY = {"(none)"}
-        catalog = score_examples(adapter, scorer, loop, probe_list, examples[:1], 1, "catalog")
+        with watch.phase("catalog"):
+            catalog = score_examples(adapter, scorer, loop, probe_list, examples[:1], 1, "catalog")
         if "known-good" in wanted:  # every row whose completion is correct: does a patch still pay them?
             wanted = [w for w in wanted if w != "known-good"] + sorted(
                 {f"{r.probe}/{r.variant}" for r in catalog if r.expected is Expect.FULL})
@@ -97,11 +101,14 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
         control = [] if getattr(adapter, "answer_free", False) or getattr(adapter, "tool_mode", False) else ["P1"]
         probes.ONLY = set(wanted) | set(control)
         parallel = jobs > 1 and concurrent_ok(adapter, scorer)
-        results = score_examples(adapter, scorer, loop, probe_list, examples, jobs if parallel else 1, "reach")
+        with watch.phase("reach"):
+            results = score_examples(adapter, scorer, loop, probe_list, examples, jobs if parallel else 1, "reach")
     finally:
         probes.ONLY, probes.TEMPLATES, probes.TEMPLATE_EXPECT = set(), [], Expect.ZERO
-        loop.run_until_complete(scorer.close())
+        with watch.phase("close"):
+            loop.run_until_complete(scorer.close())
         loop.close()
+    watch.hub_checked = "datasets" in sys.modules and os.environ.get("HF_HUB_OFFLINE", "0").lower() not in ("1", "true", "yes", "on")
 
     probes.mark_same_as_good(results)  # against the P1 control's completion on each task
     probes.mark_no_control(results, adapter)  # tool rows on tasks where refusing is right
@@ -162,6 +169,7 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
                     "are for this format" if audited and audited != fmt else "",
             "versions": {p: v for p in ["verifiers", "inspect-ai", "hud", "openenv"] if (v := _version(p)) != "not installed"},
             **({"scale": {k: v for k, v in scaled.items() if k != "points"}} if scaled else {}),
+            "timings": watch.summary(jobs if parallel else 1),
         },  # fmt: skip
         "rows": counted,
     }
@@ -197,6 +205,10 @@ def describe(payload: dict[str, Any]) -> str:
                      + (f"; {row['same_as_good']} identical to the reference reply, not counted" if row["same_as_good"] else "")
                      + (f"; {row['not_applicable']} tasks have no such completion" if row.get("not_applicable") else "")
                      + ")")  # fmt: skip
+    if meta.get("timings"):
+        from falsepass.report import timing_words
+
+        lines.append(f"time: {timing_words(meta['timings'])}")
     lines.append(f"written to {payload['file']}")
     return "\n".join(lines)
 
