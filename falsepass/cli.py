@@ -265,7 +265,8 @@ async def policy_probes(adapter, scorer, ex):
 class Env(Adapter):
     name = "{id}"
     max_reward = 1.0  # what the solver earns; set it to the real figure once the X0 control rows show it
-    per_example_probes = [policy_probes]
+    tool_mode = True  # played with policies: the text probes (P3-P9, P15, A1) are not run; T5 (never answers)
+    episode_probes = [policy_probes]  # and T6 (doing nothing, "Done.") are, then the policies above
     # how `falsepass repro` reloads the same rows (keys must end in the row index)
     loader = {{"kind": "v0-rollout", "module": "{package}", "load_args": {{}}, "getter": "get_dataset"}}
 
@@ -310,6 +311,8 @@ offered tool schemas in; the next assistant message out: a string (ends the turn
 
 `example.raw` is the task: `example.raw.data` holds its fields (the prompt, and whatever
 the grader compares against). The solver may read them; every other policy must not.
+`example.prompt` is the task's prompt text; it is empty when the environment builds the
+prompt inside its own `run()`: read it from `messages` then.
 
 The generic tool policies (T5, T6) run as well. Each episode is kept, so `falsepass
 results <env> --completion <id>` shows it and `falsepass repro <env>` replays it.
@@ -923,12 +926,15 @@ def main(argv: list[str] | None = None) -> int:
             print(shlex.join(verify.command_for(audit_dir, script, source)))
             return 0
         if not (audit_dir / (Path(script).stem + ".output.txt")).is_file():
+            print(f"falsepass: verify-fix: no stored output of {script} yet: running it unpatched first", file=sys.stderr, flush=True)
             stored, stderr, code = verify.baseline(audit_dir, script)
             if code != 0:
                 print(f"falsepass: the unpatched baseline run exited {code}:\n{stderr}", file=sys.stderr)
                 return 1
             print(f"falsepass: no stored output yet; ran the unpatched {script} once and stored it as {stored}",
                   file=sys.stderr)
+        print(f"falsepass: verify-fix: running {script} with the patched source (a fresh virtualenv; minutes for a slow grader)",
+              file=sys.stderr, flush=True)  # fmt: skip
         found, stderr, code = verify.run(audit_dir, source, script)
         if code != 0:
             print(f"falsepass: the patched run exited {code}:\n{stderr}", file=sys.stderr)
@@ -937,6 +943,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.known_good:
             counts = {}
             for label, patch in (("release", None), ("patched", source)):
+                print(f"falsepass: verify-fix: scoring the correct-answer rows on {args.known_good} tasks, {label}", file=sys.stderr, flush=True)
                 extra = ["--probe", "known-good", "--tasks", args.known_good, "--json", "--out", str(audit_dir / "reach" / f"known-good-{label}")]
                 done = subprocess.run(source_command(audit_dir, extra, "falsepass.reach", patch), capture_output=True, text=True, check=False)
                 if done.returncode != 0:

@@ -515,19 +515,26 @@ MAIN = '''
 
 async def main():
     for case in CASES:
+        scale = ""
         try:
-            observed = f"{await score(case['example'], case['completion']):.6f}"
+            raw = await score(case['example'], case['completion'])
+            observed = f"{raw:.6f}"
+            if "floor" in case:  # the audit's reference-relative scale: 0 = the floor strategy, 1 = the reference
+                observed = f"{(raw - case['floor']) / (case['reference'] - case['floor']):.6f}"
+                scale = f"  (raw {raw:.6f}; floor {case['floor']:.6f}, reference {case['reference']:.6f})"
         except Exception as exc:  # the reward code raising is itself the observation
             observed = f"raised {type(exc).__name__}"
-        print(f"{observed:>9}  expected {case['expected']:<5} {case['probe']} {case['name']}/{case['variant']} on {case['example']}")
+        print(f"{observed:>9}  expected {case['expected']:<5} {case['probe']} {case['name']}/{case['variant']} on {case['example']}{scale}")
 
 
 asyncio.run(main())
 '''
 
 
-def select(results: list[dict[str, Any]], completions: dict[str, Any], probes: list[str] | None, per_group: int) -> list[dict]:
-    """Failing rows whose exact completion was kept: up to `per_group` examples per probe variant."""
+def select(results: list[dict[str, Any]], completions: dict[str, Any], probes: list[str] | None, per_group: int,
+           points: dict[str, Any] | None = None) -> list[dict]:  # fmt: skip
+    """Failing rows whose exact completion was kept: up to `per_group` examples per probe variant.
+    `points` (meta.scale.points) adds each task's floor and reference raw rewards."""
     taken: dict[tuple, int] = {}
     cases = []
     for r in results:
@@ -548,6 +555,7 @@ def select(results: list[dict[str, Any]], completions: dict[str, Any], probes: l
         cases.append({
             "probe": r["probe"], "name": r["name"], "variant": r["variant"], "example": r["example"],
             "expected": "full" if r["expected"] == "full" else "0", "recorded": r["score"],
+            **({"floor": points[r["example"]][0], "reference": points[r["example"]][1]} if points and r["example"] in points else {}),
             "completion": stored,
         })  # fmt: skip
     return cases
@@ -566,7 +574,8 @@ def generate(audit_dir: Path, probes: list[str] | None = None, per_group: int = 
             "`repro --script`"
         )
     completions = json.loads((audit_dir / "completions.json").read_text())
-    cases = select(payload["results"], completions, probes, per_group)
+    points = (payload["meta"].get("scale") or {}).get("points") or {}  # reference-relative rewards: floor and reference per task
+    cases = select(payload["results"], completions, probes, per_group, points)
     if not cases:
         raise RuntimeError("no failing probe with a stored completion to reproduce")
     env = tomllib.loads((audit_dir / "env.toml").read_text())["env"]
@@ -580,6 +589,9 @@ def generate(audit_dir: Path, probes: list[str] | None = None, per_group: int = 
         module=loader.get("module") or loader.get("task"), load_args=loader.get("load_args", {}),
         cases=json.dumps(cases, ensure_ascii=True), depends=depends.get(loader["kind"], "verifiers and the environment package"),
     )  # fmt: skip
+    if points:
+        script += ("# Rewards are on the audit's reference-relative scale: 0 = the floor strategy, 1 = the reference\n"
+                   "# (falsepass.scale); each line also shows the raw reward and the task's floor and reference.\n")
     if loader["kind"] == "inspect":
         script += LOAD_INSPECT
     elif loader["kind"] == "hud":

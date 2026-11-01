@@ -240,6 +240,10 @@ def _await_audit(env: str, workdir: str, wait: float) -> dict[str, Any]:
         hint = ("\n\nCommon causes: a missing dependency (falsepass_init with `extra`), a dataset that needs a login, or "
                 "an environment automatic mode cannot script (falsepass_init with manual=true writes an adapter skeleton)."
                 if command == "audit" and not specific else "")  # fmt: skip
+        if command == "audit" and ("--manual" in tail or "--policies" in tail):  # the runner's stop message speaks CLI
+            hint += (f"\n\nThrough MCP: falsepass_init(target={_env_id(workdir, env)!r}, force=true, manual=true) for a task "
+                     f"with an answer to compare, or policies=true for a game, simulation or tool task; fill in adapter.py; "
+                     f"then falsepass_audit(env={env!r}).")
         raise RuntimeError(f"the {command} job of {env} failed after {elapsed} s (exit code {job.get('exit_code')}). End of "
                            f"{_audit_dir(workdir, env) / 'job.log'}:\n{tail}{hint}")  # fmt: skip
     if job.get("command") == "verify-fix":
@@ -252,8 +256,33 @@ def _await_audit(env: str, workdir: str, wait: float) -> dict[str, Any]:
         digest.update(status="finished", elapsed_s=elapsed)
         return digest
     digest = _json(_run(["results", env, "--json"], workdir, timeout=120))
-    digest.update(status="finished", elapsed_s=elapsed, summary_file=str(_audit_dir(workdir, env) / "summary.md"))
+    digest.update(elapsed_s=elapsed, summary_file=str(_audit_dir(workdir, env) / "summary.md"))
+    digest.setdefault("status", "finished")  # the digest's own verdict ("inconclusive") is kept
     return digest
+
+
+def _results(env: str, workdir: str) -> dict[str, Any]:
+    """The last finished digest; while a job runs on `env`, with the job's progress under
+    `job` (the progress alone when nothing has finished yet)."""
+    job = _job_state(workdir, env)
+    running = _await_audit(env, workdir, 0) if job and job["state"] == "running" else None
+    if running and not (_audit_dir(workdir, env) / "probe-results.json").is_file():
+        return running
+    digest = _json(_run(["results", env, "--json"], workdir, timeout=120))
+    if running:
+        command = job.get("command", "audit")
+        digest["job"] = {"command": command, **{k: running[k] for k in ("status", "elapsed_s", "log_tail", "next") if k in running}}
+        digest["note"] = f"The last finished audit; a {command} job is running now (see `job`). " + str(digest.get("note", ""))
+    return digest
+
+
+def _env_id(workdir: str, env: str) -> str:
+    import tomllib
+
+    try:
+        return tomllib.loads((_audit_dir(workdir, env) / "env.toml").read_text())["env"].get("id", env)
+    except (OSError, KeyError, ValueError):
+        return env
 
 
 def _safe(value: Any) -> Any:
@@ -459,12 +488,10 @@ def build():
 
     @tool
     def falsepass_results(env: Env, workdir: Workdir = ".") -> Any:
-        """The last completed probe run of an environment (headline, failing probes, static
-        hints). While an audit is still running, its progress instead."""
-        job = _job_state(workdir, env)
-        if job and job["state"] == "running":
-            return _await_audit(env, workdir, 0)
-        return _json(_run(["results", env, "--json"], workdir, timeout=120))
+        """The last finished probe run of an environment (headline, failing probes, static
+        hints). While a job runs on it, the same digest with the job's progress under `job`
+        (the progress alone when nothing has finished yet)."""
+        return _results(env, workdir)
 
     @tool
     def falsepass_completion(env: Env, completion_id: Annotated[str, _arg("a completion_id from the results digest")],

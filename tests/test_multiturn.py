@@ -54,7 +54,7 @@ class Words(Adapter):
 def test_rollout_scorer_drives_the_environment_loop():
     scorer, ex = make()
     good = asyncio.run(scorer.score(ex, "heron"))
-    assert good.reward == 1.0 and good.info["turns"] == 2
+    assert good.reward == 1.0 and good.info["turns"] == 2 and good.info["tools"] == []  # no tools: T6 stops after "Done."
     assert [m["role"] for m in good.info["transcript"]][-3:] == ["assistant", "user", "assistant"]
     assert asyncio.run(scorer.score(ex, "stork")).reward == 0.0
     scripted = [{"role": "assistant", "content": "heron"}, {"role": "assistant", "content": "stork"}]
@@ -108,7 +108,7 @@ def test_scripted_tool_calls_reach_the_environments_tools():
         {"role": "assistant", "content": "The balance is 10."},
     ]
     result = asyncio.run(scorer.score(ex, script))
-    assert result.reward == 1.0 and ledger == [5, 5]
+    assert result.reward == 1.0 and ledger == [5, 5] and result.info["tools"] == ["deposit"]
     assert "balance 10" in " ".join(str(m["content"]) for m in result.info["transcript"] if m["role"] == "tool")
     ledger.clear()
     skipped = asyncio.run(scorer.score(ex, [{"role": "assistant", "content": "The balance is 10."}]))

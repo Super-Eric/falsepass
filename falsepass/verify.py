@@ -18,8 +18,10 @@ yet, the unpatched script is run once first and its output stored as the baselin
 from __future__ import annotations
 
 import difflib
+import re
 import shlex
 import subprocess
+import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -168,6 +170,9 @@ def command_for(audit_dir: Path, script: str, source: Path | None) -> list[str]:
     return ["env", f"PYTHONPATH={overlay_path(audit_dir, source)}", *command] if overlay(source) else command
 
 
+CASE_LINE = re.compile(r"\s*(\S+(?: \S+)?)\s+expected (\S+)\s")  # a line of a script `falsepass repro` wrote
+
+
 def baseline(audit_dir: Path, script: str) -> tuple[Path, str, int]:
     """Run the unpatched script once and store its output, headed by the command."""
     output = audit_dir / (Path(script).stem + ".output.txt")
@@ -184,13 +189,15 @@ def twice(audit_dir: Path, script: str) -> dict:
     identical (what makes a repro count). Writes `repro-run.json` with the summary."""
     import hashlib
     import json
-    import re
     from datetime import date
 
     audit_dir = audit_dir.resolve()
     output = audit_dir / (Path(script).stem + ".output.txt")
     command = command_for(audit_dir, script, None)
-    runs = [subprocess.run(command, capture_output=True, text=True, check=False) for _ in range(2)]
+    runs = []
+    for n in (1, 2):
+        print(f"falsepass: repro: run {n} of 2 of {script}, in a fresh virtualenv", file=sys.stderr, flush=True)
+        runs.append(subprocess.run(command, capture_output=True, text=True, check=False))
     first, second = runs
     result: dict = {"script": script, "command": shlex.join(command), "exit_codes": [r.returncode for r in runs]}
     if first.returncode != 0 or not first.stdout.strip():
@@ -206,7 +213,7 @@ def twice(audit_dir: Path, script: str) -> dict:
                       differences=[f"{c.before!r} -> {c.after!r}" for c in changes(lines, second.stdout.splitlines())][:20])  # fmt: skip
         stored = audit_dir / "probe-results.json"
         top = json.loads(stored.read_text())["meta"].get("max_reward", 1.0) if stored.is_file() else 1.0
-        cases = [m.groups() for line in lines if (m := re.match(r"\s*(\S+(?: \S+)?)\s+expected (\S+)\s", line))]
+        cases = [m.groups() for line in lines if (m := CASE_LINE.match(line))]
         if cases:  # a script `falsepass repro` wrote: observed, expected, case
             def wrong(observed: str, expected: str) -> bool:
                 try:

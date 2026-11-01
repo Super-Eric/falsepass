@@ -34,7 +34,8 @@ def headline(results: list[dict[str, Any]]) -> dict[str, Any]:
         "no_control": sum(bool(r.get("no_control")) for r in results),
         "no_control_tasks": len({r["example"] for r in results if r.get("no_control")}),
         **({"false_pass_note": "the ceiling comes from a row whose last reply equals a known-good reply on that task: "
-                               "correct by chance, or wrong tries before the right one (read it)",
+                               "correct by chance, or wrong tries before the right one; in a multi-turn episode the last "
+                               "reply can be a no-op the solver also ends with (read it)",
             "false_pass_ceiling_other": other["score"] if other else None,
             "false_pass_other_via": f'{other["probe"]} {other["name"]}/{other["variant"]}' if other else None}
            if worst and worst.get("final_as_good") else {}),
@@ -58,11 +59,12 @@ def lazy_policy(answer_free: list[dict[str, Any]]) -> tuple[float | None, str | 
 
 
 def term_leak(results: list[dict[str, Any]], weights: dict[str, float]) -> list[tuple[str, float, float, float | None]]:
-    """Per reward term: how often and how much it paid on known-bad completions.
-    Rows are (term, share of known-bad runs with a non-zero value, mean value, weight)."""
+    """Per reward term: how often and how much it paid on known-bad completions and on fixed
+    strategies (expected `lazy`). Rows are (term, share of such runs with a non-zero value,
+    mean value, weight)."""
     values: dict[str, list[float]] = defaultdict(list)
     for r in results:
-        if r["expected"] == KNOWN_BAD and r["score"] is not None and not r.get("no_control"):
+        if r["expected"] in (KNOWN_BAD, "lazy") and r["score"] is not None and not r.get("no_control"):
             for term, value in (r.get("metrics") or {}).items():
                 if term not in ("num_turns", "raw_reward"):  # raw_reward: the unscaled reward (falsepass.scale)
                     values[term].append(float(value))
@@ -122,6 +124,7 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
             "probe": probe, "name": name, "variant": variant, "expected": expected,
             "runs": len(rows), "failed": len(bad),
             "scores": [r["score"] for r in bad[:5]],
+            **({"scores_note": f"the first 5 of {len(bad)} failed rows"} if len(bad) > 5 else {}),
             "detail": first.get("detail"), "example": first.get("example"),
             "completion": completion[:example_chars] if isinstance(completion, str) and full is None else completion,
             "completion_id": first.get("completion_id") or None,
@@ -172,7 +175,8 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
                      "row), then audit again. A runtime or packaging error is the environment's set-up, not its grader."),
         }  # fmt: skip
         failing = []
-    elif validity.startswith("no control") and (flat := flat_scores(payload["results"])):
+    elif validity.startswith("no control") and (flat := flat_scores(payload["results"], meta.get("max_reward", 1.0),
+                                                                     meta.get("bad_tolerance", 0.0))):
         extra = {
             "status": "inconclusive",
             "reason": f"every reply tried scored the same on each of {flat} tasks: the replies did not reach what is "
@@ -187,6 +191,14 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
     elif len(failing) > MAX_FAILING:
         extra = {"failing_omitted": len(failing) - MAX_FAILING}
         failing = failing[:MAX_FAILING]
+    if validity.startswith("no control") and extra.get("status") != "inconclusive":
+        # Task-blind policies only: say what each earned, and which tasks were not counted.
+        extra["facts_that_hold"] = answer_free_means(payload["results"], meta.get("max_reward", 1.0), meta.get("bad_tolerance", 0.0))
+        if not_counted := no_control_tasks(payload["results"]):
+            extra["not_counted"] = not_counted
+        extra["next"] = ("Task-blind policies only: a paid row is a lead; a row not paid says nothing about what a task-aware "
+                         "policy could earn. Write policies for this task (`falsepass init <target> --policies --force`; MCP: "
+                         "policies=true, force=true), with a solver as the control")  # fmt: skip
     return {
         **extra,
         "environment": meta["environment"],
@@ -204,10 +216,13 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
     }
 
 
-def flat_scores(results: list[dict[str, Any]]) -> int | None:
+def flat_scores(results: list[dict[str, Any]], max_reward: float = 1.0, tolerance: float = 0.0) -> int | None:
     """The number of tasks when every scored probe row (P12 aside) earned the same score on each
-    task, on at least two tasks with at least two rows each; else None. Seen on a hedging
-    simulation played without a solver: ten different replies, one score per task."""
+    task, on at least two tasks with at least two rows each, and that one score is on most
+    tasks neither nothing nor the maximum; else None. Seen on a hedging simulation played
+    without a solver: ten different replies, one score per task, so the replies never reached
+    what is graded. A task that pays every policy nothing, or every policy the maximum (a
+    refusal task), was graded and counts as reached."""
     by: dict[str, set[float]] = defaultdict(set)
     rows: dict[str, int] = defaultdict(int)
     for r in results:
@@ -215,7 +230,41 @@ def flat_scores(results: list[dict[str, Any]]) -> int | None:
             by[r["example"]].add(round(r["score"], 9))
             rows[r["example"]] += 1
     tasks = [k for k in by if rows[k] >= 2]
-    return len(tasks) if len(tasks) >= 2 and all(len(by[k]) == 1 for k in tasks) else None
+    if len(tasks) < 2 or not all(len(by[k]) == 1 for k in tasks):
+        return None
+    unreached = [k for k in tasks if not (abs(next(iter(by[k])) - tolerance) <= 1e-9 or next(iter(by[k])) >= max_reward - 1e-9)]
+    return len(tasks) if len(unreached) * 2 > len(tasks) else None
+
+
+def answer_free_means(results: list[dict[str, Any]], max_reward: float = 1.0, tolerance: float = 0.0) -> list[str]:
+    """One line per answer-free strategy: its mean, and on how many tasks it earned the maximum
+    or nothing. What a run without a control can say."""
+    by: dict[str, list[float]] = defaultdict(list)
+    for r in results:
+        if r.get("answer_free") and r["score"] is not None and r["probe"] != "P12":
+            by[f'{r["probe"]} {r["name"]}/{r["variant"]}'].append(r["score"])
+    lines = []
+    for name, scores in sorted(by.items(), key=lambda kv: -sum(kv[1]) / len(kv[1])):
+        full = sum(s >= max_reward - 1e-9 for s in scores)
+        nothing = sum(abs(s - tolerance) <= 1e-9 for s in scores)  # a score below the tolerance (a loss) is neither
+        lines.append(f"{name}: mean {sum(scores) / len(scores):.3g} over {len(scores)} tasks "
+                     f"({full} at the maximum, {nothing} at nothing)")  # fmt: skip
+    return lines[:12]
+
+
+def no_control_tasks(results: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Tool-policy rows not counted (doing nothing earns the maximum on that task): the tasks,
+    with one completion id each, so they can be read."""
+    rows = [r for r in results if r.get("no_control")]
+    if not rows:
+        return None
+    tasks: dict[str, str] = {}
+    for r in rows:
+        if r["example"] not in tasks or r["variant"] == "says_done_without_any_tool_call":
+            tasks[r["example"]] = r.get("completion_id") or ""
+    return {"rows": len(rows), "tasks": [{"task": k, "completion_id": v} for k, v in tasks.items()],
+            "why": "doing nothing earns the maximum on these tasks but not on every task: refusing is presumably right "
+                   "there, so an answer-free policy cannot be told apart from a correct one (read them)"}  # fmt: skip
 
 
 def unscored(results: list[dict[str, Any]]) -> tuple[int, int, str] | None:
@@ -387,9 +436,10 @@ def summary(payload: dict[str, Any]) -> str:
     if leaks:
         lines += [
             "",
-            "## Reward terms on known-bad completions",
+            "## Reward terms on known-bad and fixed-strategy completions",
             "",
-            "Which part of the reward pays when the answer is wrong. A correctness term should be 0 everywhere.",
+            "Which part of the reward pays when the answer is wrong, or when a fixed strategy that never reads the task "
+            "plays (expected `lazy`). A correctness term should be 0 everywhere.",
             "",
             "| Reward term | Weight | Non-zero on | Mean value |",
             "|---|---|---|---|",

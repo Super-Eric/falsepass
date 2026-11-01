@@ -11,7 +11,7 @@ Everything an audit writes lives in `audits/<env>/` (or the folder given with `-
 | `completions.json` | the full text of every completion a result refers to, keyed by `completion_id` | `falsepass audit` |
 | `job.json`, `job.log` | an audit or reach job started from the MCP server: its `command`, state (`running`, `finished`, `failed`), pid, start time, and its console output | `falsepass mcp` |
 | `reach/<probe>.json`, `reach/latest.json` | per-row counts over many tasks (below) | `falsepass reach` |
-| `repro_auto.py` | stand-alone script that re-scores the failing completions | `falsepass repro` |
+| `repro_auto.py` | stand-alone script that re-scores the failing completions; under a reference-relative scale each line shows the scaled score and, in parentheses, the raw reward with the task's floor and reference | `falsepass repro` |
 | `repro_auto.output.txt`, `repro-run.json` | the first of two runs of a repro script, headed by its command and whether the second was identical; the comparison as JSON (below) | `falsepass repro --run` |
 | `REPORT.draft.md` | candidate findings to review | `falsepass draft` |
 
@@ -79,7 +79,9 @@ Everything an audit writes lives in `audits/<env>/` (or the folder given with `-
 A digest of the same run, small enough to hand to a model (numbers from `falsepass demo`).
 When the control failed, at least half the probe rows produced no score, or (with no
 control) every reply scored the same on each task, the digest has
-`"status": "inconclusive"`, a `reason`, `next`, and no headline (see the agents page):
+`"status": "inconclusive"`, a `reason`, `next`, and no headline (see the agents page). A
+finished run of task-blind policies (no control) adds `facts_that_hold`, `not_counted` and
+`next`. `scores` lists the first five failed rows; `scores_note` says so when there are more:
 
 ```json
 {

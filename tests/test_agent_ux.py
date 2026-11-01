@@ -96,6 +96,68 @@ def test_a_no_control_run_where_every_reply_scores_the_same_is_inconclusive():
     assert "scale_points" in digest["next"] and digest["failing"] == []
     rows[0]["score"] = -0.5  # one reply differs: the run says something
     assert report.digest(payload).get("status") != "inconclusive"
+    # Graded alike for every policy: nothing on one task, the maximum on another (a refusal task). Reached, so finished.
+    graded = [_row(p, "v", e, s) for e, s in (("a", 0.0), ("b", 1.0)) for p in ("P3", "P4", "T5")]
+    for r in graded:
+        r["passed"], r["no_control"] = r["score"] == 0.0, r["score"] == 1.0
+    digest = report.digest({**payload, "results": graded})
+    assert digest.get("status") != "inconclusive" and digest["headline"]["no_control"] == 3
+    assert digest["facts_that_hold"] == [f"{p} n/v: mean 0.5 over 2 tasks (1 at the maximum, 1 at nothing)" for p in ("P3", "P4", "T5")]
+    assert digest["not_counted"]["tasks"] == [{"task": "b", "completion_id": ""}] and "policies=true" in digest["next"]
+
+
+def test_the_scores_list_says_when_it_is_a_sample():
+    rows = [_row("P3", "v", f"t{i}", 1.0) for i in range(7)]
+    payload = {"meta": {"environment": "t", "adapter": {"validity": "ok"}}, "results": rows, "static": []}
+    failing = report.digest(payload)["failing"][0]
+    assert len(failing["scores"]) == 5 and failing["scores_note"] == "the first 5 of 7 failed rows"
+    assert "scores_note" not in report.digest({**payload, "results": rows[:5]})["failing"][0]
+
+
+def test_the_audit_tool_keeps_the_digests_own_status(tmp_path):
+    """falsepass_audit returned "finished" for a run whose digest says "inconclusive" (dogfood 10)."""
+    import time
+
+    from falsepass import mcp_server
+
+    folder = tmp_path / "audits" / "t"
+    folder.mkdir(parents=True)
+    (folder / "env.toml").write_text('[env]\nid = "o/t"\n')
+    payload = {"meta": {"environment": "o/t", "date": "d", "falsepass": "x", "versions": {}, "examples": 1, "max_reward": 1.0,
+                        "adapter": {"validity": "inconclusive: the reference scored 0.000 and an empty completion 0.000",
+                                    "format": "f", "answers": "open", "turns": "single-turn", "note": ""}},
+               "results": [], "static": [], "rewardlint": None}
+    (folder / "probe-results.json").write_text(json.dumps(payload))
+    now = time.time()
+    (folder / "job.json").write_text(json.dumps({"env": "t", "command": "audit", "args": [], "pid": 0, "started": now - 5,
+                                                 "ended": now, "state": "finished", "exit_code": 0}))
+    done = mcp_server._await_audit("t", str(tmp_path), 0)
+    assert done["status"] == "inconclusive" and done["elapsed_s"] == 5
+    assert mcp_server._results("t", str(tmp_path))["status"] == "inconclusive"
+
+
+def test_results_while_a_job_runs_keep_the_last_digest(tmp_path, monkeypatch):
+    from falsepass import mcp_server
+
+    folder = tmp_path / "audits" / "t"
+    folder.mkdir(parents=True)
+    (folder / "env.toml").write_text('[env]\nid = "o/t"\n')
+    payload = {"meta": {"environment": "o/t", "date": "d", "falsepass": "x", "versions": {}, "examples": 1, "max_reward": 1.0,
+                        "adapter": {"validity": "ok", "format": "f", "answers": "open", "turns": "single-turn", "note": ""}},
+               "results": [], "static": [], "rewardlint": None}
+    (folder / "probe-results.json").write_text(json.dumps(payload))
+    import subprocess
+    import time
+
+    sleeper = subprocess.Popen(["sleep", "60"], start_new_session=True)  # stands in for a reach job started earlier
+    (folder / "job.json").write_text(json.dumps({"env": "t", "command": "reach", "args": [], "pid": sleeper.pid,
+                                                 "started": time.time(), "state": "running"}))
+    try:
+        digest = mcp_server._results("t", str(tmp_path))
+        assert digest["headline"] is not None and digest["job"]["status"] == "running" and digest["job"]["command"] == "reach"
+        assert digest["note"].startswith("The last finished audit; a reach job is running now")
+    finally:
+        mcp_server._cancel("t", str(tmp_path))
 
 
 def test_a_trace_falsepass_cannot_build_is_not_blamed_on_the_environment():
@@ -143,6 +205,7 @@ def test_policy_skeleton_is_valid_python(tmp_path, monkeypatch, capsys):
     source = (tmp_path / "audits" / name / "adapter.py").read_text()
     ast.parse(source)
     assert "policies.after_the_end" in source and "special_number_scripts" in source
+    assert "tool_mode = True" in source and "episode_probes = [policy_probes]" in source  # no text probes on a game
 
 
 def test_offline_keeps_the_dataset_library_off_the_hub(tmp_path, monkeypatch, capsys):

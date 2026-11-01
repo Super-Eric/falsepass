@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- From the tenth dogfood round: `falsepass_audit` keeps the digest's own status (an
+  `inconclusive` run was returned as `finished`); a no-control run is inconclusive only when
+  the one score per task is on most tasks neither nothing nor the maximum (tasks graded alike
+  for every policy, such as refusal tasks, count as reached); a finished run of task-blind
+  policies lists `facts_that_hold` (each policy's mean), `not_counted` (the refusal tasks,
+  with a completion id each) and `next`; `falsepass_results` returns the last finished digest
+  with the running job under `job`; `verify-fix` and `repro --run` print their stages to the
+  log; the v0 policy skeleton sets `tool_mode` (no text probes, no `empty_answer` rows) and a
+  rollout reports the tools offered, so T6 stops after "Done." where there are none; a repro
+  under a reference-relative scale prints the scaled score and the raw one with the task's
+  floor and reference; `scores_note` says when `scores` is a sample; the reward-terms table
+  includes fixed-strategy rows; the MCP failure hint names falsepass_init's arguments.
 - When the reference answers are JSON objects (a plan, a schedule, an action), the inferred
   adapter says so (`answers`: "JSON objects: another task's reference stands in for a wrong
   answer"), and the digest and the draft put a note on paid P5, P6, P7 and X1 rows: a validity

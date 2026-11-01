@@ -48,3 +48,28 @@ def test_an_overlay_of_a_local_source_is_used_as_it_is(tmp_path):
     patched = tmp_path / "patched"
     (patched / "demo").mkdir(parents=True)
     assert verify.overlay_path(audit, patched) == patched  # nothing to fetch for a local environment
+
+
+def test_a_repro_under_a_reference_relative_scale_prints_both_scales(tmp_path):
+    """Under `scale_points` the audit's rows are scaled; the repro printed the raw reward against
+    "expected 0", a false statement on the raw scale (dogfood 10)."""
+    import json
+
+    from falsepass import repro, verify
+
+    folder = tmp_path / "e"
+    folder.mkdir()
+    (folder / "env.toml").write_text('[env]\nid = "o/e"\npackage = "e"\nversion = "1.0"\nmodule = "e"\n'
+                                     'index = "https://example.invalid/simple/"\nverifiers = "0.4.0"\n')
+    row = {"probe": "X1", "name": "policy", "variant": "one", "example": "row-98", "expected": "zero", "score": 0.5,
+           "passed": False, "detail": "", "completion": "x", "completion_id": "c1", "answer_free": True, "metrics": {}, "errors": []}
+    meta = {"environment": "o/e", "date": "d", "falsepass": "x", "versions": {}, "examples": 1, "max_reward": 1.0,
+            "loader": {"kind": "v0-rollout", "module": "e", "load_args": {}, "getter": "get_dataset"},
+            "scale": {"kind": "reference-relative", "points": {"row-98": [1.1973, 1.299]}, "excluded": {}, "tasks": 1}}
+    (folder / "probe-results.json").write_text(json.dumps({"meta": meta, "results": [row], "static": [], "rewardlint": None}))
+    (folder / "completions.json").write_text(json.dumps({"c1": [{"role": "assistant", "content": "buy 1"}]}))
+    script = repro.generate(folder).read_text()
+    assert '"floor": 1.1973' in script and '"reference": 1.299' in script and "reference-relative scale" in script
+    assert "raw {raw:.6f}; floor" in script
+    line = " 0.566000  expected 0     X1 policy/one on row-98  (raw 1.247660; floor 1.197300, reference 1.299000)"
+    assert verify.CASE_LINE.match(line).groups() == ("0.566000", "0")  # the scale note does not break the run's count

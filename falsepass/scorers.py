@@ -327,8 +327,9 @@ class V0RolloutScorer(V0RubricScorer):
         if turns is None and state is not None:  # a real client: count the model turns the rollout recorded
             turns = len(state.get("trajectory") or [])
         script = [_script_entry(m) for m in (state.get("completion") or []) if _role(m) == "assistant"] if state is not None else []
+        tools = [getattr(t, "__name__", str(t)) for t in (getattr(self.env, "tools", None) or [])]  # []: T6 stops after "Done."
         info = {"turns": turns, "stop": state.get("stop_condition") if state is not None else None,
-                "transcript": transcript, "script": script}  # fmt: skip
+                "transcript": transcript, "script": script, "tools": tools}  # fmt: skip
         if not ok or state is None:
             return Score(None, {}, list(errors), info)
         return Score(float(state["reward"]), dict(state.get("metrics") or {}), list(errors), info)

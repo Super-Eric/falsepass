@@ -70,7 +70,7 @@ running audit is found again by `falsepass_audit_status`.
 | `falsepass_audit` | `env`, `n` (tasks, default 25), `search` (mutation budget), `wait` (seconds, default 45), `source` (a patched local copy), `offline` (a cached Hugging Face dataset without the Hub check; also on reach, repro and verify_fix) | the results digest below with `"status": "finished"`, or `"status": "running"` if the audit needs longer |
 | `falsepass_audit_status` | `env`, `wait` | the same, for an audit already started: results, or `"running"` with the latest progress lines |
 | `falsepass_cancel` | `env` | stops the background job of `env` (audit, reach, repro or verify-fix); results stored earlier stay |
-| `falsepass_results` | `env` | the digest of the last run (progress instead while one is running) |
+| `falsepass_results` | `env` | the digest of the last finished run; while a job runs on that environment, also its progress under `job` (the progress alone when nothing has finished yet) |
 | `falsepass_completion` | `env`, `completion_id` | the full text of one completion; the digest shows only its start and end |
 | `falsepass_reach` | `env`, `probe` (e.g. `["P15/denied"]`) and/or `templates` (completions of your own, e.g. `["\\boxed{{answer} \\text{ is wrong}}"]`), `expect` (`zero` or `full`, for templates), `tasks` (0 = every task), `wait` | per probe row, per template and for the reference (P1) as a control: tasks counted, how many failed, full-reward and error counts, the failing task keys, up to three failing completions, and for a template the text it became on the first task; runs in the background like an audit |
 | `falsepass_repro` | `env`, `probe` (e.g. `["P5"]`); `run` (true: also run it twice), `script` (run an existing script instead), `wait` | where the stand-alone repro script was written; with `run`, whether the two runs were identical, where the first is stored, and how many cases still fail (in the background like an audit) |
@@ -146,16 +146,22 @@ customer-service simulation or a tool task has none: the reward depends on what 
 does over several turns. There, an audit ends `"status": "inconclusive"` (the reference
 and an empty reply earned about the same) or, for tool tasks, runs only the generic tool
 policies. The digest then lists only `facts_that_hold`: rows built without the answer,
-such as "an empty reply earned 1.0 on 20 of 20 tasks", which are true either way.
+such as "an empty reply earned 1.0 on 20 of 20 tasks", which are true either way. A finished
+run of task-blind policies also carries `facts_that_hold` (each policy's mean, and on how
+many tasks it earned the maximum or nothing), `not_counted` (the tasks where doing nothing
+earns the maximum, with a completion id each, so you can read them) and `next`.
+`falsepass_audit` returns the digest's own status: `inconclusive` stays `inconclusive`.
 
 A run is also `"status": "inconclusive"` when at least half its probe rows produced no score
 (the environment raised, or an episode did not finish): `reason` quotes the first error. That
 is usually the environment's set-up failing (a runtime, a package, a blocked outside call),
 not its grader; fix it and audit again. When the error is "could not build trace", it is
 falsepass's side instead, and `next` says what to do. And it is `"inconclusive"` when no
-reference could be replayed and every reply tried scored the same on each task (a
-simulation or a P&L: the replies never reached what is graded); write policies, and for a
-reward with no fixed maximum give `scale_points`.
+reference could be replayed and every reply tried scored the same on each task, that score
+being on most tasks neither nothing nor the maximum (a simulation or a P&L: the replies
+never reached what is graded; a task that pays every policy nothing, or every policy the
+maximum, was graded); write policies, and for a reward with no fixed maximum give
+`scale_points`.
 
 Tasks that carry no reference answer (for example the flawed items of a premise-checking
 set, whose right reply is an abstention) are left out of an automatic audit and of `reach`.
