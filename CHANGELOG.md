@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Second write-up: a case study of one grader defect from audit to merged upstream fix
+  (`site/content/blog/`).
+
 ## 0.13.0 — 2026-11-01
 
 - From the tenth dogfood round: `falsepass_audit` keeps the digest's own status (an
