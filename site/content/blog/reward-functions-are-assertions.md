@@ -210,9 +210,10 @@ HUD environments.
 ## Sending fixes upstream
 
 Where a maintainer had an active public repository and the fix was small, I sent a
-pull request, with a test wherever the repository had tests for that code. One has been
-merged; the others are still open. Where the right behaviour was a judgment call, I
-asked instead. Strictness the prompt asks for isn't a defect on its own, and I only
+pull request, with a test wherever the repository had tests for that code. Two have been
+merged, one of them after the maintainer re-ran the scorer on every task in the set and
+confirmed the numbers; the others are still open. Where the right behaviour was a
+judgment call, I asked instead. Strictness the prompt asks for isn't a defect on its own, and I only
 noted it as low priority or where it sat next to leniency in the same grader. A grader
 that's exploitable on purpose, because the environment studies reward hacking, I didn't
 report at all.
