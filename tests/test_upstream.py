@@ -81,3 +81,18 @@ def test_a_search_hit_without_the_audited_files_is_not_presented_as_the_source(t
     (audit / "src" / "demo" / "env.py").write_text("a = 1\n")
     text = upstream.describe(upstream.locate(audit, FakeGitHub({"other/file.py": ""}), repo="other/unrelated"))
     assert text.startswith("no repository found that holds the audited files")
+
+
+def test_a_file_of_the_same_name_with_unrelated_content_does_not_name_the_source(tmp_path: Path):
+    audit = tmp_path / "demo"
+    (audit / "src" / "demo").mkdir(parents=True)
+    (audit / "env.toml").write_text('[env]\nid = "o/demo"\npackage = "demo"\nmodule = "demo"\nversion = "1"\n')
+    (audit / "src" / "demo" / "grade.py").write_text("import json\n\n\ndef reward(completion, answer):\n    return float(completion == answer)\n")
+    gh = FakeGitHub({"environments/demo/demo/grade.py": "class SchemaDrift:\n    def report(self):\n        return {}\n"})
+    [match] = upstream.locate(audit, gh)
+    assert match.same == [] and match.differ == [] and match.unrelated == ["demo/grade.py"]
+    assert match.verdict == "no audited file found (a file of the same name is unrelated)"
+    text = upstream.describe([match])
+    assert text.startswith("no repository found that holds the audited files") and "same name, unrelated content: demo/grade.py" in text
+    assert upstream.related("a = 1\nb = 2\nc = 3\n", "a = 1\nx = 9\ny = 8\n")  # a third of the lines shared: a rewrite, still related
+

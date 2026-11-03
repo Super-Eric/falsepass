@@ -51,6 +51,16 @@ def normalise(text: str) -> str:
     return "\n".join(line.rstrip() for line in text.replace("\r\n", "\n").split("\n")).strip()
 
 
+def related(upstream: str, audited: str) -> bool:
+    """Whether two versions of a file share enough lines to be the same module: at least a third of the audited
+    file's distinct non-blank lines occur in the upstream one. A file that merely has the same name fails this."""
+    lines = {line.strip() for line in audited.splitlines() if line.strip()}
+    if not lines:
+        return True
+    present = {line.strip() for line in upstream.splitlines() if line.strip()}
+    return len(lines & present) * 3 >= len(lines)
+
+
 @dataclass
 class Match:
     repo: str
@@ -58,12 +68,13 @@ class Match:
     same: list[str] = field(default_factory=list)
     differ: list[str] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
+    unrelated: list[str] = field(default_factory=list)  # a file of the same name whose content shares little with the audit
     facts: dict[str, Any] = field(default_factory=dict)
 
     @property
     def verdict(self) -> str:
         if not self.same and not self.differ:
-            return "no audited file found"
+            return "no audited file found" + (" (a file of the same name is unrelated)" if self.unrelated else "")
         if not self.differ and not self.missing:
             return "identical to the audit"
         if self.same:
@@ -177,16 +188,21 @@ def compare(gh: GitHub, repo: str, files: dict[str, str]) -> Match:
         most = max(prefixes.values())
         best: tuple[int, int] | None = None
         for prefix in sorted((p for p in prefixes if prefixes[p] == most), key=len)[:5]:
-            same, differ, missing = [], [], []
+            same, differ, missing, unrelated = [], [], [], []
             for rel, text in files.items():
                 if prefix + rel not in tree:
                     missing.append(rel)
                     continue
                 upstream = gh.api(f"repos/{repo}/contents/{prefix + rel}?ref={branch}", raw=True)
-                (same if normalise(upstream) == normalise(text) else differ).append(rel)
-            if best is None or (len(same), -len(prefix)) > best:
-                best = (len(same), -len(prefix))
-                match.prefix, match.same, match.differ, match.missing = prefix, same, differ, missing
+                if normalise(upstream) == normalise(text):
+                    same.append(rel)
+                elif related(upstream, text):
+                    differ.append(rel)
+                else:
+                    unrelated.append(rel)  # the same file name, another module: not evidence of the source
+            if best is None or (len(same), len(differ), -len(prefix)) > best:
+                best = (len(same), len(differ), -len(prefix))
+                match.prefix, match.same, match.differ, match.missing, match.unrelated = prefix, same, differ, missing, unrelated
     match.facts = facts(gh, repo, info)
     if match.prefix or match.same:
         match.facts |= packaging(gh, repo, tree, match.prefix, branch)
@@ -241,6 +257,8 @@ def describe(matches: list[Match]) -> str:
         rows.append(f"{m.repo}  {m.verdict}  (path {m.prefix or '/'}: {len(m.same)} same, {len(m.differ)} differ, {len(m.missing)} missing)")
         if m.differ:
             rows.append(f"    differ: {', '.join(m.differ)}")
+        if m.unrelated:
+            rows.append(f"    same name, unrelated content: {', '.join(m.unrelated)}")
         if f.get("upstream_version") or f.get("upstream_dependencies"):
             moved = f.get("upstream_version") not in (None, f.get("audited_version"))
             rows.append(

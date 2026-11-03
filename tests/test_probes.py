@@ -644,6 +644,23 @@ def test_wrong_answers_keep_the_kind_of_the_reference():
     assert adapter.wrong_answer(adapter.pool[1]) == "$12$"  # not "Yes" for a numeric answer
 
 
+def test_a_json_reference_gets_a_wrong_answer_of_the_same_shape():
+    import json
+
+    from falsepass.auto import AutoAdapter, json_structure, values_replaced
+    from falsepass.model import Example
+
+    adapter = AutoAdapter({"id": "t", "framework": "verifiers"})
+    reference = '{"id": 1, "username": "agent_1", "is_admin": false, "score": 10.5, "tags": ["a"], "parameters": {"metric_id": 3, "note": null}}'
+    adapter.pool = [Example("a", "q", reference), Example("b", "q", '{"id": 2, "username": "agent_2"}')]
+    adapter.open_ended, adapter.closed = True, False  # a long JSON reference is classed open-ended; the shape still wins
+    wrong = json.loads(adapter.wrong_answer(adapter.pool[0]))
+    assert wrong == {"id": 8, "username": "agent_1_x", "is_admin": True, "score": 17.5, "tags": ["a_x"], "parameters": {"metric_id": 10, "note": None}}
+    assert list(wrong) == list(json.loads(reference))  # every key kept, in order
+    assert json_structure("42") is None and json_structure("not json {") is None and json_structure("{}") is None
+    assert values_replaced([]) == [] and values_replaced("") == "x"
+
+
 def test_a_run_where_most_rows_have_no_score_is_inconclusive():
     def row(probe, expected, score, errors=()):
         return {"probe": probe, "name": "n", "variant": "v", "example": "t-0", "expected": expected, "score": score,

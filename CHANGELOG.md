@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- A JSON reference (an object or array) gets a wrong answer of the same shape: every key and type kept, every value changed. P6 then shows what a grader pays for the shape alone; before, such references were classed open-ended and the wrong answer was a sentence (on one environment the shape alone earned 0.75 and P6 said nothing).
+- `upstream` no longer presents a repository as the rewritten source when the only match is a file of the same name with unrelated content; it says "same name, unrelated content" and keeps looking.
 - Automatic mode on a v1 taskset reads the reference from `expected`, `reference`, `key`, `target`, `solution`, `gold` or `ground_truth` in the task data when `answer` is empty, a dict or list as a JSON document, and says so in a note; two tasksets whose graders compare a JSON reply field by field against an `expected` dict were refused as "no reference answers found".
 - `init hf:owner/space --dir DIR` clones the Space under `DIR/<name>/space`; it went under `./audits` whatever `--dir` said.
 - `init` on a Space names the files that are Git LFS pointers (the data was not fetched by the shallow clone) and says how to fetch them; a load that read one failed with a gzip error.

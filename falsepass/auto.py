@@ -103,6 +103,35 @@ def is_number(text: str) -> bool:
     return bool(re.fullmatch(r"-?\$?\d[\d,]*(\.\d+)?", text.strip()))
 
 
+def json_structure(text: str) -> dict | list | None:
+    """The JSON object or array `text` is, or None for anything else (a number, a string, prose)."""
+    text = text.strip()
+    if not text or text[0] not in "{[":
+        return None
+    try:
+        value = json.loads(text)
+    except ValueError:
+        return None
+    return value if isinstance(value, (dict, list)) and value else None
+
+
+def values_replaced(value: Any) -> Any:
+    """`value` with every leaf changed and every key and type kept: a wrong answer in the right shape."""
+    if isinstance(value, dict):
+        return {k: values_replaced(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [values_replaced(v) for v in value]
+    if isinstance(value, bool):
+        return not value
+    if isinstance(value, int):
+        return value + 7
+    if isinstance(value, float):
+        return value + 7.0
+    if isinstance(value, str):
+        return value + "_x" if value else "x"
+    return value  # None stays None: JSON has no other null-like value to swap it for
+
+
 V1_REFERENCE_FIELDS = ("answer", "expected", "reference", "key", "target", "solution", "gold", "ground_truth")
 """Task-data fields read as the reference answer of a v1 task, in order: `answer` is verifiers' own name; the rest
 are what tasksets call it when they keep a structure (a dict of expected values) instead of a string."""
@@ -583,6 +612,10 @@ class AutoAdapter(Adapter):
 
     def wrong_answer(self, example: Example) -> str:
         answer = example.answer.strip()
+        if (document := json_structure(answer)) is not None:
+            # A JSON reference (a repaired object, a plan, a set of expected values): the wrong answer keeps every
+            # key and type and changes every value, so a term that pays for the shape alone shows up in P6.
+            return json.dumps(values_replaced(document), ensure_ascii=False)
         if self.open_ended:
             # A passage that answers nothing. Another task's reference is probed separately
             # (X1): for open-ended tasks that measures task-independence, not wrongness.
