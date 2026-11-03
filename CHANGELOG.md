@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `init hf:owner/space --dir DIR` clones the Space under `DIR/<name>/space`; it went under `./audits` whatever `--dir` said.
+- `init` on a Space names the files that are Git LFS pointers (the data was not fetched by the shallow clone) and says how to fetch them; a load that read one failed with a gzip error.
 - Second write-up: a case study of one grader defect from audit to merged upstream fix
   (`site/content/blog/`).
 

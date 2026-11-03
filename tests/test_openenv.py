@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import subprocess
 import sys
 import textwrap
 import tomllib
@@ -281,6 +282,36 @@ def test_init_names_the_classes_and_drops_requirements(tmp_path: Path, monkeypat
     assert env["extra"] == ["fastapi", "starlette", "requests"]
     assert env["env_class"] == "env.core:PinnedEnv" and env["action_class"] == "env.models:PinnedAction"
     assert cli.install_args(env) == ["--with", "openenv==0.9.0", "--with", "fastapi", "--with", "starlette", "--with", "requests"]
+
+
+def test_init_clones_a_space_under_dir_and_names_lfs_pointers(tmp_path: Path, monkeypatch, capsys):
+    from falsepass import hub
+
+    monkeypatch.setattr(hub, "pypi_version", lambda package: "0.9.0")
+    monkeypatch.chdir(tmp_path)
+
+    def fake_clone(command, **kwargs):
+        if command[:2] == ["git", "-C"]:  # the commit recorded after the clone
+            return subprocess.CompletedProcess(command, 0, "0123abcd\n", "")
+        assert command[:4] == ["git", "clone", "--depth", "1"] and command[4] == "https://huggingface.co/spaces/owner/Some_Space"
+        clone = Path(command[5])
+        (clone / "data").mkdir(parents=True)
+        (clone / "openenv.yaml").write_text("spec_version: 1\nname: some_space\napp: server.app:app\n")
+        (clone / "requirements.txt").write_text("openenv-core==0.2.3\n")
+        (clone / "data" / "tasks.jsonl.gz").write_bytes(
+            b"version https://git-lfs.github.com/spec/v1\noid sha256:0123\nsize 4242\n")
+        (clone / "data" / "small.json").write_text("{}")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(cli.subprocess, "run", fake_clone)
+    assert cli.main(["init", "hf:owner/Some_Space", "--dir", str(tmp_path / "work")]) == 0
+    assert (tmp_path / "work" / "some-space" / "space" / "openenv.yaml").is_file()  # the clone lands under --dir, not ./audits
+    assert not (tmp_path / "audits").exists()
+    env = tomllib.loads((tmp_path / "work" / "some-space" / "env.toml").read_text())["env"]
+    assert env["id"] == "hf/owner/Some_Space"
+    err = capsys.readouterr().err
+    assert "1 file(s) in the Space are Git LFS pointers" in err and "data/tasks.jsonl.gz" in err and "lfs pull" in err
+    assert openenv_support.lfs_pointers(tmp_path / "work" / "some-space" / "space") == ["data/tasks.jsonl.gz"]
 
 
 def test_decisions_spelled_as_text_are_not_the_free_text_field():

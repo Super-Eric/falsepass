@@ -805,6 +805,25 @@ def manifest(folder: Path) -> dict[str, str]:
     return found
 
 
+LFS_POINTER = b"version https://git-lfs.github.com/spec/v1"
+
+
+def lfs_pointers(folder: Path) -> list[str]:
+    """Files under `folder` that are Git LFS pointers (the data was not fetched): paths relative to the folder, sorted."""
+    found = []
+    for path in folder.rglob("*"):
+        if ".git" in path.parts or not path.is_file() or path.stat().st_size > 1024:
+            continue
+        try:
+            with path.open("rb") as handle:
+                head = handle.read(len(LFS_POINTER))
+        except OSError:
+            continue
+        if head == LFS_POINTER:
+            found.append(path.relative_to(folder).as_posix())
+    return sorted(found)
+
+
 def uses_openenv(path: Path) -> bool:
     """An OpenEnv environment folder: an openenv.yaml, or a server/app.py that imports openenv."""
     folder = path if path.is_dir() else path.parent

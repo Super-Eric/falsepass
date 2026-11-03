@@ -465,7 +465,7 @@ def scaffold(args) -> int:
     fresh_clone = False
     if space:  # an OpenEnv environment on the Hugging Face Hub: a shallow clone, kept next to the audit
         owner, repo = space.groups()
-        clone = Path("audits") / (args.name or repo.lower().replace("_", "-")) / "space"
+        clone = Path(args.dir or "audits") / (args.name or repo.lower().replace("_", "-")) / "space"
         fresh_clone = not clone.parent.exists()
         if not clone.is_dir():
             print(f"cloning https://huggingface.co/spaces/{owner}/{repo} into {clone}", file=sys.stderr)
@@ -474,6 +474,11 @@ def scaffold(args) -> int:
             if done.returncode != 0:
                 print(f"falsepass: could not clone the Space: {done.stderr.strip()[-400:]}", file=sys.stderr)
                 return 1
+        pointers = openenv_support.lfs_pointers(clone)
+        if pointers:
+            shown = ", ".join(pointers[:5]) + (f" and {len(pointers) - 5} more" if len(pointers) > 5 else "")
+            print(f"falsepass: {len(pointers)} file(s) in the Space are Git LFS pointers, not the data ({shown}): a load that reads them "
+                  f"fails. Install git-lfs, then run `git -C {clone} lfs pull`", file=sys.stderr)
         local = clone
     if space or (local.exists() and (args.framework == "openenv" or (args.framework is None and openenv_support.uses_openenv(local)))):
         info = openenv_support.describe(local, args.answers)
