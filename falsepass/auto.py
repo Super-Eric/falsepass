@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import json
 import random
 import re
 from collections.abc import Callable
@@ -100,6 +101,26 @@ def own_markup(answer: str) -> bool:
 
 def is_number(text: str) -> bool:
     return bool(re.fullmatch(r"-?\$?\d[\d,]*(\.\d+)?", text.strip()))
+
+
+V1_REFERENCE_FIELDS = ("answer", "expected", "reference", "key", "target", "solution", "gold", "ground_truth")
+"""Task-data fields read as the reference answer of a v1 task, in order: `answer` is verifiers' own name; the rest
+are what tasksets call it when they keep a structure (a dict of expected values) instead of a string."""
+
+
+def v1_reference(data: Any) -> tuple[str, str, bool]:
+    """(reference text, the field it came from, whether it was a structure dumped as JSON) for a v1 task's data.
+    A dict or list becomes a JSON document, so a task whose grader parses the reply as JSON and compares fields
+    can be probed with its own expected values; the automatic format inference then has to find the wrapper."""
+    for field in V1_REFERENCE_FIELDS:
+        value = getattr(data, field, None)
+        if value is None or value == "" or value == {} or value == []:
+            continue
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False, sort_keys=False), field, True
+        if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+            return str(value), field, False
+    return "", "", False
 
 
 class ContainerTask(TypeError):
@@ -309,10 +330,13 @@ class AutoAdapter(Adapter):
             episodic.insert(0, "a scripted user over several turns and no prompt")
         if episodic:
             return self._load_v1_episodes(tasks, episodic)
-        pool = [
-            Example(f"task-{i}", t.data.prompt_text, str(getattr(t.data, "answer", "") or ""), t)
-            for i, t in enumerate(tasks)
-        ]
+        pool = [Example(f"task-{i}", t.data.prompt_text, v1_reference(t.data)[0], t) for i, t in enumerate(tasks)]
+        if tasks and (field := v1_reference(tasks[0].data)[1]) not in ("answer", ""):
+            self.load_notes.append(
+                f"the reference is the task data's `{field}` field"
+                + (" (a JSON document, since the field holds a structure)" if v1_reference(tasks[0].data)[2] else "")
+                + "; check that the control (P1) scores full before reading the rows"
+            )
         self.loader = {"kind": "v1", "module": self.module, "load_args": self.load_args}
         system = getattr(tasks[0].data, "system_prompt", None) or ""
         return V1TaskScorer(tasks[0]), pool, (f"{system}\n{tasks[0].data.prompt_text}", None)

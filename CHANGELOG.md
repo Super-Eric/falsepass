@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Automatic mode on a v1 taskset reads the reference from `expected`, `reference`, `key`, `target`, `solution`, `gold` or `ground_truth` in the task data when `answer` is empty, a dict or list as a JSON document, and says so in a note; two tasksets whose graders compare a JSON reply field by field against an `expected` dict were refused as "no reference answers found".
 - `init hf:owner/space --dir DIR` clones the Space under `DIR/<name>/space`; it went under `./audits` whatever `--dir` said.
 - `init` on a Space names the files that are Git LFS pointers (the data was not fetched by the shallow clone) and says how to fetch them; a load that read one failed with a gzip error.
 - Second write-up: a case study of one grader defect from audit to merged upstream fix

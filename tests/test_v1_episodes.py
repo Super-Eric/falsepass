@@ -179,3 +179,16 @@ def test_reach_counts_tool_policies_in_tool_mode(toy_tasks, tmp_path: Path, monk
     digest = reach.run(tmp_path / "audits" / "falsepass-v1-tool-toy", ["T6/says_done_without_any_tool_call"], tasks=3)
     row = next(r for r in digest["rows"] if r["variant"] == "says_done_without_any_tool_call")
     assert row["tasks"] == 3 and row["full_reward"] == 3 and len(digest["rows"]) == 1
+
+
+def test_v1_reference_reads_expected_structures_as_json():
+    from types import SimpleNamespace
+
+    from falsepass.auto import v1_reference
+
+    assert v1_reference(SimpleNamespace(answer="42")) == ("42", "answer", False)
+    assert v1_reference(SimpleNamespace(answer="", expected={"total": "1.50", "vetoed": ["p2"]})) == (
+        '{"total": "1.50", "vetoed": ["p2"]}', "expected", True)  # a dict of expected values becomes a JSON document
+    assert v1_reference(SimpleNamespace(answer=None, target=7)) == ("7", "target", False)
+    assert v1_reference(SimpleNamespace(answer="", expected={}, key=None, solution=True)) == ("", "", False)  # empty, None and bool are not references
+    assert v1_reference(SimpleNamespace(prompt_text="say hi")) == ("", "", False)
