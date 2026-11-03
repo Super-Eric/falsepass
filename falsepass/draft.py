@@ -46,7 +46,7 @@ MEANING = {
     "P14": "a correct answer loses reward when the reply also names its answer format",
     "P15": "a denied or hedged answer written inside the answer slot gets full credit",
     "P16": "a JSON reply whose free-text fields are the prompt pasted in is paid like the reference",
-    "P17": "a JSON reply with one short field followed by a denial everywhere is paid like the reference: that field is not read to its end",
+    "P17": "a JSON reply with one short field followed by a denial everywhere is paid like the reference: that field is not read, or not read to its end",
     "C0": "the key written as the output file is not paid in full (no automatic submission format)",
     "C1": "a key with NaN, Infinity or fractional counts written as the output file is paid in full, or makes scoring raise",
     "C2": "an empty, truncated or copied output file is paid in full",

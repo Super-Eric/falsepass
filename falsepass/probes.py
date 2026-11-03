@@ -510,7 +510,7 @@ async def p17_field_hedge(adapter: Adapter, scorer: Scorer, ex: Example) -> list
         done = adapter.render(value, ex)
         score = await scorer.score(ex, done)
         passed = score.reward is not None and score.reward < reference - EPS
-        detail = "" if passed else f"the reference earns {reference:g} and this {score.reward}: the field is not read to its end"
+        detail = "" if passed else f"the reference earns {reference:g} and this {score.reward}: that field is not read, or not read to its end"
         results.append(ProbeResult("P17", "field_hedge", variant, ex.key, Expect.BELOW_REFERENCE, score.reward, passed, detail,
                                    preview(done), score.metrics, score.errors, False, remember(done)))  # fmt: skip
     return results
