@@ -181,13 +181,16 @@ class PolicyEndpoint:
 
 def eval_config(taskset: str, base_url: str, runtime: str = "subprocess", args: list[str] | None = None) -> Any:
     """The run config `vf-eval <taskset> --client.base-url <url> --env.agent.runtime.type
-    <runtime> --no-push [args]` would build, parsed by verifiers' own CLI code so that a
-    taskset's own config options (`--env.taskset.<option>`) are accepted the same way."""
+    <runtime> --no-push [args]` (`vf-run`, without `--no-push`, from verifiers 0.4.1) would
+    build, parsed by verifiers' own CLI code so that a taskset's own config options
+    (`--env.taskset.<option>`) are accepted the same way."""
     from pydantic_config import cli
     from verifiers.v1.cli.resolve import narrow_config, with_positional_taskset
-    from verifiers.v1.configs.cli.eval import EvalConfig
-
     from verifiers.v1.configs.agent import agent_config_fields
+
+    from falsepass.vf_compat import no_push_args, run_config_type
+
+    EvalConfig = run_config_type()
 
     def parse(argv: list[str]) -> Any:
         saved = sys.argv
@@ -201,7 +204,7 @@ def eval_config(taskset: str, base_url: str, runtime: str = "subprocess", args: 
             sys.argv = saved
 
     argv = with_positional_taskset([taskset, "-m", "falsepass", "--client.base-url", base_url, "--client.api-key-var", KEY_VAR,
-                                    "--no-push", *(args or [])])  # fmt: skip
+                                    *no_push_args(EvalConfig), *(args or [])])  # fmt: skip
     # Every agent seat of the env (`agent` for a plain taskset; a multi-agent env names its own)
     # runs in `runtime`, unless the extra args already chose one for it.
     seats = [name for name in agent_config_fields(parse(argv).env) if f"--env.{name}.runtime.type" not in (args or [])]

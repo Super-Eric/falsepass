@@ -167,16 +167,28 @@ tasks = list(itertools.islice(iter(taskset.load()), {last} + 1))
 '''
 
 LOAD_V1 = LOAD_V1_TASKS + '''from verifiers.v1.graph import MessageNode
-from verifiers.v1.runtimes.subprocess import SubprocessConfig, SubprocessRuntime
+from verifiers.v1 import runtimes as _runtimes
 from verifiers.v1.trace import AgentInfo, TraceTask
 
-runtime = SubprocessRuntime(SubprocessConfig())
+runtime = None
+
+
+async def local_runtime():
+    global runtime
+    if runtime is None:
+        if hasattr(_runtimes, "make_backend"):  # verifiers 0.4.1: a backend is started, then bound
+            backend = _runtimes.make_backend(_runtimes.SubprocessConfig())
+            await backend.start()
+            runtime = backend.bind()
+        else:
+            runtime = _runtimes.SubprocessRuntime(_runtimes.SubprocessConfig())
+            await runtime.start()
+    return runtime
 
 
 async def score(key, completion):
     task = tasks[int(re.findall(r"[0-9]+", key)[-1])]
-    if runtime.workdir is None:
-        await runtime.start()
+    runtime = await local_runtime()
     trace = vf.Trace(task=TraceTask(type=type(task).__name__, data=task.data, key=task.key, hash=task.hash),
                      agent=AgentInfo(config=vf.AgentConfig()))
     trace.nodes.append(MessageNode(message=vf.UserMessage(content=task.data.prompt_text)))
@@ -195,8 +207,13 @@ from pydantic_config import cli
 from verifiers.v1.cli.resolve import narrow_config, with_positional_taskset
 from verifiers.v1.clients import ModelContext
 from verifiers.v1.configs.agent import agent_config_fields
-from verifiers.v1.configs.cli.eval import EvalConfig
 from verifiers.v1.utils.loaders import load_environment
+
+try:
+    from verifiers.v1.configs.cli.eval import EvalConfig
+except ImportError:  # verifiers 0.4.1: evaluations moved to prime-rl; the run config is vf-run's
+    from verifiers.v1.configs.cli.run import RunnerConfig as EvalConfig
+NO_PUSH = ["--no-push"] if "push" in EvalConfig.model_fields else []
 
 # Each episode runs through the environment's own loop (harness, tools, scripted user,
 # rewards), as `vf-eval` runs it. The model is a local endpoint that replays the recorded
@@ -245,7 +262,7 @@ server = ThreadingHTTPServer(("127.0.0.1", 0), Replay)
 threading.Thread(target=server.serve_forever, daemon=True).start()
 os.environ.setdefault("REPLAY_KEY", "unused")
 argv = with_positional_taskset([TASKSET, "-m", "replay", "--client.base-url", f"http://127.0.0.1:{server.server_address[1]}/v1",
-                                "--client.api-key-var", "REPLAY_KEY", "--no-push", *ARGS])
+                                "--client.api-key-var", "REPLAY_KEY", *NO_PUSH, *ARGS])
 sys.argv = [sys.argv[0], *argv]
 seats = [name for name in agent_config_fields(cli(narrow_config(EvalConfig, argv)).env) if f"--env.{name}.runtime.type" not in ARGS]
 argv += [flag for name in seats for flag in (f"--env.{name}.runtime.type", RUNTIME)]

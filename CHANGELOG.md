@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- verifiers 0.4.1: evaluations moved to prime-rl (`vf-eval` → `vf-run`, no `--no-push`), and the runtimes split into a backend and the runtime it binds; the v1 task scorer, the episode runner, the generated repro scripts and the container probe now work on 0.4.0 and 0.4.1 alike (`falsepass/vf_compat.py`). Before, a v1 taskset pinned to 0.4.1 stopped with `No module named 'verifiers.v1.runtimes.subprocess'`.
 - Writing: the merged-fix count in the first write-up is three.
 - P17's detail says "that field is not read, or not read to its end": on one environment the paid field was not read at all.
 - A JSON reference (an object or array) gets a wrong answer of the same shape: every key and type kept, every value changed. P6 then shows what a grader pays for the shape alone; before, such references were classed open-ended and the wrong answer was a sentence (on one environment the shape alone earned 0.75 and P6 said nothing).

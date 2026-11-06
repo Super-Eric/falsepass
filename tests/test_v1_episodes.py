@@ -192,3 +192,57 @@ def test_v1_reference_reads_expected_structures_as_json():
     assert v1_reference(SimpleNamespace(answer=None, target=7)) == ("7", "target", False)
     assert v1_reference(SimpleNamespace(answer="", expected={}, key=None, solution=True)) == ("", "", False)  # empty, None and bool are not references
     assert v1_reference(SimpleNamespace(prompt_text="say hi")) == ("", "", False)
+
+
+def test_vf_compat_follows_the_runtime_api_of_each_release(monkeypatch):
+    import asyncio
+    import sys
+    import types
+
+    from falsepass import vf_compat
+
+    calls = []
+
+    class Backend:  # verifiers 0.4.1: start, bind, stop
+        async def start(self):
+            calls.append("backend.start")
+
+        def bind(self):
+            return "runtime-0.4.1"
+
+        async def stop(self):
+            calls.append("backend.stop")
+
+    class Runtime:  # verifiers 0.4.0: one object
+        async def start(self):
+            calls.append("runtime.start")
+
+        async def stop(self):
+            calls.append("runtime.stop")
+
+    new = types.ModuleType("verifiers.v1.runtimes")
+    new.SubprocessConfig = lambda: "cfg"
+    new.make_backend = lambda cfg: Backend()
+    old = types.ModuleType("verifiers.v1.runtimes")
+    old.SubprocessConfig = lambda: "cfg"
+    old.SubprocessRuntime = lambda cfg: Runtime()
+    v1 = types.ModuleType("verifiers.v1")
+    for module, expect_runtime, expect_calls in ((new, "runtime-0.4.1", ["backend.start", "backend.stop"]), (old, None, ["runtime.start", "runtime.stop"])):
+        calls.clear()
+        v1.runtimes = module
+        monkeypatch.setitem(sys.modules, "verifiers", types.ModuleType("verifiers"))
+        monkeypatch.setitem(sys.modules, "verifiers.v1", v1)
+        monkeypatch.setitem(sys.modules, "verifiers.v1.runtimes", module)
+        runtime, stop = asyncio.run(vf_compat.start_subprocess_runtime())
+        asyncio.run(stop())
+        assert calls == expect_calls
+        assert (runtime == expect_runtime) if expect_runtime else isinstance(runtime, Runtime)
+
+    class WithPush:
+        model_fields = {"push": None, "env": None}
+
+    class WithoutPush:
+        model_fields = {"env": None}
+
+    assert vf_compat.no_push_args(WithPush) == ["--no-push"] and vf_compat.no_push_args(WithoutPush) == []
+

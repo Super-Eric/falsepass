@@ -303,7 +303,7 @@ Policies that have to read the task to find a hole are still hand work
 
 **v1 tool and multi-turn tasksets** (`verifiers.v1` with tool servers, its own `Env`
 episode loop, or a scripted user) are played as whole episodes through the taskset's own
-loop, as `vf-eval` runs them: its harness, tool servers, scripted user, stop conditions and
+loop, as `vf-eval` (`vf-run` from verifiers 0.4.1) runs them: its harness, tool servers, scripted user, stop conditions and
 rewards (`V1EpisodeScorer`). The model is a local endpoint on 127.0.0.1 that answers with
 the policy, so nothing is billed or uploaded. Automatic mode plays T5 and T6 this way;
 `falsepass init <env> --policies` writes a v1 skeleton with a solver as the control, and

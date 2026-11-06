@@ -393,6 +393,7 @@ class V1TaskScorer:
 
     def __init__(self, task: Any = None) -> None:
         self._runtime: Any = None
+        self._stop: Any = None
         self._starting: asyncio.Lock | None = None
         self.weights = reward_weights(task) if task is not None else {}
 
@@ -401,11 +402,9 @@ class V1TaskScorer:
             self._starting = self._starting or asyncio.Lock()
             async with self._starting:  # concurrent first calls start one runtime, not several
                 if self._runtime is None:
-                    from verifiers.v1.runtimes.subprocess import SubprocessConfig, SubprocessRuntime
+                    from falsepass.vf_compat import start_subprocess_runtime
 
-                    runtime = SubprocessRuntime(SubprocessConfig())
-                    await runtime.start()
-                    self._runtime = runtime
+                    self._runtime, self._stop = await start_subprocess_runtime()
         return self._runtime
 
     def build_trace(self, example: Example, messages: list[dict[str, Any]]) -> Any:
@@ -455,4 +454,4 @@ class V1TaskScorer:
 
     async def close(self) -> None:
         if self._runtime is not None:
-            await self._runtime.stop()
+            await self._stop()

@@ -48,8 +48,7 @@ def workdir_of(task: Any) -> str:
 
 @contextlib.asynccontextmanager
 async def with_box(task: Any):
-    from verifiers.v1.runtimes import provision_runtime
-    from verifiers.v1.runtimes.docker import DockerConfig
+    from verifiers.v1.runtimes import DockerConfig, provision_runtime
 
     config = DockerConfig(workdir=workdir_of(task))
     if task.data.image:

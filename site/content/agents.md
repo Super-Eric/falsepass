@@ -202,7 +202,7 @@ without falsepass.
 **v1 tool tasksets** (`verifiers.v1`: tools served over MCP, a taskset's own episode
 loop, a scripted user). `falsepass init owner/environment` then `falsepass audit` already
 plays the generic tool policies (T5, T6) as whole episodes through the taskset's own loop,
-as `vf-eval` runs them: its harness, tool servers, scripted user, stop conditions and
+as `vf-eval` (`vf-run` from verifiers 0.4.1) runs them: its harness, tool servers, scripted user, stop conditions and
 rewards. The model is a local endpoint on 127.0.0.1 that answers with the policy; nothing
 is billed or uploaded. The summary's note lists the tools offered. When the taskset offers
 no tools (the model answers in text inside the loop), the answer-free replies P3, P4 and A1
@@ -228,7 +228,7 @@ writes a v1 skeleton. Policies there are `act(messages, tools)`: messages carry
 command line), e.g. `{"families": ["pin_request"]}`. The harness runs in verifiers'
 subprocess runtime; when it can run code (a bash tool), the summary says so, and
 `runtime = "docker"` in env.toml (or `RUNTIME` in the adapter) isolates it. Extra
-`vf-eval` options go in env.toml as `vf_args = ["--env.option", "value"]`.
+`vf-eval` / `vf-run` options go in env.toml as `vf_args = ["--env.option", "value"]`.
 
 Outside hosts are blocked during episodes: falsepass points HTTP(S) proxies at a closed port
 (127.0.0.1, localhost and the package indexes are exempt), so an environment that registers
