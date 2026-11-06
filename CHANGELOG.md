@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Writing: the merged-fix count in the first write-up is three.
 - P17's detail says "that field is not read, or not read to its end": on one environment the paid field was not read at all.
 - A JSON reference (an object or array) gets a wrong answer of the same shape: every key and type kept, every value changed. P6 then shows what a grader pays for the shape alone; before, such references were classed open-ended and the wrong answer was a sentence (on one environment the shape alone earned 0.75 and P6 said nothing).
 - `upstream` no longer presents a repository as the rewritten source when the only match is a file of the same name with unrelated content; it says "same name, unrelated content" and keeps looking.
