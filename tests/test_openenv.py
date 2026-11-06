@@ -304,14 +304,48 @@ def test_init_clones_a_space_under_dir_and_names_lfs_pointers(tmp_path: Path, mo
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(cli.subprocess, "run", fake_clone)
+    asked = []
+
+    def fake_fetch(folder, owner, repo):  # the object could not be fetched: the pointer stays and is named
+        asked.append((folder.name, owner, repo))
+        return [], ["data/tasks.jsonl.gz"]
+
+    monkeypatch.setattr(openenv_support, "fetch_lfs_pointers", fake_fetch)
     assert cli.main(["init", "hf:owner/Some_Space", "--dir", str(tmp_path / "work")]) == 0
     assert (tmp_path / "work" / "some-space" / "space" / "openenv.yaml").is_file()  # the clone lands under --dir, not ./audits
     assert not (tmp_path / "audits").exists()
     env = tomllib.loads((tmp_path / "work" / "some-space" / "env.toml").read_text())["env"]
     assert env["id"] == "hf/owner/Some_Space"
     err = capsys.readouterr().err
-    assert "1 file(s) in the Space are Git LFS pointers" in err and "data/tasks.jsonl.gz" in err and "lfs pull" in err
+    assert asked == [("space", "owner", "Some_Space")]
+    assert "1 file(s) in the Space are still Git LFS pointers" in err and "data/tasks.jsonl.gz" in err and "lfs pull" in err
     assert openenv_support.lfs_pointers(tmp_path / "work" / "some-space" / "space") == ["data/tasks.jsonl.gz"]
+    # --policies on a Space: refused with the way forward, and nothing written
+    assert cli.main(["init", "hf:owner/Some_Space", "--dir", str(tmp_path / "work"), "--force", "--policies"]) == 1
+    assert "no policy skeleton yet" in capsys.readouterr().err and not (tmp_path / "work" / "some-space" / "adapter.py").exists()
+
+
+def test_lfs_pointers_are_fetched_and_checked(tmp_path: Path):
+    import hashlib
+
+    space = tmp_path / "space"
+    (space / "data").mkdir(parents=True)
+    good = b"real gzip bytes"
+    (space / "data" / "good.gz").write_bytes(b"version https://git-lfs.github.com/spec/v1\noid sha256:" + hashlib.sha256(good).hexdigest().encode()
+                                             + b"\nsize 15\n")
+    (space / "data" / "bad.gz").write_bytes(b"version https://git-lfs.github.com/spec/v1\noid sha256:" + b"0" * 64 + b"\nsize 3\n")
+    urls = []
+
+    def fetch(url):
+        urls.append(url)
+        return good if url.endswith("good.gz") else b"xyz"
+
+    assert openenv_support.fetch_lfs_pointers(space, "owner", "Some_Space", fetch=fetch) == (["data/good.gz"], ["data/bad.gz"])
+    assert urls == ["https://huggingface.co/spaces/owner/Some_Space/resolve/main/data/bad.gz",
+                    "https://huggingface.co/spaces/owner/Some_Space/resolve/main/data/good.gz"]
+    assert (space / "data" / "good.gz").read_bytes() == good and openenv_support.lfs_pointers(space) == ["data/bad.gz"]
+    (space / "openenv.yaml").write_text("name: s\ndeclared_tools:\n  - get_prices\n")
+    assert openenv_support.declares_tools(space) and not openenv_support.declares_tools(tmp_path)
 
 
 def test_decisions_spelled_as_text_are_not_the_free_text_field():

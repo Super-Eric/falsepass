@@ -223,7 +223,9 @@ def twice(audit_dir: Path, script: str) -> dict:
                 return value > 1e-9 if expected == "0" else value < top - 1e-9
 
             raised = sum(1 for o, _ in cases if o.startswith("raised"))
-            result.update(cases=len(cases), reproduced=sum(wrong(o, e) for o, e in cases), raised=raised)
+            result.update(cases=len(cases), reproduced=sum(wrong(o, e) for o, e in cases), raised=raised,
+                          cases_note="the script holds the first failing rows of each probe variant, not every task; "
+                                     "`falsepass reach <env> <probe>` counts a form on the whole dataset")
     (audit_dir / "repro-run.json").write_text(json.dumps(result, indent=1))
     return result
 

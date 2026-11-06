@@ -237,8 +237,10 @@ def _await_audit(env: str, workdir: str, wait: float) -> dict[str, Any]:
         tail = "\n".join(_log_tail(workdir, env, 30))
         command = job.get("command", "audit")
         specific = any(line.startswith("falsepass:") for line in tail.splitlines()[-5:])  # a stop message that says what to do
-        hint = ("\n\nCommon causes: a missing dependency (falsepass_init with `extra`), a dataset that needs a login, or "
-                "an environment automatic mode cannot script (falsepass_init with manual=true writes an adapter skeleton)."
+        hint = ("\n\nCommon causes: a missing dependency (falsepass_init with `extra`), a dataset that needs a login, a data "
+                "file that is still a Git LFS pointer (`BadGzipFile: Not a gzipped file (b've')` is the sign; falsepass_init "
+                "fetches them, and says so when one could not be), or an environment automatic mode cannot script "
+                "(falsepass_init with manual=true writes an adapter skeleton)."
                 if command == "audit" and not specific else "")  # fmt: skip
         if command == "audit" and ("--manual" in tail or "--policies" in tail):  # the runner's stop message speaks CLI
             hint += (f"\n\nThrough MCP: falsepass_init(target={_env_id(workdir, env)!r}, force=true, manual=true) for a task "
@@ -280,9 +282,10 @@ def _env_id(workdir: str, env: str) -> str:
     import tomllib
 
     try:
-        return tomllib.loads((_audit_dir(workdir, env) / "env.toml").read_text())["env"].get("id", env)
+        found = tomllib.loads((_audit_dir(workdir, env) / "env.toml").read_text())["env"].get("id", env)
     except (OSError, KeyError, ValueError):
         return env
+    return "hf:" + found[3:] if found.startswith("hf/") else found  # a Space's id is stored as hf/owner/space; the target is hf:owner/space
 
 
 def _safe(value: Any) -> Any:

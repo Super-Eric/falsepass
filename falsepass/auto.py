@@ -364,7 +364,8 @@ class AutoAdapter(Adapter):
             self.load_notes.append(
                 f"the reference is the task data's `{field}` field"
                 + (" (a JSON document, since the field holds a structure)" if v1_reference(tasks[0].data)[2] else "")
-                + "; check that the control (P1) scores full before reading the rows"
+                + "; check that the control (P1) scores full before reading the rows (if it does not on most tasks the run is "
+                "inconclusive: the field holds targets, not the reply, and an adapter with a solver is needed)"
             )
         self.loader = {"kind": "v1", "module": self.module, "load_args": self.load_args}
         system = getattr(tasks[0].data, "system_prompt", None) or ""

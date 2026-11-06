@@ -249,3 +249,27 @@ def test_structured_answers_get_a_validity_note(tmp_path):
     assert text.count("- Note: the reference is a structured answer") == 1  # on P6, not on P3
     plain = {**payload, "meta": {**meta, "adapter": {**meta["adapter"], "answers": "open"}}}
     assert "note" not in report.digest(plain)["failing"][0]
+
+
+def test_a_control_that_fails_on_most_tasks_makes_the_run_inconclusive():
+    def p1(example, passed):
+        return {"probe": "P1", "name": "ground_truth", "variant": "reference", "expected": "full", "passed": passed,
+                "score": 1.0 if passed else 0.0, "detail": "", "example": example, "completion": "x", "completion_id": "",
+                "answer_free": False, "metrics": {}, "errors": []}
+    rows = [p1("a", False), p1("b", False), p1("c", True), _row("P3", "empty", "a", 0.3)]
+    payload = {"meta": {"environment": "t", "max_reward": 0.33, "adapter": {"validity": "ok"}}, "results": rows, "static": []}
+    digest = report.digest(payload)
+    assert digest["status"] == "inconclusive" and digest["headline"] is None and digest["failing"] == []
+    assert "scored full on 1 of 3 tasks only" in digest["reason"] and "0.33" in digest["reason"]
+    assert "--manual --force" in digest["next"] and digest["facts_that_hold"] == ["P3 n/empty: expected zero, got 0.3 on 1 of 1 tasks"]
+    assert report.control_failed(rows) == (3, 2)  # the summary's banner reads the same helper
+    rows[1]["passed"], rows[1]["score"] = True, 1.0  # 2 of 3 pass: the run stands
+    assert report.digest(payload).get("status") != "inconclusive"
+
+
+def test_scoring_errors_get_a_note_on_whose_code_raised():
+    rows = [_row("P10", "null_byte", "a", 0.0, errors=["reward code raised: Error calling reward function f: boom"])]
+    payload = {"meta": {"environment": "t", "adapter": {"validity": "ok"}}, "results": rows, "static": []}
+    assert "environment's own reward code" in report.digest(payload)["scoring_errors_note"]
+    assert "scoring_errors_note" not in report.digest({**payload, "results": [_row("P3", "v", "a", 0.0)]})
+

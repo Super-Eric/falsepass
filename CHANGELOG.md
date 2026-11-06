@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- From the eleventh dogfood round: a run whose reference scores below full on at least half the tasks is `inconclusive` (reason, `next`: an adapter with a solver), with the same warning at the top of summary.md; before, the trial's mean became the maximum and the status stayed `finished`. `init hf:` fetches a Space's Git LFS files in place of their pointers (sha256-checked) and names any it could not. OpenEnv: `init --policies` refuses with the way forward (no policy skeleton yet), the tool-call stop message says the same, and `init` reports an MCP tool Space as `automatic_likely: false`. `results` on a stopped audit prints `stopped.md`. The MCP next-step hint spells a Space target `hf:owner/space`. `cases_note` on a repro says which rows the script holds; `scoring_errors_note` says the exceptions are the environment's; `total_s` documented as the probe process after set-up.
 - verifiers 0.4.1: evaluations moved to prime-rl (`vf-eval` → `vf-run`, no `--no-push`), and the runtimes split into a backend and the runtime it binds; the v1 task scorer, the episode runner, the generated repro scripts and the container probe now work on 0.4.0 and 0.4.1 alike (`falsepass/vf_compat.py`). Before, a v1 taskset pinned to 0.4.1 stopped with `No module named 'verifiers.v1.runtimes.subprocess'`.
 - Writing: the merged-fix count in the first write-up is three.
 - P17's detail says "that field is not read, or not read to its end": on one environment the paid field was not read at all.

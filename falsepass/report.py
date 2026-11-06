@@ -97,6 +97,15 @@ def gate(results: list[dict[str, Any]], conditions: list[str]) -> list[str]:
 MAX_FAILING = 25  # failing probe variants listed in a digest; the rest are counted
 
 
+def control_failed(results: list[dict[str, Any]]) -> tuple[int, int] | None:
+    """(tasks, failed) of the P1 control when the reference scored below full on at least half of
+    them: the field used as the reference is not the reply the grader wants, and automatic mode
+    took the trial's mean as the maximum. Rows built on that reference then say nothing."""
+    rows = [r for r in results if r["probe"] == "P1"]
+    failed = sum(not r["passed"] for r in rows)
+    return (len(rows), failed) if rows and failed * 2 >= len(rows) else None
+
+
 def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[str, Any] | None = None) -> dict[str, Any]:
     """A compact, machine-readable view of a probe run for scripts and coding agents: the
     headline numbers, every probe variant that failed (with one failing completion), and
@@ -157,6 +166,23 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
                     "https://super-eric.github.io/falsepass/docs/agents/#games-simulations-and-tool-tasks",
         }  # fmt: skip
         failing = []
+    elif (control := control_failed(payload["results"])):
+        tasks, failed = control
+        holds = [f for f in failing if f["answer_free"]]
+        extra = {
+            "status": "inconclusive",
+            "reason": f"the reference scored full on {tasks - failed} of {tasks} tasks only; automatic mode took the trial's "
+                      f"mean ({_fmt(meta.get('max_reward', 1.0))}) as the maximum. The field used as the reference is not the "
+                      "reply the grader wants on most tasks, so the rows built on it say nothing",
+            "facts_that_hold": [f"{f['probe']} {f['name']}/{f['variant']}: expected {f['expected']}, got "
+                                f"{', '.join(_fmt(x) for x in f['scores'][:3])} on {f['failed']} of {f['runs']} tasks" for f in holds[:8]],
+            "failing_omitted": len(failing),
+            "next": "Write an adapter whose reference is the reply the prompt asks for, built from the task data (a solver "
+                    "when the data holds targets rather than the answer): `falsepass init <target> --manual --force` "
+                    "(MCP: manual=true, force=true), "
+                    "https://super-eric.github.io/falsepass/docs/agents/#when-the-reference-is-not-a-reply",
+        }  # fmt: skip
+        failing = []
     elif unscored(payload["results"]):
         rows, none, first = unscored(payload["results"])
         own = first.startswith("could not build trace")
@@ -208,6 +234,10 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
             if isinstance(adapter, dict) else adapter,
         },
         "headline": None if validity.startswith("inconclusive") or extra.get("status") == "inconclusive" else headline(payload["results"]),
+        **({"scoring_errors_note": "exceptions raised inside the environment's own reward code and caught by its framework "
+                                   "(each row's `errors` names the reward function); failures on falsepass's side read "
+                                   "'could not build trace' and make the run inconclusive"}
+           if headline(payload["results"])["scoring_errors"] else {}),
         **({"timings": {**meta["timings"], "words": timing_words(meta["timings"])}} if meta.get("timings") else {}),
         "failing": failing,
         "static_hints": [{k: h[k] for k in ("rule", "file", "line", "evidence", "meaning", "verdict") if k in h}
@@ -397,6 +427,10 @@ def summary(payload: dict[str, Any]) -> str:
         *([f"- **Time:** {timing_words(meta['timings'])}"] if meta.get("timings") else []),
         *([f"- **⚠ Result inconclusive: {unscored(results)[1]} of {unscored(results)[0]} probe rows produced no score** (the "
            f"environment raised or an episode did not finish); first error: {unscored(results)[2]}"] if unscored(results) else []),
+        *([f"- **⚠ Result inconclusive: the reference scored full on {control_failed(results)[0] - control_failed(results)[1]} of "
+           f"{control_failed(results)[0]} tasks only** (the maximum below is the trial's mean): the field used as the reference "
+           "is not the reply the grader wants; write an adapter whose reference is that reply (`falsepass init <target> "
+           "--manual --force`)"] if control_failed(results) else []),
         *_weight_lines(meta, results),
         f"- **False-pass ceiling:** {_fmt(head['false_pass_ceiling'])} of {_fmt(meta['max_reward'])} "
         f"(highest reward given to a known-bad completion; via {head['false_pass_via']})",

@@ -206,3 +206,16 @@ def test_a_hub_wheel_is_described_with_its_hash_and_project_urls(monkeypatch):
     info = hub.describe("o/demo")
     assert info["wheel_sha256"] == hashlib.sha256(data).hexdigest()
     assert info["project_urls"] == ["Source, https://github.com/o/demo"]
+
+
+def test_results_on_a_stopped_audit_prints_its_reason(tmp_path: Path, monkeypatch, capsys):
+    from falsepass import cli
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "audits" / "demo").mkdir(parents=True)
+    (tmp_path / "audits" / "demo" / "env.toml").write_text('[env]\nid = "o/demo"\n')
+    (tmp_path / "audits" / "demo" / "stopped.md").write_text("# Audit stopped\n\nthe reward needs a solver: write an adapter\n")
+    assert cli.main(["results", "demo"]) == 1
+    err = capsys.readouterr().err
+    assert "stopped" in err and "write an adapter" in err and "no completed audit yet" not in err
+

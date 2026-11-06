@@ -46,8 +46,9 @@ Everything an audit writes lives in `audits/<env>/` (or the folder given with `-
   "points": {"task-3": [floor, reference]}, "excluded": {"task-0": "why"}}`. Every `score` is
   then `(raw - floor) / (reference - floor)` on its task, `max_reward` is 1.0, and the raw
   reward is in `metrics.raw_reward`.
-- `meta.timings`: where the time went, in seconds: `total_s` (this run), `set_up_s` (resolving
-  and installing the virtualenv, when started through the CLI), `phases` (`load`, `prepare`,
+- `meta.timings`: where the time went, in seconds: `total_s` (the probe process, after set-up),
+  `set_up_s` (resolving and installing the virtualenv, when started through the CLI; `words`
+  adds the two), `phases` (`load`, `prepare`,
   `probes`, `slower_probes`, `hygiene`, `rewardlint`, `close`, `static`), `jobs` (tasks scored
   at once; 1 where the scorer is not safe to run concurrently) and `hub_checked` (the dataset
   library was loaded with nothing telling it to stay offline, so a Hub-hosted dataset was checked

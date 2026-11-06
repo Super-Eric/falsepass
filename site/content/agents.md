@@ -381,8 +381,12 @@ What to check in the results and how to steer the run:
   grader property. `falsepass_reach` templates may be whole JSON actions
   (`'{"claim_id": "C-7", "decision": "deny"}'`), which is the quick way to score specific
   actions on every task.
-- **What is not covered.** MCP tool environments (`CallToolAction`) and hand-written servers
-  without an `Environment` subclass stop with a message; use `--policies` or an adapter.
+- **What is not covered.** MCP tool environments (`CallToolAction`; `init` reports them as
+  `automatic_likely: false` from `declared_tools` in openenv.yaml) and hand-written servers
+  without an `Environment` subclass stop with a message. There is no OpenEnv policy skeleton
+  yet (`--policies` refuses): write an adapter (`--manual`) that drives `reset()` and `step()`.
+- **Git LFS.** A shallow clone of a Space leaves pointer files where its data should be; `init`
+  fetches each one from the Space and checks its sha256, and names any it could not fetch.
   The environment class is read from the served app (what `create_app` was given); when
   detection still picks the wrong one, `falsepass init ... --env-class module:Class
   --action-class module:Class` (MCP `env_class`, `action_class`) names them, and `env.toml`

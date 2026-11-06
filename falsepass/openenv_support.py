@@ -557,7 +557,8 @@ def find_classes(folder: Path, app: str, name: str, env_class: str = "", action_
                      "action_class in env.toml picks another")  # fmt: skip
     if {"tool_name", "arguments"} <= set(getattr(actions[0], "model_fields", {})):
         raise RuntimeError(f"{actions[0].__name__} is an MCP tool call: this environment is played through tools, not a reply. "
-                           "Write policies (falsepass init --force --policies)")  # fmt: skip
+                           "OpenEnv has no policy skeleton yet: write an adapter that drives reset() and step() with its tool "
+                           "calls (falsepass init <target> --force --manual; MCP: manual=true, force=true)")  # fmt: skip
     return make_env, actions[0], notes, app, alias
 
 
@@ -785,6 +786,15 @@ def load(spec: str, max_rows: int, answers: str | None = None, app: str = "", en
 # --- `falsepass init` (runs outside the audit virtualenv: no openenv import) -----------------
 
 
+def declares_tools(folder: Path) -> bool:
+    """Whether the Space's openenv.yaml says it is played through MCP tools (`declared_tools:`, or an `mcp` tag)."""
+    path = folder / "openenv.yaml"
+    if not path.is_file():
+        return False
+    text = path.read_text(errors="replace")
+    return bool(re.search(r"^\s*declared_tools:", text, re.M) or re.search(r"^\s*-\s*mcp\s*$", text, re.M))
+
+
 def manifest(folder: Path) -> dict[str, str]:
     """`name`, `version` and the app path from openenv.yaml, read without a YAML parser:
     community manifests spell the app as `app:`, `entry_points: server:` or `main:`."""
@@ -822,6 +832,41 @@ def lfs_pointers(folder: Path) -> list[str]:
         if head == LFS_POINTER:
             found.append(path.relative_to(folder).as_posix())
     return sorted(found)
+
+
+def fetch_lfs_pointers(folder: Path, owner: str, repo: str, fetch: Any = None,
+                       limit: int = 200 * 1024 * 1024) -> tuple[list[str], list[str]]:
+    """Replace the Git LFS pointer files of a shallow Space clone with the objects they name, from
+    the Space's `resolve/main` URL, each checked against the pointer's sha256. (fetched, failed)."""
+    import hashlib
+    import urllib.request
+
+    def default_fetch(url: str) -> bytes:
+        with urllib.request.urlopen(url, timeout=120) as response:  # noqa: S310 - a huggingface.co URL built here
+            return response.read()
+
+    fetch = fetch or default_fetch
+    fetched, failed, total = [], [], 0
+    for rel in lfs_pointers(folder):
+        path = folder / rel
+        head = path.read_text(errors="replace")
+        oid = re.search(r"^oid sha256:([0-9a-f]{64})", head, re.M)
+        size = re.search(r"^size (\d+)", head, re.M)
+        if not oid or not size or total + int(size.group(1)) > limit:
+            failed.append(rel)
+            continue
+        try:
+            data = fetch(f"https://huggingface.co/spaces/{owner}/{repo}/resolve/main/{rel}")
+        except Exception:  # noqa: BLE001 - the pointer stays, and the caller says how to fetch by hand
+            failed.append(rel)
+            continue
+        if hashlib.sha256(data).hexdigest() != oid.group(1):
+            failed.append(rel)
+            continue
+        path.write_bytes(data)
+        fetched.append(rel)
+        total += len(data)
+    return fetched, failed
 
 
 def uses_openenv(path: Path) -> bool:

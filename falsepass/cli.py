@@ -448,6 +448,10 @@ def missing_audit(env: str, needs: str = "env.toml") -> int:
         return 1
     from falsepass import draft
 
+    stopped = set_up / "stopped.md"
+    if stopped.is_file():  # the last audit stopped on purpose: its own message says what to do next
+        print(f"falsepass: the last audit of {set_up.name} stopped ({stopped}):\n{stopped.read_text().strip()[:1500]}", file=sys.stderr)
+        return 1
     print(f"falsepass: {set_up} has no completed audit yet. Run `falsepass audit {draft.command_ref(set_up)}` first "
           "(if it stopped at the control, this environment needs a hand-written adapter: `falsepass init --manual`).",
           file=sys.stderr)  # fmt: skip
@@ -474,11 +478,14 @@ def scaffold(args) -> int:
             if done.returncode != 0:
                 print(f"falsepass: could not clone the Space: {done.stderr.strip()[-400:]}", file=sys.stderr)
                 return 1
-        pointers = openenv_support.lfs_pointers(clone)
-        if pointers:
-            shown = ", ".join(pointers[:5]) + (f" and {len(pointers) - 5} more" if len(pointers) > 5 else "")
-            print(f"falsepass: {len(pointers)} file(s) in the Space are Git LFS pointers, not the data ({shown}): a load that reads them "
-                  f"fails. Install git-lfs, then run `git -C {clone} lfs pull`", file=sys.stderr)
+        if openenv_support.lfs_pointers(clone):  # a shallow clone leaves pointers where the data files should be
+            fetched, failed = openenv_support.fetch_lfs_pointers(clone, owner, repo)
+            if fetched:
+                print(f"falsepass: {len(fetched)} Git LFS file(s) fetched from the Space in place of their pointers", file=sys.stderr)
+            if failed:
+                shown = ", ".join(failed[:5]) + (f" and {len(failed) - 5} more" if len(failed) > 5 else "")
+                print(f"falsepass: {len(failed)} file(s) in the Space are still Git LFS pointers, not the data ({shown}): a load "
+                      f"that reads them fails. Install git-lfs, then run `git -C {clone} lfs pull`", file=sys.stderr)
         local = clone
     if space or (local.exists() and (args.framework == "openenv" or (args.framework is None and openenv_support.uses_openenv(local)))):
         info = openenv_support.describe(local, args.answers)
@@ -562,6 +569,14 @@ def scaffold(args) -> int:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content)
     kind = hub.classify(info["sources"]) if info.get("sources") else info.get("kind")  # read from the source text
+    if info.get("framework") == "openenv" and openenv_support.declares_tools(local):
+        kind = {"automatic": False, "needs": ["an MCP tool environment (declared_tools in openenv.yaml): played through tool calls, "
+                                              "not a reply"], "has_reference": True, "turns": "multi-turn", "generation": "openenv",
+                "outside_hosts": []}  # fmt: skip
+    if args.policies and info.get("framework") == "openenv":
+        print("falsepass: OpenEnv environments have no policy skeleton yet. Write an adapter that drives reset() and step() "
+              f"yourself: `falsepass init {args.env_id} --force --manual` (MCP: manual=true, force=true)", file=sys.stderr)  # fmt: skip
+        return 1
     kept_adapter = (args.manual or args.policies) and (audit_dir / "adapter.py").exists()
     if (args.manual or args.policies) and not kept_adapter:
         v1 = bool(kind) and kind["generation"] == "v1"
