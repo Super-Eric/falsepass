@@ -395,7 +395,10 @@ What to check in the results and how to steer the run:
   environment the action's text (or a JSON object naming the action's fields), in a tool
   environment the end of the policy's turn and of the episode. Fill in `solver(example)`
   (the control; it may read `example.raw`, `example.answer` or the live environment through
-  `ENV()`, e.g. `ENV().state`) and `exploits(example)` (policies that never read the task).
+  `ENV()`, e.g. `ENV().state`), `exploits(example)` (policies that never read the task, rows X1)
+  and `breaks_rule(example)` (policies that may read the task but reach the outcome by a route
+  the environment forbids, rows X3). Numbers in the last observation's metadata, top level and
+  one dict down (`grade.integrity`), are the rows' reward terms.
   The reward is the episode's return, every step's reward added; `REWARD = "last"` in the
   adapter takes the last step's instead, when that is what the trainer reads. T5 and T6 run
   as well. `repro` replays each stored episode through `reset()` and `step()` with openenv
@@ -415,7 +418,8 @@ What to check in the results and how to steer the run:
 - **Settings and patched copies.** `falsepass init <target> --var NAME=VALUE` (MCP `vars`)
   sets an environment variable on every run (a data path the Space reads, `vars` in env.toml).
   A patched copy goes to `audit`, `reach`, `repro --run` and `verify-fix` as `--source` (MCP
-  `source`); the audit records it (`meta.source`) and a patched repro is stored apart from the
+  `source`); a hand-written `repro.py` for an OpenEnv folder reads the patched folder from
+  `$FALSEPASS_SOURCE` (unset: the original); the audit records it (`meta.source`) and a patched repro is stored apart from the
   unpatched output. In automatic mode, an environment whose episode is still open after the
   one reply gets a `warning`: it takes several steps, so play it with policies.
 - **Git LFS.** A shallow clone of a Space leaves pointer files where its data should be; `init`

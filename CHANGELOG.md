@@ -16,6 +16,7 @@
   - The package alias for a Space laid out as its own package comes from the app module's own imports and is never the name of an installed library (`textarena` hid the library the environment needs).
   - `repro --run --source` (MCP `source`) and MCP `falsepass_reach` `source` take a patched copy; its repro output is stored apart from the unpatched one; an audit run with `--source` records it (`meta.source`). A repro line that raised keeps the exception's first line, and a repro where every case raised is `inconclusive`, not a clean result.
   - `init` reports an OpenEnv Space whose server code uses MCP tool actions as `automatic_likely: false`, and the MCP next step says `policies=true`; the static scan skips a vendored copy of openenv.
+- From the first OpenEnv audit with policies: the skeleton has `breaks_rule(example)` (rows X3: policies that read the task but take a forbidden route); numbers one dict down in the last observation's metadata (`grade.integrity`) are reward terms; a stored episode keeps its stop reason, turns, steps, return and last reward; transcripts keep a tool result's `name`; `draft` previews a policy row by what it did; `reach` and `verify-fix --known-good` say "every task found" when the reset walk stopped at its cap; the docs say a hand-written repro reads `$FALSEPASS_SOURCE`.
 - The digest (`results --json`, MCP `falsepass_results`) carries `reward_terms`: which part of the reward paid on known-bad and fixed-strategy rows, as summary.md's table does (from dogfood 11).
 
 ## 0.14.0 — 2026-11-06

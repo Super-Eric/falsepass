@@ -244,7 +244,8 @@ def twice(audit_dir: Path, script: str, source: Path | None = None) -> dict:
 def describe_known_good(release: dict, patched: dict) -> str:
     """Correct-answer rows (from two `reach --probe known-good` runs): what the patch stops paying."""
     before = {(r["probe"], r["variant"]): r for r in release["rows"]}
-    rows = [f"correct answers, on {patched['meta']['tasks_counted']} tasks ({'every task' if patched['meta']['all_tasks'] else 'a sample'}):"]
+    every = "every task found; there may be more" if patched["meta"].get("tasks_note") else "every task"
+    rows = [f"correct answers, on {patched['meta']['tasks_counted']} tasks ({every if patched['meta']['all_tasks'] else 'a sample'}):"]
     worse = 0
     for r in patched["rows"]:
         old = before.get((r["probe"], r["variant"]))

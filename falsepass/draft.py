@@ -69,6 +69,8 @@ def _stats(rows: list[dict[str, Any]]) -> str:
 
 
 def _inline(full: Any, stored: Any, preview: Any) -> str:
+    if isinstance(full, dict) and "transcript" in full:  # a policy's episode: what it did, in order
+        full = " | ".join(m["content"] for m in full["transcript"] if m.get("role") == "assistant")
     text = preview(full, 220) if isinstance(full, str) else str(stored)[:220]
     return text.replace("\n", " ⏎ ").replace("`", "'")
 

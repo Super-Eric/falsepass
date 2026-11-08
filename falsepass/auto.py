@@ -275,6 +275,7 @@ class AutoAdapter(Adapter):
             tasks_file=f"{audit_dir}/{openenv_support.TASKS_FILE}" if audit_dir else None,
         )  # fmt: skip
         self.load_notes += found["notes"]
+        self.walk_capped = found["walk_capped"]
         self.answer_free = not any(e.answer.strip() for e in self.pool)
         self._classify_pool()
         self.json_references = not self.answer_free and sum(_json_object(e.answer) for e in self.pool) > len(self.pool) / 2

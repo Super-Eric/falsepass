@@ -501,6 +501,11 @@ def test_tool_episodes_are_played_through_the_environment_and_replayed(tmp_path:
         good = asyncio.run(scorer.score(ex, _policy("solver", solver)))
         assert good.reward == 1.0 and good.errors == [] and good.info["stop"] == "done" and good.info["steps"] == 3
         assert good.info["turns"] == 3 and good.info["done"] and "[tool call finish({})]" in good.info["transcript"][-2]["content"]
+        assert good.info["transcript"][2]["role"] == "tool" and good.info["transcript"][2]["name"] == "get_order"
+        from falsepass import probes as stored_probes
+
+        key = stored_probes.remember_episode(_policy("solver", solver), good.info)
+        assert {"stop", "steps", "episode_return", "last_reward"} <= set(stored_probes.STORE[key])
         bad = asyncio.run(scorer.score(ex, _policy("refund_everything", refund_everything)))
         assert bad.reward == 1.0 and bad.info["steps"] == 8  # the planted defect: a policy that never read the ticket is paid
         idle = asyncio.run(scorer.score(ex, "Done."))  # a text reply ends the episode in a tool environment
@@ -663,3 +668,9 @@ def test_a_constant_prompt_is_said(tmp_path: Path, monkeypatch):
     scorer, pool, found = openenv_support.load(str(folder), 10, None, episodes=True)
     assert len(pool) == 1 and any(n.startswith("every reset() showed the same text") for n in found["notes"])
     asyncio.run(scorer.close())
+
+
+def test_nested_metadata_numbers_are_reward_terms():
+    terms = openenv_support.reward_terms({"grade": {"task": 1.0, "integrity": 0.86, "step_count": 3, "ok": True},
+                                          "reward_bonus": 0.1, "steps": 4, "note": "x"})
+    assert terms == {"grade.task": 1.0, "grade.integrity": 0.86, "reward_bonus": 0.1}

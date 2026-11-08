@@ -459,6 +459,19 @@ def tool_result_text(observation: Any) -> str:
     return episode_text(observation)
 
 
+def reward_terms(metadata: dict[str, Any]) -> dict[str, float]:
+    """Numbers the environment reports next to its reward, top level and one dict down
+    (`{"grade": {"task": 1.0, "integrity": 0.86}}` -> `grade.task`, `grade.integrity`); counters left out."""
+    terms: dict[str, float] = {}
+    for key, value in metadata.items():
+        nested = value.items() if isinstance(value, dict) else [("", value)]
+        for sub, number in nested:
+            name = f"{key}.{sub}" if sub else str(key)
+            if isinstance(number, (int, float)) and not isinstance(number, bool) and not COUNTER_KEY.search(str(sub or key)):
+                terms[name] = float(number)
+    return terms
+
+
 class OpenEnvEpisodeScorer(OpenEnvScorer):
     """Play a whole episode with a policy: `reset()` to the task, then one `step()` per
     action until the environment says `done`, the policy stops, or the turn cap is hit.
@@ -590,7 +603,7 @@ class OpenEnvEpisodeScorer(OpenEnvScorer):
                     messages.append({"role": "user", "content": episode_text(observation)})
 
         ok = await _guarded(run(), errors)
-        transcript = [{"role": m["role"], "content": " ".join(filter(None, [
+        transcript = [{"role": m["role"], **({"name": m["name"]} if m.get("name") else {}), "content": " ".join(filter(None, [
             str(m.get("content") or ""), *(f"[tool call {c['name']}({json.dumps(c.get('arguments') or {}, ensure_ascii=False)})]"
                                             for c in m.get("tool_calls") or [])]))} for m in messages]  # fmt: skip
         if player.error:
@@ -606,10 +619,7 @@ class OpenEnvEpisodeScorer(OpenEnvScorer):
         paid = [r for r in rewards if r is not None]
         total, last = float(sum(paid)), (paid[-1] if paid else 0.0)
         info.update({"episode_return": total, "last_reward": last})
-        metrics: dict[str, float] = {}  # numbers the environment reports next to its last reward: usually its components
-        for key, value in (getattr(state["last"], "metadata", None) or {}).items():
-            if isinstance(value, (int, float)) and not isinstance(value, bool) and not COUNTER_KEY.search(str(key)):
-                metrics[str(key)] = float(value)
+        metrics = reward_terms(getattr(state["last"], "metadata", None) or {})  # usually the reward's components
         return Score(total if self.reward_mode == "sum" else last, metrics, errors, info)
 
 
@@ -1120,6 +1130,7 @@ def load(spec: str, max_rows: int, answers: str | None = None, app: str = "", en
         "task_api": any(e.raw.get("task") is not None for e in pool) and not tasks, "tasks_file": bool(tasks),
         "resets": {e.key: e.raw["reset"] for e in pool},
         "tool_fills": tool_fills(action_cls, "call") if tools else {},
+        "walk_capped": any(n.startswith("reset() handed out at least") for n in notes),
     }  # fmt: skip
     return scorer, pool, found
 

@@ -382,11 +382,20 @@ def exploits(example):
     return {{}}
 
 
+def breaks_rule(example):
+    """Known-bad policies that may read the task but break the rule the environment exists to
+    test (reach the right outcome by a forbidden route: skip a required check, overwrite
+    instead of merging, use a tool the task rules out). Each should earn nothing. Rows X3."""
+    return {{}}
+
+
 async def policy_probes(adapter, scorer, ex):
     found = [await check("X0", "control", "solver", Expect.FULL, solver(ex), adapter, scorer, ex)]
     found.append(await check("X1", "policy", "gives_up", Expect.ZERO, gives_up(ex), adapter, scorer, ex, answer_free=True))
     for name, policy in exploits(ex).items():
         found.append(await check("X1", "policy", name, Expect.ZERO, policy, adapter, scorer, ex, answer_free=True))
+    for name, policy in breaks_rule(ex).items():
+        found.append(await check("X3", "rule", name, Expect.ZERO, policy, adapter, scorer, ex))
     return found
 
 
@@ -401,6 +410,7 @@ class Env(Adapter):
         SCORER, examples, found = open_episodes(HERE, n, seed, REWARD)
         self.loader = found["loader"]  # how `falsepass repro` replays the same tasks
         self.load_notes = found["notes"]  # how tasks were found, and anything odd about the environment
+        self.walk_capped = found["walk_capped"]  # reset() may hand out more tasks than were collected
         return SCORER, examples
 
     def render(self, answer, example):

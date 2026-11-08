@@ -53,7 +53,8 @@ def remember_episode(policy: Any, info: dict[str, Any]) -> str:
 
     if not info.get("script") and not info.get("transcript"):
         return remember(policy)
-    episode = {"policy": repr(policy), "script": info.get("script") or [], "transcript": info.get("transcript") or []}
+    episode = {"policy": repr(policy), "script": info.get("script") or [], "transcript": info.get("transcript") or [],
+               **{k: info[k] for k in ("stop", "turns", "steps", "episode_return", "last_reward") if info.get(k) is not None}}
     text = json.dumps(episode, ensure_ascii=False, default=str)
     if len(text) > STORE_LIMIT:
         return ""

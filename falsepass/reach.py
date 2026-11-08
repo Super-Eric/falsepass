@@ -161,6 +161,9 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
             "tasks_counted": len(examples),
             "tasks_in_dataset": len(pool) if pool is not None else (len(examples) if everything else None),
             "all_tasks": everything, "seed": seed, "jobs": jobs if parallel else 1,
+            **({"tasks_note": "every task found: reset() handed out more distinct tasks than the walk collects, so the "
+                              "dataset may be larger (list the tasks in tasks.json to count a known set)"}
+               if getattr(adapter, "walk_capped", False) else {}),
             # Counted nowhere above: a fixed reply such as an abstention may be right on exactly these.
             "tasks_without_reference": getattr(adapter, "without_reference", 0),
             "max_reward": adapter.max_reward, "bad_tolerance": adapter.bad_tolerance,
@@ -185,7 +188,8 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
 def describe(payload: dict[str, Any]) -> str:
     meta = payload["meta"]
     of = f" of {meta['tasks_in_dataset']}" if meta["tasks_in_dataset"] else ""
-    scope = "every task" if meta["all_tasks"] else f"a random sample{of}, seed {meta['seed']}"
+    scope = ("every task found (there may be more)" if meta.get("tasks_note") else "every task") if meta["all_tasks"] \
+        else f"a random sample{of}, seed {meta['seed']}"
     lines = [f"{meta['environment']}: {meta['tasks_counted']} tasks counted ({scope}); answer format: {meta['format']}"]
     if meta["note"]:
         lines.append(f"note: {meta['note']}")
