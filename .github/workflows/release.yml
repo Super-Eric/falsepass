@@ -5,9 +5,15 @@ name: release
 on:
   release:
     types: [published]
+  workflow_dispatch:  # the registry listing alone, for a version already on PyPI (a failed listing job)
+    inputs:
+      version:
+        description: "version to list, e.g. 0.15.0"
+        required: true
 
 jobs:
   pypi:
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -24,7 +30,10 @@ jobs:
     # io.github.Super-Eric namespace is proven by GitHub's OIDC token; the registry checks
     # the mcp-name line in the README that PyPI shows.
     needs: pypi
+    if: always() && (needs.pypi.result == 'success' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ inputs.version || github.ref_name }}
     permissions:
       id-token: write
       contents: read
@@ -32,10 +41,13 @@ jobs:
       - uses: actions/checkout@v5
       - name: Install mcp-publisher
         run: |
-          curl -sL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz" | tar xz mcp-publisher
+          # GitHub's release downloads time out now and then: retry, and fail on an HTTP error instead of untarring it
+          curl -fsSL --retry 8 --retry-delay 15 --retry-all-errors -o mcp-publisher.tar.gz \
+            "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_linux_amd64.tar.gz"
+          tar xzf mcp-publisher.tar.gz mcp-publisher
       - name: Wait until PyPI serves this version
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${VERSION#v}"
           for i in $(seq 1 30); do
             curl -sf "https://pypi.org/pypi/falsepass/$version/json" > /dev/null && exit 0
             sleep 10
@@ -43,7 +55,7 @@ jobs:
           echo "falsepass $version is not on PyPI" && exit 1
       - name: Publish to the MCP Registry
         run: |
-          version="${GITHUB_REF_NAME#v}"
+          version="${VERSION#v}"
           jq --arg v "$version" '.version = $v | .packages[0].version = $v' server.json > server.tmp && mv server.tmp server.json
           ./mcp-publisher login github-oidc
           ./mcp-publisher publish
