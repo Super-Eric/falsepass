@@ -297,6 +297,114 @@ ADAPTER = Env()
 '''
 
 
+OPENENV_POLICY_TEMPLATE = '''"""falsepass adapter for {id}: policies that play whole OpenEnv episodes.
+
+Each policy plays an episode through the environment's own reset() and step(), in this
+process, as a WebSocket session on its server would: the task's reset(), then one step()
+per action until the environment says done. No model, no server, no Docker.
+
+A policy is `act(messages, tools)`: the conversation so far and the tools on offer in; the
+next assistant message out. `messages` are plain dicts: the task (the reset observation's
+text) as the first "user" message, each tool's result as a "tool" message (with "name"), and
+in a text environment each next observation as a "user" message. `tools` lists the MCP
+tools ({{"name", "description", "parameters"}}), empty when there are none. The next message
+is a string (in a text environment, the action's text, or a JSON object naming the action's
+fields; in a tool environment, a string ends the policy's turn and the episode), or
+`call("tool_name", arg=value, ...)` (one tool call per step).
+
+`example.raw` holds the task: "reset" (the keywords reset() was called with) and "task"
+(the tasks.json entry or Task API record, if any); `example.answer` is the reference when
+one is known. The solver may also read the live environment (`ENV()`, e.g.
+`ENV().state`); no other policy may.
+
+The reward is the episode's return (every step's reward added); set REWARD = "last" when
+the trainer reads only the final step's. The generic tool policies (T5, T6) run as well.
+Each episode is kept: `falsepass results <env> --completion <id>` shows it and `falsepass
+repro <env>` replays it.
+Run: falsepass audit <env>
+"""
+
+from pathlib import Path
+
+from falsepass import Adapter
+from falsepass.model import Expect, Policy
+from falsepass.openenv_support import open_episodes
+from falsepass.probes import check
+
+HERE = Path(__file__).resolve().parent
+REWARD = "sum"  # or "last"
+SCORER = None
+
+
+def ENV():
+    """The environment instance the current episode runs in (for the solver only)."""
+    return SCORER.environment()
+
+
+def call(name, **arguments):
+    return {{"content": "", "tool_calls": [{{"name": name, "arguments": arguments}}]}}
+
+
+def turn(messages):
+    """How many assistant messages came before: 0 on the first request."""
+    return sum(1 for m in messages if m["role"] == "assistant")
+
+
+def tool_results(messages):
+    return [m["content"] for m in messages if m["role"] == "tool"]
+
+
+def solver(example):
+    """Known-good: does the task properly (it may read example.raw, example.answer or ENV()). Should earn the maximum."""
+    def act(messages, tools):
+        raise NotImplementedError("TODO: e.g. `return call('submit_answer', answer=...) if turn(messages) == 0 else 'Done.'`")
+    return Policy("solver", act, wants_tools=True)
+
+
+def gives_up(example):
+    """Known-bad, honest: stops without trying. Should earn nothing."""
+    return Policy("gives_up", lambda messages, tools: "I don't know.", wants_tools=True)
+
+
+def exploits(example):
+    """Known-bad policies that never read the task data. Each should earn nothing. Ideas:
+    submit a list of every candidate answer; claim success without acting; call the
+    finishing tool twice; NaN, inf, -1 or 1e999 where a number goes; act after the
+    environment said the episode is over."""
+    return {{}}
+
+
+async def policy_probes(adapter, scorer, ex):
+    found = [await check("X0", "control", "solver", Expect.FULL, solver(ex), adapter, scorer, ex)]
+    found.append(await check("X1", "policy", "gives_up", Expect.ZERO, gives_up(ex), adapter, scorer, ex, answer_free=True))
+    for name, policy in exploits(ex).items():
+        found.append(await check("X1", "policy", name, Expect.ZERO, policy, adapter, scorer, ex, answer_free=True))
+    return found
+
+
+class Env(Adapter):
+    name = "{id}"
+    max_reward = 1.0  # what the solver earns; set it to the real figure once the X0 control rows show it
+    tool_mode = True  # played with policies: no text probes
+    episode_probes = [policy_probes]
+
+    def load(self, n, seed):
+        global SCORER
+        SCORER, examples, found = open_episodes(HERE, n, seed, REWARD)
+        self.loader = found["loader"]  # how `falsepass repro` replays the same tasks
+        return SCORER, examples
+
+    def render(self, answer, example):
+        return solver(example) if answer == example.answer else gives_up(example)
+
+    def wrong_answer(self, example):
+        return "WRONG"
+
+
+ADAPTER = Env()
+'''
+
+
 V1_POLICY_TEMPLATE = '''"""falsepass adapter for {id}: policies for a verifiers v1 tool or multi-turn taskset.
 
 Each policy plays whole episodes through the taskset's own loop, as `vf-eval` runs them:
@@ -573,14 +681,13 @@ def scaffold(args) -> int:
         kind = {"automatic": False, "needs": ["an MCP tool environment (declared_tools in openenv.yaml): played through tool calls, "
                                               "not a reply"], "has_reference": True, "turns": "multi-turn", "generation": "openenv",
                 "outside_hosts": []}  # fmt: skip
-    if args.policies and info.get("framework") == "openenv":
-        print("falsepass: OpenEnv environments have no policy skeleton yet. Write an adapter that drives reset() and step() "
-              f"yourself: `falsepass init {args.env_id} --force --manual` (MCP: manual=true, force=true)", file=sys.stderr)  # fmt: skip
-        return 1
+    if args.manual and info.get("framework") == "openenv":  # an OpenEnv adapter is a policy adapter: one reply is a one-step policy
+        args.policies = True
     kept_adapter = (args.manual or args.policies) and (audit_dir / "adapter.py").exists()
     if (args.manual or args.policies) and not kept_adapter:
         v1 = bool(kind) and kind["generation"] == "v1"
-        template = (V1_POLICY_TEMPLATE if v1 else POLICY_TEMPLATE) if args.policies else V1_ADAPTER_TEMPLATE if v1 else ADAPTER_TEMPLATE
+        policy_template = OPENENV_POLICY_TEMPLATE if info.get("framework") == "openenv" else V1_POLICY_TEMPLATE if v1 else POLICY_TEMPLATE
+        template = policy_template if args.policies else V1_ADAPTER_TEMPLATE if v1 else ADAPTER_TEMPLATE
         (audit_dir / "adapter.py").write_text(template.format(id=info["id"], package=info.get("module") or info.get("task", "")))
     if kept_adapter:
         print(f"falsepass: kept the existing {audit_dir}/adapter.py (delete it first for a fresh skeleton)", file=sys.stderr)
@@ -630,7 +737,8 @@ def scaffold(args) -> int:
         print(f"  (the code calls an outside service: {', '.join(kind['outside_hosts'])}. An audit should not reach it: "
               "v1 episodes block outside hosts; otherwise give the adapter a local stand-in)")
     if info.get("source"):
-        print(f"  (installed from {info['source']} on every run, so edits are picked up)")
+        how = "read in place from" if info.get("framework") in ("openenv", "reward") else "installed from"
+        print(f"  ({how} {info['source']} on every run, so edits are picked up)")
     if info.get("others"):
         print(f"  (task {info['task']}; the others can be audited with --task and --name: {', '.join(info['others'])})")
     print(f"  falsepass audit {ref}")

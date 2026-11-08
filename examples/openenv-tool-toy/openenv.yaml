@@ -1,0 +1,8 @@
+spec_version: 1
+name: refund_desk
+version: 0.1.0
+type: space
+runtime: fastapi
+app: server.app:app
+port: 8000
+tags: [demo, falsepass, mcp]

@@ -332,6 +332,209 @@ class OpenEnvScorer:
         self.env = None
 
 
+# --- whole episodes, played by a policy ------------------------------------------------------
+
+TOOL_FIELDS = {"tool_name", "arguments"}
+EPISODE_TURN_CAP = 200  # policy turns before an episode is declared unbounded; the environment's own step limit comes first
+
+
+def is_tool_action(action_cls: type) -> bool:
+    """An MCP tool call (`CallToolAction` or a subclass): the environment is played through tools."""
+    return TOOL_FIELDS <= set(getattr(action_cls, "model_fields", {}))
+
+
+def _mcp_types() -> Any:
+    for package in ("openenv.core.env_server.mcp_types", "openenv_core.env_server.mcp_types"):
+        try:
+            return importlib.import_module(package)
+        except ImportError:
+            continue
+    return None
+
+
+def _reward_value(reward: Any) -> float | None:
+    if isinstance(reward, dict):  # a hand-written environment: {"value": ..., "reason": ...}
+        reward = reward.get("value", reward.get("reward"))
+    return float(reward) if isinstance(reward, (int, float)) and not isinstance(reward, bool) else None
+
+
+ID_KEY = re.compile(r"(^|_)id$|episode|timestamp|_at$|session", re.I)
+
+
+def episode_text(observation: Any) -> str:
+    """An observation in the middle of an episode, as the model would read it: every text
+    field (feedback included) but identifiers; with none, the other fields as JSON."""
+    data = observation.model_dump() if hasattr(observation, "model_dump") else observation if isinstance(observation, dict) else {}
+    texts: list[str] = []
+
+    def walk(value: Any, key: str) -> None:
+        if isinstance(value, dict):
+            for k, v in value.items():
+                walk(v, str(k))
+        elif isinstance(value, (list, tuple)):
+            for v in value:
+                walk(v, key)
+        elif isinstance(value, str) and value.strip() and not ID_KEY.search(key):
+            texts.append(value)
+
+    walk(data, "")
+    if texts:
+        return "\n\n".join(texts)
+    rest = {k: v for k, v in data.items() if k not in ("done", "reward") and v not in (None, "", [], {})} if isinstance(data, dict) else {}
+    return json.dumps(rest, ensure_ascii=False, default=str) if rest else ""
+
+
+def tool_result_text(observation: Any) -> str:
+    """What a tool call returned, as the model would read it: the error, the result's text
+    parts, else its data, else the observation's own text."""
+    error = getattr(observation, "error", None)
+    if error is not None:
+        kind = getattr(getattr(error, "error_type", None), "value", getattr(error, "error_type", "error"))
+        return f"error ({kind}): {getattr(error, 'message', error)}"
+    result = getattr(observation, "result", None)
+    if result is not None:
+        content = getattr(result, "content", None) if not isinstance(result, dict) else result.get("content")
+        if isinstance(content, list):
+            parts = [p.get("text", "") if isinstance(p, dict) else str(getattr(p, "text", "") or "") for p in content]
+            if any(parts):
+                return "".join(parts)
+        data = getattr(result, "data", None) if not isinstance(result, dict) else result.get("data", result)
+        value = data if data is not None else result
+        return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+    return episode_text(observation)
+
+
+class OpenEnvEpisodeScorer(OpenEnvScorer):
+    """Play a whole episode with a policy: `reset()` to the task, then one `step()` per
+    action until the environment says `done`, the policy stops, or the turn cap is hit.
+
+    The policy sees the conversation as plain messages: the task as the first user message,
+    a text environment's next observation as a user message, a tool's result as a `tool`
+    message. A tool call becomes `CallToolAction(tool_name, arguments)` (the action class the
+    server was given, when it is a tool call); text becomes the action as in `OpenEnvScorer`
+    (the free-text field, or a JSON object naming the action's fields). In an environment
+    played only through tools, a text reply ends the policy's turn, as it ends a model's.
+
+    The reward is the episode's return (`reward = "sum"`, every step's reward added) or the
+    last reward the environment gave (`"last"`); both are kept in the episode's info."""
+
+    multi_turn = True
+
+    def __init__(self, make_env: Any, action_cls: type, plan: dict[str, Any], reward: str = "sum") -> None:
+        super().__init__(make_env, action_cls, plan)
+        if reward not in ("sum", "last"):
+            raise ValueError(f'reward must be "sum" or "last", not {reward!r}')
+        self.reward_mode = reward
+        self._tools: list[dict[str, Any]] | None = None
+
+    def tool_action_class(self) -> type | None:
+        if is_tool_action(self.action_cls):
+            return self.action_cls
+        mcp = _mcp_types()
+        environment = sys.modules.get("openenv.core.env_server.mcp_environment")
+        if mcp is not None and environment is not None and isinstance(self.environment(), environment.MCPEnvironment):
+            return mcp.CallToolAction  # an MCP environment served with its own action class: tools as well
+        return None
+
+    async def tools(self) -> list[dict[str, Any]]:
+        """The tools on offer, listed once through the MCP server (as a client's `list_tools()`
+        does over the MCP route): not a step of the episode, so no step counter moves."""
+        if self._tools is not None:
+            return self._tools
+        found: list[Any] = []
+        env = self.environment()
+        handler = getattr(env, "_async_handle_list_tools", None)
+        if handler is not None:
+            found = list(getattr(await handler(), "tools", None) or [])
+        elif self.tool_action_class() is not None and _mcp_types() is not None:  # an older openenv: through step(), before reset()
+            found = list(getattr(await _call(env, "step", _mcp_types().ListToolsAction()), "tools", None) or [])
+        self._tools = [{"name": getattr(t, "name", ""), "description": getattr(t, "description", "") or "",
+                        "parameters": getattr(t, "input_schema", None) or getattr(t, "inputSchema", None) or {}} for t in found]  # fmt: skip
+        return self._tools
+
+    async def score(self, example: Example, completion: Completion) -> Score:
+        from pydantic import ValidationError
+
+        from falsepass.v1_episodes import Player
+
+        player = Player(completion, EPISODE_TURN_CAP)
+        errors: list[str] = []
+        rewards: list[float | None] = []
+        messages: list[dict[str, Any]] = []
+        state: dict[str, Any] = {"stop": "", "last": None}
+        tool_cls = self.tool_action_class()
+        tools_only = tool_cls is not None and is_tool_action(self.action_cls)
+
+        def stepped(observation: Any) -> bool:
+            rewards.append(_reward_value(getattr(observation, "reward", None)))
+            state["last"] = observation
+            return bool(getattr(observation, "done", False))
+
+        async def run() -> None:
+            async with self.lock:
+                tools = await self.tools() if tool_cls is not None else []
+                observation = await self.reset(example)
+                messages.append({"role": "user", "content": observation_text(observation)})
+                env = self.environment()
+                while not state["stop"]:
+                    reply = player.next(messages, tools)  # raises at the cap: "rollout did not stop after N model turns"
+                    messages.append({"role": "assistant", **reply})
+                    if reply.get("tool_calls"):
+                        if tool_cls is None:
+                            state["stop"] = "tool call in an environment without tools"
+                            errors.append(f"the policy called a tool, but {self.action_cls.__name__} takes no tool calls")
+                            break
+                        for call in reply["tool_calls"]:
+                            try:
+                                action = tool_cls(tool_name=call["name"], arguments=call.get("arguments") or {})
+                            except ValidationError as rejected:
+                                messages.append({"role": "tool", "name": call["name"], "content": f"rejected: {str(rejected).splitlines()[0]}"})
+                                continue
+                            observation = await _call(env, "step", action)
+                            messages.append({"role": "tool", "name": call["name"], "content": tool_result_text(observation)})
+                            if stepped(observation):
+                                state["stop"] = "done"
+                                break
+                        continue
+                    if tools_only:  # a text reply ends the policy's turn; the episode ends with it
+                        state["stop"] = "policy ended its turn without a tool call"
+                        break
+                    try:
+                        action = self.action(reply.get("content") or "")
+                    except ValidationError as rejected:  # the server would answer 422
+                        state["stop"] = "action rejected by the action schema"
+                        errors.append(f"rejected: {str(rejected).splitlines()[0]}")
+                        break
+                    observation = await _call(env, "step", action)
+                    if stepped(observation):
+                        state["stop"] = "done"
+                        break
+                    messages.append({"role": "user", "content": episode_text(observation)})
+
+        ok = await _guarded(run(), errors)
+        transcript = [{"role": m["role"], "content": " ".join(filter(None, [
+            str(m.get("content") or ""), *(f"[tool call {c['name']}({json.dumps(c.get('arguments') or {}, ensure_ascii=False)})]"
+                                            for c in m.get("tool_calls") or [])]))} for m in messages]  # fmt: skip
+        if player.error:
+            errors.append(player.error)
+        if not state["stop"] and not ok and any("did not stop" in e for e in errors):
+            state["stop"] = f"turn cap ({EPISODE_TURN_CAP})"
+        info = {"turns": player.calls, "stop": state["stop"] or "error", "transcript": transcript, "steps": len(rewards),
+                "script": [{"role": "assistant", **r} for r in player.replies], "done": state["stop"] == "done",
+                "tools": [t["name"] for t in self._tools or []]}  # fmt: skip
+        if not ok:
+            self.env = None  # a raised reset() or step() may leave the instance unusable: the next call builds a new one
+            return Score(None, {}, errors, info)
+        paid = [r for r in rewards if r is not None]
+        total, last = float(sum(paid)), (paid[-1] if paid else 0.0)
+        info.update({"episode_return": total, "last_reward": last})
+        metrics: dict[str, float] = {}  # numbers the environment reports next to its last reward: usually its components
+        for key, value in (getattr(state["last"], "metadata", None) or {}).items():
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and not COUNTER_KEY.search(str(key)):
+                metrics[str(key)] = float(value)
+        return Score(total if self.reward_mode == "sum" else last, metrics, errors, info)
+
+
 # --- the OpenEnv probes ----------------------------------------------------------------------
 
 
@@ -508,7 +711,7 @@ def _factory(module: Any, environment_base: type) -> Any:
 
 
 def find_classes(folder: Path, app: str, name: str, env_class: str = "", action_class: str = "",
-                 factory: str = "") -> tuple[Any, type, list[str], str, str]:
+                 factory: str = "", episodes: bool = False) -> tuple[Any, type, list[str], str, str]:
     """What builds the environment (a factory function, else the class) and the action class:
     named in env.toml, else found in the app module (`create_app(Env, Action, Observation)`
     imports both), else in the folder's modules. Returns (make_env, action class, notes, app
@@ -555,10 +758,10 @@ def find_classes(folder: Path, app: str, name: str, env_class: str = "", action_
         actions = with_text or actions
         notes.append(f"several action classes ({', '.join(c.__name__ for c in actions)}): {actions[0].__name__} used; "
                      "action_class in env.toml picks another")  # fmt: skip
-    if {"tool_name", "arguments"} <= set(getattr(actions[0], "model_fields", {})):
+    if is_tool_action(actions[0]) and not episodes:
         raise RuntimeError(f"{actions[0].__name__} is an MCP tool call: this environment is played through tools, not a reply. "
-                           "OpenEnv has no policy skeleton yet: write an adapter that drives reset() and step() with its tool "
-                           "calls (falsepass init <target> --force --manual; MCP: manual=true, force=true)")  # fmt: skip
+                           "Write policies that play whole episodes: falsepass init <target> --force --policies "
+                           "(MCP: policies=true, force=true), then fill in solver() and exploits() in adapter.py")  # fmt: skip
     return make_env, actions[0], notes, app, alias
 
 
@@ -743,23 +946,29 @@ async def _harvest(scorer: OpenEnvScorer, pool: list[Example], notes: list[str])
 
 
 def load(spec: str, max_rows: int, answers: str | None = None, app: str = "", env_class: str = "", action_class: str = "",
-         factory: str = "", tasks_file: str | Path | None = None) -> tuple[OpenEnvScorer, list[Example], dict[str, Any]]:
+         factory: str = "", tasks_file: str | Path | None = None, episodes: bool = False,
+         reward: str = "sum") -> tuple[OpenEnvScorer, list[Example], dict[str, Any]]:
     """The scorer and the tasks of the environment folder `spec` (or of `$FALSEPASS_SOURCE`, a
-    patched copy). Works in the folder: data files are read relative to it."""
+    patched copy). Works in the folder: data files are read relative to it. `episodes`: an
+    `OpenEnvEpisodeScorer`, which plays whole episodes with policies (an adapter's)."""
     folder = Path(os.environ.get(SOURCE_VAR) or spec).resolve()
     os.chdir(folder)
     if str(folder) not in sys.path:
         sys.path.insert(0, str(folder))
     found_manifest = manifest(folder)
     app = app or found_manifest.get("app") or DEFAULT_APP
-    make_env, action_cls, notes, app, alias = find_classes(folder, app, found_manifest.get("name") or folder.name, env_class, action_class, factory)
+    make_env, action_cls, notes, app, alias = find_classes(folder, app, found_manifest.get("name") or folder.name, env_class,
+                                                           action_class, factory, episodes)  # fmt: skip
     plan = action_plan(action_cls)
-    if plan["blockers"]:
+    tools = is_tool_action(action_cls)
+    if tools:
+        plan = {**plan, "field": None, "fills": {}, "choices": {}, "reports": {}, "blockers": []}  # tool calls, not a filled-in reply
+    if plan["blockers"] and not episodes:
         raise RuntimeError(
             f"{action_cls.__name__} has required fields nothing can be made up for ({', '.join(plan['blockers'])}): write an adapter "
             "whose render() returns a JSON object with the action's fields (falsepass init --force --manual)"
         )
-    scorer = OpenEnvScorer(make_env, action_cls, plan)
+    scorer = OpenEnvEpisodeScorer(make_env, action_cls, plan, reward) if episodes else OpenEnvScorer(make_env, action_cls, plan)
     references: Any = json.loads(Path(answers).read_text()) if answers else {}
     tasks = read_tasks(Path(tasks_file) if tasks_file else None)
     pool = asyncio.run(_examples(scorer, max_rows, references, tasks, notes))
@@ -768,8 +977,8 @@ def load(spec: str, max_rows: int, answers: str | None = None, app: str = "", en
     # Tasks that reset() hands out in a cycle come back after one full cycle; random draws need
     # several times the pool size to be likely. Each try is one reset(), cheap in most environments.
     scorer.retries = min(2000, max(150, 8 * len(pool)))
-    notes.append(describe_plan(action_cls, plan))
-    if not any(e.answer.strip() for e in pool):
+    notes.append("played through MCP tool calls" if tools else describe_plan(action_cls, plan))
+    if not episodes and not any(e.answer.strip() for e in pool):
         asyncio.run(_harvest(scorer, pool, notes))
     environment = scorer.environment()
     found = {
@@ -781,6 +990,27 @@ def load(spec: str, max_rows: int, answers: str | None = None, app: str = "", en
         "resets": {e.key: e.raw["reset"] for e in pool},
     }  # fmt: skip
     return scorer, pool, found
+
+
+def open_episodes(audit_dir: str | Path, n: int, seed: int, reward: str = "sum",
+                  max_rows: int = 500) -> tuple[OpenEnvEpisodeScorer, list[Example], dict[str, Any]]:  # fmt: skip
+    """For a policy adapter (`falsepass init <target> --policies`): the episode scorer and `n`
+    tasks sampled with `seed`, from the audit folder's env.toml and tasks.json, and the
+    `loader` that `falsepass repro` replays the stored episodes with."""
+    import random
+    import tomllib
+
+    audit_dir = Path(audit_dir).resolve()
+    env = tomllib.loads((audit_dir / "env.toml").read_text())["env"]
+    scorer, pool, found = load(env["task"], max_rows, env.get("answers"), app=env.get("app", ""), env_class=env.get("env_class", ""),
+                               action_class=env.get("action_class", ""), factory=env.get("factory", ""),
+                               tasks_file=audit_dir / TASKS_FILE, episodes=True, reward=reward)  # fmt: skip
+    sampled = random.Random(seed).sample(pool, min(n, len(pool)))
+    loader = {"kind": "openenv-episode", "task": env["task"], "reward": reward,
+              **{k: found[k] for k in ("app", "alias", "env_class", "factory", "action_class", "field", "fills", "retries")},
+              "resets": {e.key: e.raw["reset"] for e in sampled}, "prompts": {e.key: e.prompt for e in sampled}}  # fmt: skip
+    found["loader"] = loader
+    return scorer, sampled, found
 
 
 # --- `falsepass init` (runs outside the audit virtualenv: no openenv import) -----------------

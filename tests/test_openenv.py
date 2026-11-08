@@ -14,6 +14,7 @@ import pytest
 from falsepass import cli, openenv_support, static
 
 TOY = Path(__file__).resolve().parent.parent / "examples" / "openenv-toy"
+TOOL_TOY = TOY.parent / "openenv-tool-toy"
 
 
 def test_an_openenv_folder_is_recognised_and_written_as_openenv(tmp_path: Path, monkeypatch):
@@ -102,7 +103,7 @@ def test_the_static_scan_points_at_the_toy_defect():
 
 def _fresh_imports(monkeypatch, folder: Path):
     """One process audits one folder; the tests load several: forget the previous one's modules."""
-    for name in [n for n in sys.modules if n.split(".")[0] in ("server", "models", "client", "aliased_env", "dec_env_app")]:
+    for name in [n for n in sys.modules if n.split(".")[0] in ("server", "models", "client", "aliased_env", "dec_env_app", "guess_env_app")]:
         monkeypatch.delitem(sys.modules, name, raising=False)
     monkeypatch.setattr(sys, "path", [p for p in sys.path if not p.startswith(str(TOY.parent))])
     monkeypatch.chdir(os.getcwd())
@@ -320,9 +321,11 @@ def test_init_clones_a_space_under_dir_and_names_lfs_pointers(tmp_path: Path, mo
     assert asked == [("space", "owner", "Some_Space")]
     assert "1 file(s) in the Space are still Git LFS pointers" in err and "data/tasks.jsonl.gz" in err and "lfs pull" in err
     assert openenv_support.lfs_pointers(tmp_path / "work" / "some-space" / "space") == ["data/tasks.jsonl.gz"]
-    # --policies on a Space: refused with the way forward, and nothing written
-    assert cli.main(["init", "hf:owner/Some_Space", "--dir", str(tmp_path / "work"), "--force", "--policies"]) == 1
-    assert "no policy skeleton yet" in capsys.readouterr().err and not (tmp_path / "work" / "some-space" / "adapter.py").exists()
+    # --policies on a Space: the OpenEnv policy skeleton (episodes through reset() and step())
+    assert cli.main(["init", "hf:owner/Some_Space", "--dir", str(tmp_path / "work"), "--force", "--policies"]) == 0
+    adapter = (tmp_path / "work" / "some-space" / "adapter.py").read_text()
+    assert "open_episodes" in adapter and "import verifiers" not in adapter
+    compile(adapter, "adapter.py", "exec")
 
 
 def test_lfs_pointers_are_fetched_and_checked(tmp_path: Path):
@@ -430,3 +433,174 @@ def test_the_served_app_names_the_environment_and_answers_revealed_after_a_step_
         assert asyncio.run(scorer.score(pool[0], "6")).reward == 0.0
     finally:
         asyncio.run(scorer.close())
+
+
+def _policy(name, act):
+    from falsepass.model import Policy
+
+    return Policy(name, act, wants_tools=True)
+
+
+def _call(name, **arguments):
+    return {"content": "", "tool_calls": [{"name": name, "arguments": arguments}]}
+
+
+def test_init_policies_writes_the_openenv_skeleton_and_manual_does_too(tmp_path: Path, monkeypatch, capsys):
+    from falsepass import hub
+
+    monkeypatch.setattr(hub, "pypi_version", lambda package: "0.9.0")
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["init", str(TOOL_TOY), "--policies"]) == 0
+    adapter = (tmp_path / "audits" / "refund-desk" / "adapter.py").read_text()
+    assert "open_episodes(HERE, n, seed, REWARD)" in adapter and "import verifiers" not in adapter
+    compile(adapter, "adapter.py", "exec")
+    assert "fill in solver() and exploits()" in capsys.readouterr().out
+    assert cli.main(["init", str(TOY), "--manual", "--name", "arith-manual"]) == 0  # --manual: a one-reply adapter is a one-step policy
+    assert "open_episodes" in (tmp_path / "audits" / "arith-manual" / "adapter.py").read_text()
+
+
+def test_tool_episodes_are_played_through_the_environment_and_replayed(tmp_path: Path, monkeypatch):
+    pytest.importorskip("openenv")
+    pytest.importorskip("fastmcp")
+    from falsepass import probes, repro
+
+    _fresh_imports(monkeypatch, TOOL_TOY)
+    audit = tmp_path / "audit"
+    audit.mkdir()
+    (audit / "env.toml").write_text(f'[env]\nid = "local/refund-desk"\nframework = "openenv"\ntask = "{TOOL_TOY}"\n')
+    scorer, examples, found = openenv_support.open_episodes(audit, 6, 0)
+    assert isinstance(scorer, openenv_support.OpenEnvEpisodeScorer) and len(examples) == 6
+    assert found["loader"]["kind"] == "openenv-episode" and found["loader"]["action_class"].endswith(":CallToolAction")
+    assert "played through MCP tool calls" in found["notes"]
+    ex = next(e for e in examples if e.key == "test-1")
+    assert "A-1004" in ex.prompt and ex.raw["reset"] == {"split": "test", "index": 1}
+
+    def solver(messages, tools):
+        turn = sum(1 for m in messages if m["role"] == "assistant")
+        if turn == 0:
+            assert [t["name"] for t in tools] == ["finish", "get_order", "issue_refund", "list_orders"] or \
+                sorted(t["name"] for t in tools) == ["finish", "get_order", "issue_refund", "list_orders"]
+            assert messages == [{"role": "user", "content": ex.prompt}]
+            return _call("get_order", order_id="A-1004")
+        if turn == 1:
+            price = json.loads(messages[-1]["content"])["price"]
+            assert messages[-1]["role"] == "tool" and messages[-1]["name"] == "get_order"
+            return _call("issue_refund", order_id="A-1004", amount=price)
+        return _call("finish") if turn == 2 else "Done."
+
+    def refund_everything(messages, tools):
+        turn = sum(1 for m in messages if m["role"] == "assistant")
+        if turn == 0:
+            return _call("list_orders")
+        orders = json.loads([m for m in messages if m["role"] == "tool"][0]["content"])
+        return _call("issue_refund", order_id=orders[turn - 1], amount=1e9) if turn <= len(orders) else _call("finish")
+
+    try:
+        good = asyncio.run(scorer.score(ex, _policy("solver", solver)))
+        assert good.reward == 1.0 and good.errors == [] and good.info["stop"] == "done" and good.info["steps"] == 3
+        assert good.info["turns"] == 3 and good.info["done"] and "[tool call finish({})]" in good.info["transcript"][-2]["content"]
+        bad = asyncio.run(scorer.score(ex, _policy("refund_everything", refund_everything)))
+        assert bad.reward == 1.0 and bad.info["steps"] == 8  # the planted defect: a policy that never read the ticket is paid
+        idle = asyncio.run(scorer.score(ex, "Done."))  # a text reply ends the episode in a tool environment
+        assert idle.reward == 0.0 and idle.info["stop"] == "policy ended its turn without a tool call" and idle.info["steps"] == 0
+        unknown = asyncio.run(scorer.score(ex, [{"role": "assistant", "content": "", "tool_calls": [{"name": "nope", "arguments": {}}]},
+                                                {"role": "assistant", "content": "Done."}]))  # fmt: skip
+        assert unknown.reward == 0.0 and unknown.info["transcript"][2]["role"] == "tool"
+        assert unknown.info["transcript"][2]["content"].startswith("error") or "nope" in unknown.info["transcript"][2]["content"]
+        again = asyncio.run(scorer.score(ex, _policy("solver", solver)))
+        assert again.reward == 1.0  # nothing carried over from the previous episodes
+        rows = asyncio.run(probes.t6_tool_policies(type("A", (), {"tool_mode": True, "bad_tolerance": 0.0, "max_reward": 1.0,
+                                                                   "task_max": {}, "format_floor": 0.0})(), scorer, ex))  # fmt: skip
+        assert rows and all(r.score == 0.0 and r.passed for r in rows)
+    finally:
+        asyncio.run(scorer.close())
+    # repro: the stored script, replayed through the environment by a script that imports openenv only
+    script = bad.info["script"]
+    assert script[0]["tool_calls"][0]["name"] == "list_orders"
+    payload = {"meta": {"loader": found["loader"], "falsepass": "test", "date": "today"},
+               "results": [{"probe": "X1", "name": "policy", "variant": "refund_everything", "example": ex.key, "expected": "zero",
+                            "passed": False, "completion_id": "c1", "score": 1.0}]}  # fmt: skip
+    (audit / "probe-results.json").write_text(json.dumps(payload))
+    (audit / "completions.json").write_text(json.dumps({"c1": {"policy": "x", "script": script, "transcript": []}}))
+    path = repro.generate(audit)
+    text = path.read_text()
+    compile(text, str(path), "exec")
+    assert "FIELD = json.loads(" in text and 'REWARD = json.loads("\\"sum\\"")' in text
+    run = subprocess.run([sys.executable, str(path)], capture_output=True, text=True, timeout=120, cwd=tmp_path)
+    assert run.returncode == 0, run.stderr[-2000:]
+    assert run.stdout.split()[0] == "1.000000" and "X1 policy/refund_everything on test-1" in run.stdout
+
+
+GUESS_APP = '''
+from openenv.core.env_server.http_server import create_app
+from openenv.core.env_server.interfaces import Environment
+from openenv.core.env_server.types import Action, Observation, State
+
+
+class GuessAction(Action):
+    guess: str
+
+
+class GuessObservation(Observation):
+    prompt: str = ""
+    feedback: str = ""
+
+
+class GuessEnvironment(Environment):
+    """Guess a number in three tries; 1.0 on the right guess, a 0.1 consolation for each wrong one."""
+
+    def __init__(self):
+        super().__init__()
+        self._state = State(episode_id="e", step_count=0)
+        self._secret, self._tries = 0, 0
+
+    def reset(self, seed=None, episode_id=None, **kwargs):
+        self._secret, self._tries = 3 + (seed or 0) % 5, 0
+        return GuessObservation(prompt=f"Guess my number between 1 and 9 (game {seed or 0}).", done=False, reward=None)
+
+    def step(self, action, timeout_s=None, **kwargs):
+        self._tries += 1
+        right = action.guess.strip() == str(self._secret)
+        done = right or self._tries >= 3
+        hint = "right" if right else ("higher" if int(action.guess or 0) < self._secret else "lower")
+        return GuessObservation(feedback=hint, done=done, reward=1.0 if right else 0.1)
+
+    @property
+    def state(self):
+        return self._state
+
+
+app = create_app(GuessEnvironment, GuessAction, GuessObservation, env_name="guess_env")
+'''
+
+
+def test_text_episodes_take_several_steps_and_sum_or_keep_the_last_reward(tmp_path: Path, monkeypatch):
+    pytest.importorskip("openenv")
+    folder = tmp_path / "guess_env"
+    folder.mkdir()
+    (folder / "openenv.yaml").write_text("spec_version: 1\nname: guess_env\napp: guess_env_app:app\n")
+    (folder / "guess_env_app.py").write_text(GUESS_APP)
+    _fresh_imports(monkeypatch, folder)
+    scorer, pool, found = openenv_support.load(str(folder), 3, None, episodes=True)
+    last, _, _ = openenv_support.load(str(folder), 3, None, episodes=True, reward="last")
+    ex = pool[0]  # seed 0: the secret is 3
+
+    def bisect(messages, tools):
+        assert tools == []
+        heard = [m["content"] for m in messages if m["role"] == "user"]
+        assert heard[0].startswith("Guess my number")
+        return ["5", "2", "3"][len(heard) - 1]
+
+    try:
+        played = asyncio.run(scorer.score(ex, _policy("bisect", bisect)))
+        assert played.info["steps"] == 3 and played.info["stop"] == "done" and played.reward == pytest.approx(1.2)
+        assert [m["content"] for m in played.info["transcript"]][1:4] == ["5", "lower", "2"]
+        assert asyncio.run(last.score(ex, _policy("bisect", bisect))).reward == 1.0
+        wrong = asyncio.run(scorer.score(ex, "9"))  # a fixed script repeats its last message until the environment stops
+        assert wrong.info["steps"] == 3 and wrong.reward == pytest.approx(0.3)
+        assert asyncio.run(scorer.score(ex, [{"role": "assistant", **_call("guess", guess="3")}])).info["stop"] == "tool call in an environment without tools"
+    finally:
+        asyncio.run(scorer.close())
+        asyncio.run(last.close())
+    with pytest.raises(ValueError, match="sum"):
+        openenv_support.OpenEnvEpisodeScorer(None, object, {}, reward="mean")

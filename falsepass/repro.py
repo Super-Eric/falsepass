@@ -467,6 +467,71 @@ async def score(key, completion):
     return reward.get("value") if isinstance(reward, dict) else reward
 '''
 
+SCORE_OPENENV_EPISODE = '''
+
+# A policy's episode, replayed: reset() to the task, then the recorded assistant messages one
+# per policy turn (the last one repeated), each tool call as one step(), until the environment
+# says done. A text reply ends the turn in an environment played only through tools.
+def _reward(observation):
+    reward = getattr(observation, "reward", None)
+    reward = reward.get("value", reward.get("reward")) if isinstance(reward, dict) else reward
+    return float(reward) if isinstance(reward, (int, float)) and not isinstance(reward, bool) else None
+
+
+async def score(key, completion):
+    script = [m for m in completion if m.get("role") == "assistant"] or [{"content": ""}]
+    wanted = PROMPTS.get(key, "")
+    for _ in range(RETRIES):
+        observation = await _call("reset", **_reset_kwargs(key))
+        if not wanted or wanted in _text(observation):
+            break
+    else:
+        raise RuntimeError(f"reset() did not bring back task {key} in {RETRIES} tries")
+    tools_only = {"tool_name", "arguments"} <= set(ACTION_CLASS.model_fields)
+    if tools_only:
+        tool_class = ACTION_CLASS
+    else:
+        try:
+            from openenv.core.env_server.mcp_types import CallToolAction as tool_class
+        except ImportError:
+            tool_class = None
+    rewards = []
+    for turn in range(200):
+        entry = script[min(turn, len(script) - 1)]
+        if entry.get("tool_calls"):
+            for call in entry["tool_calls"]:
+                try:
+                    action = tool_class(tool_name=call["name"], arguments=call.get("arguments") or {})
+                except ValueError:  # pydantic's ValidationError: the call is refused, nothing is stepped
+                    continue
+                observation = await _call("step", action)
+                rewards.append(_reward(observation))
+                if getattr(observation, "done", False):
+                    break
+        elif tools_only:
+            break
+        else:
+            reply = entry.get("content") or ""
+            try:
+                data = json.loads(reply)
+            except ValueError:
+                data = None
+            named = isinstance(data, dict) and data and set(data) <= set(ACTION_CLASS.model_fields)
+            fields = {**FILLS, **data} if named else {**FILLS, FIELD: reply} if FIELD else dict(FILLS)
+            try:
+                action = ACTION_CLASS(**fields)
+            except ValueError:  # refused by the action schema: the episode ends there
+                break
+            observation = await _call("step", action)
+            rewards.append(_reward(observation))
+        if rewards and getattr(observation, "done", False):
+            break
+    else:
+        raise RuntimeError("the episode did not stop after 200 policy turns")
+    paid = [r for r in rewards if r is not None]
+    return float(sum(paid)) if REWARD == "sum" else (paid[-1] if paid else 0.0)
+'''
+
 LOAD_REWARD = '''
 import importlib
 import importlib.util
@@ -599,6 +664,7 @@ def generate(audit_dir: Path, probes: list[str] | None = None, per_group: int = 
     path = audit_dir / "repro_auto.py"
     depends = {"inspect": "inspect_ai and the task's package", "hud": "the hud SDK and the environment's folder",
                "openenv": "openenv and the environment folder with its own requirements",
+               "openenv-episode": "openenv and the environment folder with its own requirements",
                "reward": "the reward file and its own imports; the dataset rows are inlined"}  # fmt: skip
     script = HEADER.format(
         env_id=env["id"], version=env.get("version", ""), install=" ".join(install_args(env)), python=env.get("python", "3.12"),
@@ -620,16 +686,19 @@ def generate(audit_dir: Path, probes: list[str] | None = None, per_group: int = 
                     "PROMPT_COLUMN": loader["prompt_column"], "ROWS": {k: v for k, v in loader.get("rows", {}).items() if k in keys}}  # fmt: skip
         script += "".join(f"{name} = json.loads({json.dumps(json.dumps(value, ensure_ascii=True, default=str))})\n"
                           for name, value in settings.items()) + LOAD_REWARD  # fmt: skip
-    elif loader["kind"] == "openenv":
+    elif loader["kind"] in ("openenv", "openenv-episode"):
         keys = {c["example"] for c in cases}
         prompts = {k: " ".join(v.split()) for k, v in loader.get("prompts", {}).items() if k in keys}
         settings = {
             "ALIAS": loader.get("alias", ""), "ACTION_CLASS_SPEC": loader["action_class"], "FACTORY_SPEC": loader.get("factory", ""),
             "ENV_CLASS_SPEC": loader["env_class"], "FIELD": loader.get("field"), "FILLS": loader.get("fills", {}),
             "RESETS": {k: v for k, v in loader.get("resets", {}).items() if k in keys}, "PROMPTS": prompts,
-            "RETRIES": loader.get("retries", 150),
+            "RETRIES": loader.get("retries", 150), "REWARD": loader.get("reward", "sum"),
         }  # fmt: skip
-        script += "".join(f"{name} = {json.dumps(value, ensure_ascii=True)}\n" for name, value in settings.items()) + LOAD_OPENENV
+        script += "".join(f"{name} = json.loads({json.dumps(json.dumps(value, ensure_ascii=True))})\n"  # null, true: JSON, not Python
+                          for name, value in settings.items()) + LOAD_OPENENV  # fmt: skip
+        if loader["kind"] == "openenv-episode":
+            script += SCORE_OPENENV_EPISODE
     elif loader["kind"] == "v1":
         script += LOAD_V1.replace("{last}", str(max(int(re.findall(r"[0-9]+", c["example"])[-1]) for c in cases)))
     elif loader["kind"] == "v1-episode":

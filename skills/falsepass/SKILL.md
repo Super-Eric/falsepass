@@ -36,6 +36,9 @@ A `verifiers.v1` tool or multi-turn taskset needs no adapter to start: automatic
 generic tool policies (T5, T6) as whole episodes through the taskset's own loop; for a
 solver as the control and task-aware exploits, `--policies` writes a v1 skeleton. T5/T6
 rows on tasks where refusing is right are marked `no_control` and not counted.
+An OpenEnv tool environment (MCP `CallToolAction`), or one whose reward comes after several
+steps, takes `--policies` too: the skeleton's policies play whole episodes through the
+environment's own `reset()` and `step()`, tool calls included.
 
 ## 2. Read the results
 

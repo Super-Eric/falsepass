@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- OpenEnv policies: `init --policies` on an OpenEnv folder or Space writes an adapter whose policies play whole episodes through the environment's own `reset()` and `step()` (`OpenEnvEpisodeScorer`): MCP tool calls as `CallToolAction` steps, text replies as the action in a text environment, the next observation (feedback included) or the tool's result back to the policy, until the environment says `done`. Tools are listed once through the MCP route, so no step counter moves. The reward is the episode's return (`REWARD = "last"` takes the last step's). T5 and T6 play these episodes too; `repro` replays a stored episode with openenv alone and `verify-fix` on a patched copy. Before, `--policies` refused on OpenEnv and an MCP tool environment could not be audited. `--manual` on OpenEnv writes the same skeleton (it wrote a verifiers one). New example `examples/openenv-tool-toy` (an MCP refund desk with a planted `>=`).
+- `repro` on an OpenEnv audit whose action has no free-text field wrote `FIELD = null` into the script, which then raised `NameError`; the settings are now read with `json.loads`.
+- Policies see a tool result's `name` next to its content.
+
 ## 0.14.0 — 2026-11-06
 
 - From the eleventh dogfood round: a run whose reference scores below full on at least half the tasks is `inconclusive` (reason, `next`: an adapter with a solver), with the same warning at the top of summary.md; before, the trial's mean became the maximum and the status stayed `finished`. `init hf:` fetches a Space's Git LFS files in place of their pointers (sha256-checked) and names any it could not. OpenEnv: `init --policies` refuses with the way forward (no policy skeleton yet), the tool-call stop message says the same, and `init` reports an MCP tool Space as `automatic_likely: false`. `results` on a stopped audit prints `stopped.md`. The MCP next-step hint spells a Space target `hf:owner/space`. `cases_note` on a repro says which rows the script holds; `scoring_errors_note` says the exceptions are the environment's; `total_s` documented as the probe process after set-up.

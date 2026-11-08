@@ -91,6 +91,8 @@ falsepass audit space
 
 OpenEnv 环境在 `step()` 里算奖励，所以 falsepass 像它服务器上的一个会话那样直接驱动环境类：先 `reset()` 到某道题，再用回答作为动作调用 `step()`，全程在进程内，装的是 Space 自己声明的依赖，不需要 Docker。（服务器的 HTTP `/reset` 和 `/step` 每次请求都新建一个环境，所以没法用它们先 reset 再 step。）题目来源：`audits/<名字>/tasks.json` 列出调用 `reset()` 的关键字组合（多数环境靠 `task_id`、`task_name`、`difficulty` 或种子选题；每组可以带一个 `answer`）；没有的话用环境实现的 Task API；再没有就反复调用 `reset()`，每个不同的题面算一道题，对每次 reset 随机抽题的环境会反复 reset 直到抽回记录过的那道。没有标准答案时只跑不需要答案的测试。普通文字回答填进动作的自由文本字段；其他必填字段（判定枚举、布尔开关）填一个常量，O1 会把这种判定字段的每个取值都试一遍（固定策略，记为懒惰策略得分），O2 会把自报字段（`confidence`、`score`）分别设成最小值和最大值。如果回答本身是一个以动作字段为键的 JSON 对象，就直接当作动作：适配器或由这类对象组成的答案文件就是这样填多个字段的。`examples/openenv-toy/` 埋了一个漏洞，可以拿来试。
 
+MCP 工具类环境（动作是 `CallToolAction`），以及要走好几步才给奖励的环境，用策略来玩：`falsepass init <目标> --policies` 写出一个适配器骨架，里面的策略在进程内把整局玩完：先 `reset()` 到该题，然后每个动作一次 `step()`，直到环境说 `done`。策略是 `act(messages, tools)`：题面是第一条 user 消息，工具结果是 `tool` 消息（带工具名），文字环境的下一个观察是 user 消息；返回 `call("工具名", 参数=值)` 就调用一次工具，返回字符串在文字环境里是动作文本，在工具环境里表示结束本轮（也就结束这一局）。填好 `solver(example)`（对照组，可以读 `example.raw`、`example.answer` 或通过 `ENV()` 读运行中的环境）和 `exploits(example)`（从不读题的策略）。奖励默认是整局各步奖励之和，`REWARD = "last"` 改为只取最后一步。`repro` 只用 openenv 就能逐步重放存下来的每一局。`examples/openenv-tool-toy/` 是一个埋了漏洞的 MCP 退款台。
+
 ## Inspect AI 和 HUD
 
 ```bash
@@ -243,7 +245,7 @@ falsepass mcp                             # MCP 服务，走 stdio（需要 `fal
 - 线索需要人来判断。工具能找出判分器在哪里给错了分，但这算不算漏洞、有多严重，要靠人来决定。
 - 搜索比较浅：只有固定的文本变异，判分器调用几百次。不会针对奖励去训练模型。
 - 容器类任务没有自动模式；托管沙箱上的环境，以及用付费大模型当评委的环境，没有相应凭据就无法覆盖。
-- 支持的框架：verifiers（v1 工具类任务集：自动运行通用工具策略，了解任务的策略要手写）、OpenEnv（`step()` 按回答或结构化动作判分的环境；MCP 工具类环境和没有 `Environment` 类的手写服务器需要策略或适配器）、Inspect AI（不含需要沙箱的任务）和 HUD（按回答判分的任务模板；按代理在工作区里做了什么来判分的任务，仍需手写策略）。
+- 支持的框架：verifiers（v1 工具类任务集：自动运行通用工具策略，了解任务的策略要手写）、OpenEnv（`step()` 按回答或结构化动作判分的环境；MCP 工具类环境和多步才给奖励的环境用 `init --policies` 写策略；没有 `Environment` 类的手写服务器不支持）、Inspect AI（不含需要沙箱的任务）和 HUD（按回答判分的任务模板；按代理在工作区里做了什么来判分的任务，仍需手写策略）。
 
 ## 相关工具
 
@@ -259,7 +261,7 @@ falsepass mcp                             # MCP 服务，走 stdio（需要 `fal
 falsepass/           测试工具本身（falsepass/mcp_server.py：MCP 工具）
 tests/               工具自身的测试
 examples/toy-env/    demo 用的小环境，带一个故意埋的漏洞
-examples/openenv-toy/、examples/reward-toy/、examples/inspect-toy/、examples/hud-toy/   OpenEnv、奖励函数、Inspect AI 和 HUD 版的同类小例子
+examples/openenv-toy/、examples/openenv-tool-toy/、examples/reward-toy/、examples/inspect-toy/、examples/hud-toy/   OpenEnv、奖励函数、Inspect AI 和 HUD 版的同类小例子
 skills/falsepass/    给 AI 代理的 skill：审计流程
 action.yml           GitHub Action
 docs/SEVERITY.md     定级标准；docs/OUTPUT.md：输出文件说明（均为英文）

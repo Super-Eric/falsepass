@@ -131,6 +131,19 @@ its minimum and maximum. A reply that is a JSON object naming the action's field
 action itself: an adapter, or an answers file of such objects, fills several fields that way.
 `examples/openenv-toy/` has one planted defect to try.
 
+MCP tool environments (the action is a `CallToolAction`), and environments whose reward comes
+after several steps, are played with policies: `falsepass init <target> --policies` writes an
+adapter whose policies play whole episodes in this process, the task's `reset()` and then one
+`step()` per action until the environment says `done`. A policy is `act(messages, tools)`: the
+task's text is the first user message, a tool's result a `tool` message (with its name), a text
+environment's next observation a user message; it returns `call("tool", arg=value)` for a tool
+call, or a string (the action's text in a text environment; the end of its turn, and of the
+episode, in a tool environment). Fill in `solver(example)` (the control; it may read
+`example.raw`, `example.answer` or the live environment through `ENV()`) and
+`exploits(example)` (policies that never read the task). The reward is the episode's return
+(`REWARD = "last"` takes the last step's). `repro` replays each stored episode step by step with
+openenv alone. `examples/openenv-tool-toy/` is an MCP refund desk with a planted defect.
+
 ## Inspect AI and HUD
 
 ```bash
@@ -396,8 +409,9 @@ counts are not published here until those fixes are in.
   paid LLM judge are not covered without credentials.
 - Supported frameworks: verifiers (v1 tool tasksets: generic tool policies automatically,
   task-aware ones written as policies), OpenEnv (environments whose `step()` grades a reply or a
-  structured action; MCP tool environments and hand-written servers without an
-  `Environment` class need policies or an adapter), Inspect AI (no sandboxed tasks) and HUD
+  structured action automatically; MCP tool environments and multi-step episodes with written
+  policies, `init --policies`; hand-written servers without an `Environment` class are not
+  covered), Inspect AI (no sandboxed tasks) and HUD
   (answer-graded templates; tasks graded on what an agent did in a workspace need
   hand-written policies).
 
@@ -421,7 +435,7 @@ counts are not published here until those fixes are in.
 falsepass/           the probe kit (falsepass/mcp_server.py: the MCP tools)
 tests/               its tests
 examples/toy-env/    the demo environment, with its planted defect
-examples/openenv-toy/, examples/reward-toy/, examples/inspect-toy/, examples/hud-toy/   the same idea for OpenEnv, reward functions, Inspect AI and HUD
+examples/openenv-toy/, examples/openenv-tool-toy/, examples/reward-toy/, examples/inspect-toy/, examples/hud-toy/   the same idea for OpenEnv (a reply; tools), reward functions, Inspect AI and HUD
 skills/falsepass/    agent skill: the audit procedure
 action.yml           the GitHub Action
 docs/SEVERITY.md     the rating scale; docs/OUTPUT.md: the output files

@@ -62,6 +62,8 @@ def plain_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
             entry["tool_calls"] = calls
         if m.get("tool_call_id"):
             entry["tool_call_id"] = m["tool_call_id"]
+        if m.get("role") == "tool" and m.get("name"):  # which tool answered (OpenEnv episodes say so)
+            entry["name"] = m["name"]
         out.append(entry)
     return out
 

@@ -381,10 +381,26 @@ What to check in the results and how to steer the run:
   grader property. `falsepass_reach` templates may be whole JSON actions
   (`'{"claim_id": "C-7", "decision": "deny"}'`), which is the quick way to score specific
   actions on every task.
-- **What is not covered.** MCP tool environments (`CallToolAction`; `init` reports them as
-  `automatic_likely: false` from `declared_tools` in openenv.yaml) and hand-written servers
-  without an `Environment` subclass stop with a message. There is no OpenEnv policy skeleton
-  yet (`--policies` refuses): write an adapter (`--manual`) that drives `reset()` and `step()`.
+- **Tool environments and multi-step episodes: policies.** An MCP tool environment
+  (`CallToolAction`; `init` reports it as `automatic_likely: false` from `declared_tools` in
+  openenv.yaml), and any environment whose reward comes after several steps, is played with
+  policies: `falsepass init <target> --policies` (MCP `policies=true`; `--manual` writes the
+  same skeleton) writes an adapter whose policies play whole episodes in this process:
+  the task's `reset()`, then one `step()` per action until the environment says `done`. A
+  policy is `act(messages, tools)`: the task's text is the first user message, a tool's
+  result a `tool` message (with its `name`), a text environment's next observation a user
+  message (feedback included); `tools` are the MCP tools (`name`, `description`,
+  `parameters`), listed once through the MCP route, so no step counter moves. Return
+  `call("tool", arg=value)` for a tool call (one step each), or a string: in a text
+  environment the action's text (or a JSON object naming the action's fields), in a tool
+  environment the end of the policy's turn and of the episode. Fill in `solver(example)`
+  (the control; it may read `example.raw`, `example.answer` or the live environment through
+  `ENV()`, e.g. `ENV().state`) and `exploits(example)` (policies that never read the task).
+  The reward is the episode's return, every step's reward added; `REWARD = "last"` in the
+  adapter takes the last step's instead, when that is what the trainer reads. T5 and T6 run
+  as well. `repro` replays each stored episode through `reset()` and `step()` with openenv
+  alone, and `verify-fix --source` replays it on a patched copy. Hand-written servers without
+  an `Environment` subclass still stop with a message.
 - **Git LFS.** A shallow clone of a Space leaves pointer files where its data should be; `init`
   fetches each one from the Space and checks its sha256, and names any it could not fetch.
   The environment class is read from the served app (what `create_app` was given); when
