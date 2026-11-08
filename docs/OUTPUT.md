@@ -104,6 +104,11 @@ finished run of task-blind policies (no control) adds `facts_that_hold`, `not_co
 }
 ```
 
+`reward_terms` (when the reward has named terms) says which part of the reward paid on
+known-bad and fixed-strategy rows: `{"term": "format_reward", "weight": 0.2, "nonzero_share":
+0.82, "mean": 0.164}` per term, the same as summary.md's "Reward terms" table. A correctness
+term should be 0 there; a format or length term that pays explains a ceiling.
+
 `failing` lists false passes first (a known-bad completion was paid), the most
 consistent ones on top, then false fails. `meta` and `static_hints` are trimmed to what an
 agent needs; everything else is in `probe-results.json`.

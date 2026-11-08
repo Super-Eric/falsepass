@@ -5,6 +5,7 @@
 - OpenEnv policies: `init --policies` on an OpenEnv folder or Space writes an adapter whose policies play whole episodes through the environment's own `reset()` and `step()` (`OpenEnvEpisodeScorer`): MCP tool calls as `CallToolAction` steps, text replies as the action in a text environment, the next observation (feedback included) or the tool's result back to the policy, until the environment says `done`. Tools are listed once through the MCP route, so no step counter moves. The reward is the episode's return (`REWARD = "last"` takes the last step's). T5 and T6 play these episodes too; `repro` replays a stored episode with openenv alone and `verify-fix` on a patched copy. Before, `--policies` refused on OpenEnv and an MCP tool environment could not be audited. `--manual` on OpenEnv writes the same skeleton (it wrote a verifiers one). New example `examples/openenv-tool-toy` (an MCP refund desk with a planted `>=`).
 - `repro` on an OpenEnv audit whose action has no free-text field wrote `FIELD = null` into the script, which then raised `NameError`; the settings are now read with `json.loads`.
 - Policies see a tool result's `name` next to its content.
+- The digest (`results --json`, MCP `falsepass_results`) carries `reward_terms`: which part of the reward paid on known-bad and fixed-strategy rows, as summary.md's table does (from dogfood 11).
 
 ## 0.14.0 — 2026-11-06
 

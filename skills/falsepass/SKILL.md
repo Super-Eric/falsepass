@@ -50,6 +50,8 @@ environment's own `reset()` and `step()`, tool calls included.
 - `false_fail_rate`: correct answers refused. Read the variant names: rejecting
   `\boxed{6.}` or lower-case letters can be deliberate strictness.
 - `static_hints` with `verdict: confirmed` point at the line that likely causes a failure.
+- `reward_terms`: which part of the reward paid on known-bad rows; a format or length term
+  that pays explains a ceiling, a correctness term that pays is the lead.
 - OpenEnv: `load_notes` say how tasks were picked and which action fields were filled with a
   constant; `audits/<env>/tasks.json` (reset keyword sets, each may carry an `answer`) pins
   the tasks. O1 rows are a fixed strategy, read their mean (the lazy-policy reward), not

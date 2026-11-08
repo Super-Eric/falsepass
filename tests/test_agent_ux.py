@@ -25,6 +25,21 @@ def test_digest_previews_the_full_completion_and_names_it():
     assert failing["completion_id"] == "abc" and failing["completion"].endswith("the end")
 
 
+def test_the_digest_says_which_reward_term_paid_a_known_bad_row():
+    def row(expected, metrics, score):
+        return {"probe": "P6", "name": "format_only", "variant": "v", "expected": expected, "passed": expected != "zero",
+                "score": score, "detail": "", "example": "e1", "completion": "", "completion_id": "", "metrics": metrics,
+                "errors": []}
+
+    payload = {"meta": {"environment": "t", "weights": {"correct": 1.0, "format": 0.2}}, "static": [],
+               "results": [row("zero", {"correct": 0.0, "format": 1.0}, 0.2), row("zero", {"correct": 0.0, "format": 0.0}, 0.0),
+                           row("full", {"correct": 1.0, "format": 1.0}, 1.2)]}  # fmt: skip
+    terms = {t["term"]: t for t in report.digest(payload)["reward_terms"]}
+    assert terms["format"] == {"term": "format", "weight": 0.2, "nonzero_share": 0.5, "mean": 0.5}
+    assert terms["correct"]["nonzero_share"] == 0.0  # the known-good row is not counted
+    assert "reward_terms" not in report.digest({**payload, "results": [row("full", {}, 1.0)]})
+
+
 def test_lone_surrogates_are_escaped_for_json_rpc():
     safe = _safe({"failing": [{"completion": "bad \ud800 char"}]})
     json.dumps(safe).encode("utf-8")  # would raise on a raw surrogate

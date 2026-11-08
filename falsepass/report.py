@@ -239,6 +239,9 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
                                    "'could not build trace' and make the run inconclusive"}
            if headline(payload["results"])["scoring_errors"] else {}),
         **({"timings": {**meta["timings"], "words": timing_words(meta["timings"])}} if meta.get("timings") else {}),
+        **({"reward_terms": [{"term": term, "weight": weight, "nonzero_share": round(share, 3), "mean": round(mean, 6)}
+                             for term, share, mean, weight in leaks]}
+           if (leaks := term_leak(payload["results"], meta.get("weights") or {})) else {}),
         "failing": failing,
         "static_hints": [{k: h[k] for k in ("rule", "file", "line", "evidence", "meaning", "verdict") if k in h}
                          for h in payload.get("static", [])],  # fmt: skip
