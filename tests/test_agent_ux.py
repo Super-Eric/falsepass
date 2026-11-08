@@ -288,3 +288,59 @@ def test_scoring_errors_get_a_note_on_whose_code_raised():
     assert "environment's own reward code" in report.digest(payload)["scoring_errors_note"]
     assert "scoring_errors_note" not in report.digest({**payload, "results": [_row("P3", "v", "a", 0.0)]})
 
+
+
+def _x_row(probe, expected, score, passed):
+    return {"probe": probe, "name": "n", "variant": "v", "expected": expected, "passed": passed, "score": score, "detail": "",
+            "example": "e", "completion": "", "completion_id": "", "metrics": {}, "errors": []}
+
+
+def test_a_failed_solver_or_tools_that_never_ran_make_the_run_inconclusive():
+    meta = {"environment": "t", "max_reward": 1.0, "notes": ["Env overrides step() but inherits step_async()"]}
+    rows = [_x_row("X0", "full", 0.0, False), _x_row("X0", "full", 0.0, False), _x_row("X1", "zero", 0.0, True)]
+    out = report.digest({"meta": meta, "results": rows, "static": []})
+    assert out["status"] == "inconclusive" and "solver (X0" in out["reason"] and "inherits step_async" in out["reason"]
+    assert out["meta"]["notes"] == meta["notes"] and out["headline"] is None
+    calls = {**meta, "notes": [], "tool_calls": {"tool_calls": 7, "failed": 7, "first_failure": "rejected: 1 validation error"}}
+    good = [_x_row("X0", "full", 1.0, True), _x_row("X1", "zero", 0.0, True)]
+    out = report.digest({"meta": calls, "results": good, "static": []})
+    assert out["status"] == "inconclusive" and "every one of the 7 tool calls" in out["reason"]
+    fine = {**calls, "tool_calls": {"tool_calls": 7, "failed": 3, "first_failure": "x"}}
+    assert report.digest({"meta": fine, "results": good, "static": []}).get("status") is None
+
+
+def test_init_var_is_written_as_a_toml_table_and_set_on_every_run(tmp_path, monkeypatch):
+    import tomllib
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data").mkdir()
+    assert cli.main(["init", str(cli.demo_source()), "--var", "DATA_PATH=data", "--var", "MODE=eval"]) == 0
+    audit = tmp_path / "audits" / "falsepass-toy-env"
+    env = tomllib.loads((audit / "env.toml").read_text())["env"]
+    assert env["vars"] == {"DATA_PATH": str((tmp_path / "data").resolve()), "MODE": "eval"}
+    command = cli.uv_command(audit, [])
+    assert command[:3] == ["env", f"DATA_PATH={(tmp_path / 'data').resolve()}", "MODE=eval"]
+    assert cli.main(["init", str(cli.demo_source()), "--force", "--var", "oops"]) == 2
+
+
+def test_a_repro_where_every_case_raised_is_not_a_clean_result(tmp_path, monkeypatch):
+    import subprocess
+
+    from falsepass import verify
+
+    (tmp_path / "env.toml").write_text('[env]\nid = "x"\nframework = "openenv"\ntask = "/nowhere"\n')
+    (tmp_path / "repro_auto.py").write_text("")
+    out = "raised RuntimeError  expected 0     X1 policy/a on t-1  (the episode did not stop after 200 policy turns)\n"
+    monkeypatch.setattr(verify.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, out, ""))
+    result = verify.twice(tmp_path, "repro_auto.py", tmp_path / "patched")
+    assert result["raised"] == 1 and "every case raised" in result["inconclusive"] and "did not stop" in result["inconclusive"]
+    assert result["source"] == str((tmp_path / "patched").resolve()) and (tmp_path / "repro_auto.source.output.txt").is_file()
+    assert not (tmp_path / "repro_auto.output.txt").exists()  # the unpatched baseline is left alone
+
+
+def test_episodes_left_open_after_one_reply_are_said():
+    rows = [_x_row("P3", "zero", 0.0, True)]
+    meta = {"environment": "t", "max_reward": 1.0, "one_step": {"replies": 10, "not_done": 9}}
+    out = report.digest({"meta": meta, "results": rows, "static": []})
+    assert "takes several steps" in out["warning"] and "--policies" in out["warning"]
+    assert "warning" not in report.digest({"meta": {**meta, "one_step": {"replies": 10, "not_done": 1}}, "results": rows, "static": []})

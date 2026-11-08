@@ -110,6 +110,27 @@ async def _call(env: Any, name: str, *args: Any, **kwargs: Any) -> Any:
     return await result if inspect.isawaitable(result) else result
 
 
+def served_step_note(env_cls: type) -> str:
+    """A class that overrides `step()` below the class its `step_async()` comes from (an
+    `MCPEnvironment` subclass that puts its reward in `step()` alone): openenv's server calls
+    `step_async()` whenever it differs from the base class's, so that `step()` never runs when
+    served, and falsepass drives it the same way. "" otherwise."""
+    base, _ = _base_classes()
+    mro = getattr(env_cls, "__mro__", ())
+
+    def owner(name: str) -> type | None:
+        return next((c for c in mro if name in vars(c)), None)
+
+    stepper, async_stepper = owner("step"), owner("step_async")
+    if stepper is None or async_stepper is None or async_stepper is base or stepper is async_stepper:
+        return ""
+    if mro.index(stepper) < mro.index(async_stepper):
+        return (f"{env_cls.__name__} overrides step() but inherits step_async() from {async_stepper.__name__}: openenv's "
+                "server calls step_async(), so this step() never runs when the environment is served (falsepass drives it "
+                "the same way). Rewards or episode ends computed only in step() are not paid in training")
+    return ""
+
+
 def _accepted(method: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
     """The keyword arguments `method` declares (all of them with a `**kwargs`), as the server filters them."""
     try:
@@ -243,6 +264,7 @@ class OpenEnvScorer:
         self.env: Any = None
         self.lock = asyncio.Lock()
         self.retries = 3  # resets to find the recorded task again when reset() draws tasks at random; set from the pool size
+        self.steps = {"replies": 0, "not_done": 0}  # one reply per score: an episode still open after it takes several steps
 
     @property
     def weights(self) -> dict[str, float]:
@@ -307,6 +329,8 @@ class OpenEnvScorer:
         observation = result["observation"]
         reward = getattr(observation, "reward", None)
         done = bool(getattr(observation, "done", False))
+        self.steps["replies"] += 1
+        self.steps["not_done"] += not done
         metrics = {}  # numbers the environment reports next to the reward are usually its components; counters are not
         for key, value in (getattr(observation, "metadata", None) or {}).items():
             if isinstance(value, (int, float)) and not isinstance(value, bool) and not COUNTER_KEY.search(str(key)):
@@ -341,6 +365,27 @@ EPISODE_TURN_CAP = 200  # policy turns before an episode is declared unbounded; 
 def is_tool_action(action_cls: type) -> bool:
     """An MCP tool call (`CallToolAction` or a subclass): the environment is played through tools."""
     return TOOL_FIELDS <= set(getattr(action_cls, "model_fields", {}))
+
+
+def tool_fills(action_cls: type, purpose: str) -> dict[str, Any]:
+    """Values for a tool action's other required fields (`action_type: Literal["ListToolsAction",
+    "ToolCallAction"]` in some Spaces): a choice that names the purpose ("call" or "list") when
+    there is one, else the plan's constant."""
+    fills = dict(action_plan(action_cls)["fills"])
+    for name, info in getattr(action_cls, "model_fields", {}).items():
+        if name in TOOL_FIELDS or name == "metadata" or not info.is_required():
+            continue
+        choices = _choices(info.annotation)
+        named = [c for c in choices if isinstance(c, str) and purpose in c.lower()]
+        if named:
+            fills[name] = named[0]
+    return {k: v for k, v in fills.items() if k not in TOOL_FIELDS}
+
+
+def lists_through_action(action_cls: type) -> bool:
+    """A tool action class with a choice that names listing (its own `ListToolsAction` value)."""
+    return any(isinstance(c, str) and "list" in c.lower() for info in getattr(action_cls, "model_fields", {}).values()
+               for c in _choices(info.annotation))
 
 
 def _mcp_types() -> Any:
@@ -384,6 +429,12 @@ def episode_text(observation: Any) -> str:
     return json.dumps(rest, ensure_ascii=False, default=str) if rest else ""
 
 
+def tool_failed(observation: Any) -> bool:
+    """openenv's `error`, or a Space's own `success=False` / `error_message`."""
+    return getattr(observation, "error", None) is not None or getattr(observation, "success", True) is False \
+        or bool(getattr(observation, "error_message", None))
+
+
 def tool_result_text(observation: Any) -> str:
     """What a tool call returned, as the model would read it: the error, the result's text
     parts, else its data, else the observation's own text."""
@@ -391,7 +442,11 @@ def tool_result_text(observation: Any) -> str:
     if error is not None:
         kind = getattr(getattr(error, "error_type", None), "value", getattr(error, "error_type", "error"))
         return f"error ({kind}): {getattr(error, 'message', error)}"
+    if getattr(observation, "error_message", None):
+        return f"error: {observation.error_message}"
     result = getattr(observation, "result", None)
+    if result is None:
+        result = getattr(observation, "tool_result", None)  # a Space's own tool observation
     if result is not None:
         content = getattr(result, "content", None) if not isinstance(result, dict) else result.get("content")
         if isinstance(content, list):
@@ -426,6 +481,7 @@ class OpenEnvEpisodeScorer(OpenEnvScorer):
             raise ValueError(f'reward must be "sum" or "last", not {reward!r}')
         self.reward_mode = reward
         self._tools: list[dict[str, Any]] | None = None
+        self.counts = {"tool_calls": 0, "failed": 0, "first_failure": ""}  # over the whole run: every call failing is a set-up problem
 
     def tool_action_class(self) -> type | None:
         if is_tool_action(self.action_cls):
@@ -437,8 +493,10 @@ class OpenEnvEpisodeScorer(OpenEnvScorer):
         return None
 
     async def tools(self) -> list[dict[str, Any]]:
-        """The tools on offer, listed once through the MCP server (as a client's `list_tools()`
-        does over the MCP route): not a step of the episode, so no step counter moves."""
+        """The tools on offer, listed once, after a reset: through the MCP server when the
+        environment has one (as a client's `list_tools()` does over the MCP route: not a step,
+        so no step counter moves), else with the action class's own listing value, or openenv's
+        `ListToolsAction`, as a step."""
         if self._tools is not None:
             return self._tools
         found: list[Any] = []
@@ -446,11 +504,25 @@ class OpenEnvEpisodeScorer(OpenEnvScorer):
         handler = getattr(env, "_async_handle_list_tools", None)
         if handler is not None:
             found = list(getattr(await handler(), "tools", None) or [])
-        elif self.tool_action_class() is not None and _mcp_types() is not None:  # an older openenv: through step(), before reset()
+        elif lists_through_action(self.action_cls):
+            listed = await _call(env, "step", self.action_cls(**tool_fills(self.action_cls, "list")))
+            found = list(getattr(listed, "tools", None) or getattr(listed, "tools_list", None) or [])
+        elif self.tool_action_class() is not None and _mcp_types() is not None:
             found = list(getattr(await _call(env, "step", _mcp_types().ListToolsAction()), "tools", None) or [])
-        self._tools = [{"name": getattr(t, "name", ""), "description": getattr(t, "description", "") or "",
-                        "parameters": getattr(t, "input_schema", None) or getattr(t, "inputSchema", None) or {}} for t in found]  # fmt: skip
+        def field(tool: Any, *names: str) -> Any:
+            for name in names:
+                value = tool.get(name) if isinstance(tool, dict) else getattr(tool, name, None)
+                if value:
+                    return value
+            return None
+
+        self._tools = [{"name": field(t, "name") or "", "description": field(t, "description") or "",
+                        "parameters": field(t, "input_schema", "inputSchema", "parameters") or {}} for t in found]  # fmt: skip
         return self._tools
+
+    def _failed(self, text: str) -> None:
+        self.counts["failed"] += 1
+        self.counts["first_failure"] = self.counts["first_failure"] or (text.splitlines() or [""])[0][:300]
 
     async def score(self, example: Example, completion: Completion) -> Score:
         from pydantic import ValidationError
@@ -472,8 +544,8 @@ class OpenEnvEpisodeScorer(OpenEnvScorer):
 
         async def run() -> None:
             async with self.lock:
-                tools = await self.tools() if tool_cls is not None else []
                 observation = await self.reset(example)
+                tools = await self.tools() if tool_cls is not None else []
                 messages.append({"role": "user", "content": observation_text(observation)})
                 env = self.environment()
                 while not state["stop"]:
@@ -485,13 +557,19 @@ class OpenEnvEpisodeScorer(OpenEnvScorer):
                             errors.append(f"the policy called a tool, but {self.action_cls.__name__} takes no tool calls")
                             break
                         for call in reply["tool_calls"]:
+                            self.counts["tool_calls"] += 1
                             try:
-                                action = tool_cls(tool_name=call["name"], arguments=call.get("arguments") or {})
+                                action = tool_cls(**tool_fills(tool_cls, "call"), tool_name=call["name"], arguments=call.get("arguments") or {})
                             except ValidationError as rejected:
-                                messages.append({"role": "tool", "name": call["name"], "content": f"rejected: {str(rejected).splitlines()[0]}"})
+                                text = f"rejected: {str(rejected).splitlines()[0]}"
+                                self._failed(text)
+                                messages.append({"role": "tool", "name": call["name"], "content": text})
                                 continue
                             observation = await _call(env, "step", action)
-                            messages.append({"role": "tool", "name": call["name"], "content": tool_result_text(observation)})
+                            text = tool_result_text(observation)
+                            if tool_failed(observation):
+                                self._failed(text)
+                            messages.append({"role": "tool", "name": call["name"], "content": text})
                             if stepped(observation):
                                 state["stop"] = "done"
                                 break
@@ -603,6 +681,32 @@ def alias_package(name: str, folder: Path) -> str:
     return name
 
 
+def alias_names(folder: Path, app: str, name: str) -> list[str]:
+    """Package names the folder may be imported under: the ones its app module's own imports use
+    (`from textarena_env.models import ...`), then the manifest's name; never the name of an
+    installed module (aliasing over it would hide that library from the environment)."""
+    import importlib.util
+
+    names: list[str] = []
+    module_file = folder / (app.partition(":")[0].replace(".", "/") + ".py")
+    if module_file.is_file():
+        text = module_file.read_text(errors="replace")
+        names += re.findall(r"^\s*from\s+([A-Za-z_]\w*)\.(?:models|server|client|env|environment)\b", text, re.M)
+    names.append(re.sub(r"\W", "_", name))
+    out = []
+    for candidate in dict.fromkeys(n for n in names if n):
+        if candidate in sys.modules and getattr(sys.modules[candidate], "__path__", None) == [str(folder)]:
+            out.append(candidate)  # aliased already
+            continue
+        try:
+            installed = importlib.util.find_spec(candidate) is not None
+        except (ImportError, ValueError):
+            installed = False
+        if not installed:
+            out.append(candidate)
+    return out
+
+
 def import_app(folder: Path, app: str, name: str) -> tuple[Any, str, str]:
     """The app module: the declared path, then the usual ones, each also tried under a
     package alias named after the environment. Returns (module, app path, alias or "")."""
@@ -618,14 +722,19 @@ def import_app(folder: Path, app: str, name: str) -> tuple[Any, str, str]:
         except Exception as exc:  # noqa: BLE001 - imported but failed to load (data missing, a server started): say so, try the next
             tried.append(f"{module_name}: {type(exc).__name__}: {exc}")
             continue
-        if name:
-            alias = alias_package(name, folder)
+        for alias_name in alias_names(folder, candidate, name) if name else []:
+            alias = alias_package(alias_name, folder)
             try:
                 return importlib.import_module(f"{alias}.{module_name}"), candidate, alias
             except ImportError as exc:
                 tried.append(f"{alias}.{module_name}: {exc}")
             except Exception as exc:  # noqa: BLE001
                 tried.append(f"{alias}.{module_name}: {type(exc).__name__}: {exc}")
+    loaded = [t for t in tried if re.search(r": (?!ModuleNotFoundError|ImportError)\w+(Error|Exception): ", t)]
+    if loaded:  # the module was found and raised while loading: a missing data file or setting, not a wrong name
+        raise RuntimeError("the app module was found but raised while loading (" + "; ".join(loaded[:3]) + "). If it reads data "
+                           "or settings from environment variables (a path such as /app/...), set them: falsepass init <target> "
+                           "--force --var NAME=VALUE (MCP: vars={...}), or `vars = {\"NAME\" = \"value\"}` in env.toml")
     raise RuntimeError("no app module could be imported (" + "; ".join(tried[:6]) + '). Name it in env.toml as app = "module:attr"')
 
 
@@ -894,6 +1003,7 @@ async def _examples(scorer: OpenEnvScorer, max_rows: int, references: Any, tasks
                      "decided which tasks were seen")  # fmt: skip
     seen: set[str] = set()
     repeats = 0
+    capped = False
     max_rows = min(max_rows, MAX_RESET_WALK)
     for position in range(max_rows * 4):
         kwargs = _accepted(env.reset, {"seed": position})
@@ -909,7 +1019,26 @@ async def _examples(scorer: OpenEnvScorer, max_rows: int, references: Any, tasks
         key = f"reset-{position}"
         pool.append(Example(key, prompt, reference_for({}, references, key, len(pool)), {"reset": kwargs, "task": None}))
         if len(pool) >= max_rows:
+            capped = True
             break
+    if pool:
+        again = _normal(observation_text(await _call(env, "reset", **pool[0].raw["reset"])))
+        if again != _normal(pool[0].prompt):  # the same keywords brought another task: reset() does not follow them
+            import hashlib
+
+            for example in pool:  # keyed by their text, so a task keeps its key in another run (reach, repro)
+                example.key = "task-" + hashlib.sha1(_normal(example.prompt).encode("utf-8", "surrogatepass")).hexdigest()[:10]
+            notes.append("reset() does not pick its task from the keywords (it draws at random or hands tasks out in turn: "
+                         "the same keywords brought another task back): tasks are keyed by "
+                         "their text (task-<hash>), and each probe resets until its task comes back; for a fixed order "
+                         f"list the tasks in {TASKS_FILE} if reset() can pick one")  # fmt: skip
+    if capped:
+        notes.append(f"reset() handed out at least {len(pool)} distinct tasks and the walk stopped there: there may be more "
+                     f"(list them in {TASKS_FILE} to audit a known set)")
+    elif len(pool) == 1 and position >= 4:
+        notes.append(f"every reset() showed the same text ({position + 1} resets): if the hidden task changes per reset (a "
+                     "secret word, a random board), one key stands for many tasks and a repro may not match; give "
+                     f"{TASKS_FILE} a list of seeds when reset() takes one")
     return pool
 
 
@@ -981,6 +1110,8 @@ def load(spec: str, max_rows: int, answers: str | None = None, app: str = "", en
     if not episodes and not any(e.answer.strip() for e in pool):
         asyncio.run(_harvest(scorer, pool, notes))
     environment = scorer.environment()
+    if note := served_step_note(type(environment)):
+        notes.insert(0, note)
     found = {
         "notes": notes, "app": app, "alias": alias, "field": plan["field"], "fills": plan["fills"], "retries": scorer.retries,
         "env_class": f"{type(environment).__module__}:{type(environment).__qualname__}",
@@ -988,6 +1119,7 @@ def load(spec: str, max_rows: int, answers: str | None = None, app: str = "", en
         "action_class": f"{action_cls.__module__}:{action_cls.__qualname__}",
         "task_api": any(e.raw.get("task") is not None for e in pool) and not tasks, "tasks_file": bool(tasks),
         "resets": {e.key: e.raw["reset"] for e in pool},
+        "tool_fills": tool_fills(action_cls, "call") if tools else {},
     }  # fmt: skip
     return scorer, pool, found
 
@@ -1006,8 +1138,20 @@ def open_episodes(audit_dir: str | Path, n: int, seed: int, reward: str = "sum",
                                action_class=env.get("action_class", ""), factory=env.get("factory", ""),
                                tasks_file=audit_dir / TASKS_FILE, episodes=True, reward=reward)  # fmt: skip
     sampled = random.Random(seed).sample(pool, min(n, len(pool)))
+    if scorer.tool_action_class() is not None:  # list the tools once now: a failure here explains empty episodes later
+        async def listing() -> list[dict[str, Any]]:
+            await scorer.reset(sampled[0])
+            return await scorer.tools()
+
+        try:
+            offered = asyncio.run(listing())
+            if not offered:
+                found["notes"].append("the environment listed no tools: policies get tools=[]")
+        except Exception as exc:  # noqa: BLE001 - said in the notes, the episodes go on
+            scorer._tools, scorer.env = [], None
+            found["notes"].append(f"listing the tools failed ({type(exc).__name__}: {str(exc)[:200]}): policies get tools=[]")
     loader = {"kind": "openenv-episode", "task": env["task"], "reward": reward,
-              **{k: found[k] for k in ("app", "alias", "env_class", "factory", "action_class", "field", "fills", "retries")},
+              **{k: found[k] for k in ("app", "alias", "env_class", "factory", "action_class", "field", "fills", "retries", "tool_fills")},
               "resets": {e.key: e.raw["reset"] for e in sampled}, "prompts": {e.key: e.prompt for e in sampled}}  # fmt: skip
     found["loader"] = loader
     return scorer, sampled, found
@@ -1016,13 +1160,24 @@ def open_episodes(audit_dir: str | Path, n: int, seed: int, reward: str = "sum",
 # --- `falsepass init` (runs outside the audit virtualenv: no openenv import) -----------------
 
 
+TOOL_SOURCE = re.compile(r"\b(?:CallToolAction|MCPEnvironment|ListToolsAction)\b")
+
+
 def declares_tools(folder: Path) -> bool:
-    """Whether the Space's openenv.yaml says it is played through MCP tools (`declared_tools:`, or an `mcp` tag)."""
+    """Whether the Space is played through MCP tools: its openenv.yaml says so (`declared_tools:`,
+    an `mcp` tag), or its own server code uses openenv's tool actions or `MCPEnvironment`."""
     path = folder / "openenv.yaml"
-    if not path.is_file():
-        return False
-    text = path.read_text(errors="replace")
-    return bool(re.search(r"^\s*declared_tools:", text, re.M) or re.search(r"^\s*-\s*mcp\s*$", text, re.M))
+    text = path.read_text(errors="replace") if path.is_file() else ""
+    if re.search(r"^\s*declared_tools:", text, re.M) or re.search(r"^\s*-\s*mcp\s*$", text, re.M):
+        return True
+    for file in sorted(folder.rglob("*.py"))[:400]:
+        parts = file.relative_to(folder).parts
+        if any(p.startswith(".") or p in ("tests", "test", "site-packages", "examples") for p in parts) or "openenv_core" in parts \
+                or "/".join(parts).find("openenv/core/") >= 0:
+            continue
+        if TOOL_SOURCE.search(file.read_text(errors="replace")):
+            return True
+    return False
 
 
 def manifest(folder: Path) -> dict[str, str]:

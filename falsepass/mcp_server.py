@@ -231,7 +231,7 @@ def _await_audit(env: str, workdir: str, wait: float) -> dict[str, Any]:
     ran = _audit_dir(workdir, env) / "repro-run.json"
     if job.get("command") == "repro" and ran.is_file() and ran.stat().st_mtime >= job["started"]:
         digest = json.loads(ran.read_text())  # runs that differ exit 1 but are a result, not a failure
-        digest.update(status="finished", elapsed_s=elapsed)
+        digest.update(status="inconclusive" if digest.get("inconclusive") else "finished", elapsed_s=elapsed)
         return digest
     if job["state"] == "failed":
         tail = "\n".join(_log_tail(workdir, env, 30))
@@ -372,6 +372,8 @@ def build():
         answers: Annotated[str | None, _arg("HUD and OpenEnv: a JSON file of reference answers (task key to answer, or a list in task order)")] = None,
         extra: Annotated[list[str] | None, _arg('more requirements to install, e.g. ["inspect-evals[math]"]')] = None,
         without: Annotated[list[str] | None, _arg("requirement names to drop from the environment's own, e.g. a pin that does not resolve")] = None,
+        vars: Annotated[dict[str, str] | None, _arg('environment variables the environment reads, set on every run, e.g. '
+                                                    '{"DATA_PATH": "/abs/path/data"} (a relative path is taken from workdir)')] = None,
         env_class: Annotated[str | None, _arg('OpenEnv: "module:Class", the environment class or factory, when detection picks the wrong one')] = None,
         action_class: Annotated[str | None, _arg('OpenEnv: "module:Class", the action class')] = None,
         dataset: Annotated[str | None, _arg("reward functions: a .jsonl/.json/.csv/.parquet file, hf:owner/name, or call:function in the file")] = None,
@@ -427,6 +429,9 @@ def build():
             args += ["--with", requirement]
         for requirement in without or []:
             args += ["--without", requirement]
+        for name, value in (vars or {}).items():
+            relative = isinstance(value, str) and value.startswith(("./", "../"))
+            args += ["--var", f"{name}={(Path(workdir).expanduser() / value).resolve() if relative else value}"]
         for function in functions or []:
             args += ["--func", function]
         for folder in path or []:
@@ -438,6 +443,10 @@ def build():
         result = _json(_run(args, workdir, timeout=600))
         if manual:
             result["next"] = f"Fill in {result['folder']}/adapter.py, then call falsepass_audit(env={result['name']!r})"
+        elif result.get("automatic_likely") is False and result.get("framework") == "openenv":
+            result["next"] = (f"An OpenEnv environment played through tool calls or several steps: call falsepass_init again "
+                              f"with force=true and policies=true, fill in solver() and exploits() in adapter.py, then "
+                              f"falsepass_audit(env={result['name']!r})")  # fmt: skip
         elif result.get("automatic_likely") is False:
             result["next"] = (f"Automatic mode will probably stop ({result.get('automatic_unlikely_because', 'see the source')}). "
                               f"Call falsepass_init again with force=true and manual=true (a Q&A task whose reply you can "
@@ -509,6 +518,8 @@ def build():
                                                                 '["X1/denies_both_figures"] (code, or code/variant)')] = None,
                         run: Annotated[bool, _arg("true: also run the script twice in fresh virtualenvs and compare (in the background)")] = False,
                         script: Annotated[str, _arg("run an existing script in the audit folder instead, e.g. repro.py")] = "",
+                        source: Annotated[str, _arg("with run=true: take the environment from this patched copy (relative to "
+                                                    "workdir); its output is stored apart from the unpatched one")] = "",
                         wait: Wait = 45, workdir: Workdir = ".", offline: Offline = False) -> Any:  # fmt: skip
         """Write audits/<env>/repro_auto.py: a script that depends only on the environment's
         own packages and re-scores the exact failing completions. `probe` limits it to some
@@ -521,6 +532,9 @@ def build():
         args = [a for code in probe or [] for a in ("--probe", code)] + (["--script", script] if script else [])
         if not run:
             return {"message": _ok(_run(["repro", env, *args], workdir, timeout=120))["stdout"].strip()}
+        if source:
+            path = Path(source).expanduser()
+            args += ["--source", str((path if path.is_absolute() else Path(workdir).expanduser() / path).resolve())]
         started = _start_audit(env, ["--run", *args, *(["--offline"] * offline)], workdir, command="repro")
         if started.get("status") == "error":
             raise RuntimeError(f"{started['error']}. {started['next']}")
@@ -535,6 +549,7 @@ def build():
                                                                     "{answer_in_format} or {wrong_in_format} filled per task")] = None,
                         expect: Annotated[str, _arg('for templates: "zero" counts where they are paid, "full" where they are not paid in full')] = "zero",
                         tasks: Annotated[int, _arg("how many tasks to score (0 = every task in the dataset)")] = 0,
+                        source: Annotated[str, _arg("take the environment from this patched copy (relative to workdir)")] = "",
                         wait: Wait = 45, workdir: Workdir = ".", offline: Offline = False) -> Any:  # fmt: skip
         """After an audit: how many tasks a failing probe reaches. Scores only the rows asked
         for, e.g. probe=["P15/denied"] (a code, or code/variant as in the results), plus the
@@ -556,6 +571,9 @@ def build():
             raise RuntimeError('expect is "zero" or "full"')
         args = [a for code in probe or [] for a in ("--probe", code)] + [a for text in templates or [] for a in ("--template", text)]
         args += ["--expect", expect, "--tasks", str(tasks) if tasks > 0 else "all", *(["--offline"] * offline)]
+        if source:
+            path = Path(source).expanduser()
+            args += ["--source", str((path if path.is_absolute() else Path(workdir).expanduser() / path).resolve())]
         started = _start_audit(env, args, workdir, command="reach")
         if started.get("status") == "error":
             raise RuntimeError(f"{started['error']}. {started['next']}")

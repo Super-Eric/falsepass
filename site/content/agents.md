@@ -401,6 +401,23 @@ What to check in the results and how to steer the run:
   as well. `repro` replays each stored episode through `reset()` and `step()` with openenv
   alone, and `verify-fix --source` replays it on a patched copy. Hand-written servers without
   an `Environment` subclass still stop with a message.
+- **Reading a policy run.** The summary's `Load note:` lines (digest `meta.notes`) say what is
+  odd about the environment: a class that overrides `step()` but inherits `step_async()` (the
+  server never runs that `step()`, so a reward computed there is never paid); tasks keyed by
+  their text because `reset()` does not follow its keywords; a walk that stopped at its cap; a
+  reset that always shows the same text (hidden state such as a secret word: give `tasks.json`
+  seeds); a tool listing that failed. The run is `inconclusive` when the solver (X0) earns less
+  than the maximum on at least half the tasks (a wrong solver, or correct episodes not paid:
+  read an X0 episode) and when every tool call failed (the tools did not run: often a database
+  or a service the server's start-up creates outside the environment class, which falsepass
+  does not run). A Space's own tool action with another required field (`action_type`) is
+  filled for calls and listing.
+- **Settings and patched copies.** `falsepass init <target> --var NAME=VALUE` (MCP `vars`)
+  sets an environment variable on every run (a data path the Space reads, `vars` in env.toml).
+  A patched copy goes to `audit`, `reach`, `repro --run` and `verify-fix` as `--source` (MCP
+  `source`); the audit records it (`meta.source`) and a patched repro is stored apart from the
+  unpatched output. In automatic mode, an environment whose episode is still open after the
+  one reply gets a `warning`: it takes several steps, so play it with policies.
 - **Git LFS.** A shallow clone of a Space leaves pointer files where its data should be; `init`
   fetches each one from the Space and checks its sha256, and names any it could not fetch.
   The environment class is read from the served app (what `create_app` was given); when

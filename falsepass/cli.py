@@ -77,10 +77,17 @@ OFFLINE = False  # --offline: the dataset library reads its cache without asking
 OFFLINE_ENV = {"HF_HUB_OFFLINE": "1", "HF_DATASETS_OFFLINE": "1"}
 
 
+def env_vars(env: dict) -> list[str]:
+    """env.toml's `vars` (`vars = {"DATA_PATH" = "/abs/data"}`, set with `init --var`) as
+    NAME=value words for `env`: settings the environment reads from its process environment."""
+    return [f"{k}={v}" for k, v in (env.get("vars") or {}).items()]
+
+
 def uv_command(audit_dir: Path, extra: list[str], module: str = "falsepass.runner", source: str | Path | None = None) -> list[str]:
     env = tomllib.loads((audit_dir / "env.toml").read_text())["env"]
+    settings = [*(f"{k}={v}" for k, v in OFFLINE_ENV.items() if OFFLINE), *env_vars(env)]
     command = [
-        *(["env", *(f"{k}={v}" for k, v in OFFLINE_ENV.items())] if OFFLINE else []),
+        *(["env", *settings] if settings else []),
         "uv", "run", "--isolated", "--no-project", "--python", env.get("python", "3.12"),
         *self_install_args(), "--with", "rewardlint", *install_args(env, source),
     ]  # fmt: skip
@@ -98,11 +105,12 @@ def source_command(audit_dir: Path, extra: list[str], module: str, source: Path 
     from falsepass import verify
 
     env = tomllib.loads((audit_dir / "env.toml").read_text())["env"]
+    noted = [f"FALSEPASS_AUDIT_SOURCE={Path(source).resolve()}"] if source is not None else []  # recorded in the results
     if source is not None and env.get("framework") in ("openenv", "reward"):  # the patched folder or file is read in place of env.toml's
-        return ["env", f"FALSEPASS_SOURCE={Path(source).resolve()}", *uv_command(audit_dir, extra, module, None)]
+        return ["env", *noted, f"FALSEPASS_SOURCE={Path(source).resolve()}", *uv_command(audit_dir, extra, module, None)]
     if verify.overlay(source):
-        return ["env", f"PYTHONPATH={verify.overlay_path(audit_dir, source)}", *uv_command(audit_dir, extra, module, None)]
-    return uv_command(audit_dir, extra, module, source)
+        return ["env", *noted, f"PYTHONPATH={verify.overlay_path(audit_dir, source)}", *uv_command(audit_dir, extra, module, None)]
+    return ["env", *noted, *uv_command(audit_dir, extra, module, source)] if noted else uv_command(audit_dir, extra, module, source)
 
 
 ADAPTER_TEMPLATE = '''"""falsepass adapter for {id}."""
@@ -392,6 +400,7 @@ class Env(Adapter):
         global SCORER
         SCORER, examples, found = open_episodes(HERE, n, seed, REWARD)
         self.loader = found["loader"]  # how `falsepass repro` replays the same tasks
+        self.load_notes = found["notes"]  # how tasks were found, and anything odd about the environment
         return SCORER, examples
 
     def render(self, answer, example):
@@ -632,6 +641,14 @@ def scaffold(args) -> int:
         info["verifiers"] = args.verifiers
     if args.extra:
         info["extra"] = [*info.get("extra", []), *args.extra]
+    for setting in getattr(args, "vars", None) or []:
+        name, equals, value = setting.partition("=")
+        if not equals or not name.strip():
+            print(f"falsepass: --var takes NAME=VALUE, not {setting!r}", file=sys.stderr)
+            return 2
+        if value and (value.startswith(("./", "../", "~")) or Path(value).exists()) and not Path(value).expanduser().is_absolute():
+            value = str(Path(value).expanduser().resolve())  # a path given relative to here: the runs start elsewhere
+        info.setdefault("vars", {})[name.strip()] = value
     if args.without:
         from falsepass.openenv_support import requirement_name
 
@@ -669,6 +686,8 @@ def scaffold(args) -> int:
             "project_urls")  # fmt: skip
     required = ("index",) if info.get("framework", "verifiers") == "verifiers" else ()
     lines = [f"{key} = {json.dumps(info[key])}" for key in keys if info.get(key) or key in required]
+    if info.get("vars"):  # a TOML inline table, not JSON
+        lines.append("vars = {" + ", ".join(f"{json.dumps(k)} = {json.dumps(v)}" for k, v in info["vars"].items()) + "}")
     declared = f"# declared by the package: {info['declared']}\n" if info.get("declared") else ""
     (audit_dir / "env.toml").write_text("[env]\n" + "\n".join(lines) + "\n" + declared)
     for source, content in info.get("sources", {}).items():  # the wheel's source, for the static pre-scan
@@ -678,7 +697,7 @@ def scaffold(args) -> int:
             target.write_bytes(content)
     kind = hub.classify(info["sources"]) if info.get("sources") else info.get("kind")  # read from the source text
     if info.get("framework") == "openenv" and openenv_support.declares_tools(local):
-        kind = {"automatic": False, "needs": ["an MCP tool environment (declared_tools in openenv.yaml): played through tool calls, "
+        kind = {"automatic": False, "needs": ["an MCP tool environment (its openenv.yaml or server code uses MCP tools): played through tool calls, "
                                               "not a reply"], "has_reference": True, "turns": "multi-turn", "generation": "openenv",
                 "outside_hosts": []}  # fmt: skip
     if args.manual and info.get("framework") == "openenv":  # an OpenEnv adapter is a policy adapter: one reply is a one-step policy
@@ -829,6 +848,8 @@ def main(argv: list[str] | None = None) -> int:
     init.add_argument("--action-class", dest="action_class", metavar="MODULE:CLASS", help="OpenEnv: the action class")
     init.add_argument("--without", action="append", default=[], metavar="PKG",
                       help="drop this requirement from the ones installed with the environment (repeatable)")
+    init.add_argument("--var", dest="vars", action="append", default=[], metavar="NAME=VALUE",
+                      help="an environment variable the environment reads (a data path, a mode), set on every run (repeatable)")
     init.add_argument("--with", dest="extra", action="append", default=[], metavar="REQ",
                       help="extra requirement to install for the audit, e.g. 'inspect-evals[math]' (repeatable)")
     disc = sub.add_parser("discover", help="list actively maintained Hub environments and what each needs")
@@ -849,6 +870,8 @@ def main(argv: list[str] | None = None) -> int:
     repro.add_argument("--script", help="with --run: run this script in the audit folder (e.g. a hand-written repro.py) "
                                         "instead of writing repro_auto.py")
     repro.add_argument("--json", action="store_true", help="with --run: print the result as JSON")
+    repro.add_argument("--source", type=Path, help="with --run: take the environment from this patched copy (stored apart "
+                                                   "from the unpatched output)")
     reach = sub.add_parser(
         "reach", help="count how many tasks a probe fails on: a sample of N or every task (after an audit)",
         epilog="Scores only the probe rows asked for, plus the reference (P1) as a control, in an isolated "
@@ -934,11 +957,12 @@ def main(argv: list[str] | None = None) -> int:
             if args.run:
                 from falsepass import verify
 
-                result = verify.twice(audit_dir, Path(path).name)
+                result = verify.twice(audit_dir, Path(path).name, args.source)
                 print(json.dumps(result, indent=1) if args.json else verify.describe_twice(result))
                 return 0 if result.get("identical") else 1
             env = tomllib.loads((audit_dir / "env.toml").read_text())["env"]
-            command = ["uv", "run", "--isolated", "--no-project", "--python", env.get("python", "3.12"),
+            command = [*(["env", *env_vars(env)] if env_vars(env) else []),
+                       "uv", "run", "--isolated", "--no-project", "--python", env.get("python", "3.12"),
                        *install_args(env), "python", str(Path(path).resolve())]
             print(f"wrote {path} — run it twice from a clean virtualenv and compare stdout (or use --run):\n  {shlex.join(command)}")
         else:

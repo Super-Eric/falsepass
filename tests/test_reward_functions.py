@@ -28,7 +28,7 @@ def test_a_reward_file_is_recognised_and_written_as_reward(tmp_path: Path, monke
     assert cli.install_args(env) == []  # the file imports only the standard library
     assert cli.main(["init", str(TOY / "rewards.py"), "--dataset", "x.jsonl", "--func", "nope", "--name", "other"]) == 1
     patched = tmp_path / "patched.py"
-    assert cli.source_command(tmp_path / "audits/rewards", [], "falsepass.runner", patched)[:2] == ["env", f"FALSEPASS_SOURCE={patched}"]
+    assert cli.source_command(tmp_path / "audits/rewards", [], "falsepass.runner", patched)[:3] == ["env", f"FALSEPASS_AUDIT_SOURCE={patched}", f"FALSEPASS_SOURCE={patched}"]
 
 
 def test_imports_become_requirements_and_hub_datasets_add_datasets(tmp_path: Path, monkeypatch):

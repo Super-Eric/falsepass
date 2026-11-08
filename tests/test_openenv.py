@@ -32,7 +32,8 @@ def test_an_openenv_folder_is_recognised_and_written_as_openenv(tmp_path: Path, 
     args = cli.install_args(env)
     assert args[:2] == ["--with", "openenv==0.9.0"] and str(TOY) not in args  # the folder is imported from its path, not installed
     patched = tmp_path / "patched"
-    assert cli.source_command(audit, [], "falsepass.runner", patched)[:2] == ["env", f"FALSEPASS_SOURCE={patched}"]
+    assert cli.source_command(audit, [], "falsepass.runner", patched)[:3] == ["env", f"FALSEPASS_AUDIT_SOURCE={patched}",
+                                                                               f"FALSEPASS_SOURCE={patched}"]
     assert cli.main(["init", str(TOY)]) == 0  # the same target again: nothing to do, exit 0
 
 
@@ -425,7 +426,8 @@ def test_the_served_app_names_the_environment_and_answers_revealed_after_a_step_
     _fresh_imports(monkeypatch, folder)
     scorer, pool, found = openenv_support.load(str(folder), 20, None)
     assert found["env_class"].endswith(":SumEnvironment") and found["factory"] == ""  # _build_app() was not taken for the factory
-    assert [(e.key, e.prompt, e.answer) for e in pool] == [("reset-0", "1+1", "2"), ("reset-1", "2+2", "4"), ("reset-2", "3+3", "6")]
+    assert [(e.prompt, e.answer) for e in pool] == [("1+1", "2"), ("2+2", "4"), ("3+3", "6")]
+    assert all(e.key.startswith("task-") for e in pool) and any("does not pick its task" in n for n in found["notes"])
     assert any(note.startswith("reference answers read from what the environment reveals after a step (3 of 3") for note in found["notes"])
     assert found["retries"] >= 150
     try:
@@ -604,3 +606,60 @@ def test_text_episodes_take_several_steps_and_sum_or_keep_the_last_reward(tmp_pa
         asyncio.run(last.close())
     with pytest.raises(ValueError, match="sum"):
         openenv_support.OpenEnvEpisodeScorer(None, object, {}, reward="mean")
+
+
+def test_a_step_override_the_server_never_calls_is_named(monkeypatch):
+    pytest.importorskip("openenv")
+    pytest.importorskip("fastmcp")
+    _fresh_imports(monkeypatch, TOOL_TOY)
+    monkeypatch.syspath_prepend(str(TOOL_TOY))
+    from server.refund_environment import RefundEnvironment  # overrides step() and step_async(): fine
+
+    class StepOnly(RefundEnvironment.__mro__[1]):  # an MCPEnvironment subclass that puts its reward in step() alone
+        def step(self, action, timeout_s=None, **kwargs):
+            return None
+
+        def _step_impl(self, action, timeout_s=None, **kwargs):
+            return None
+
+    assert openenv_support.served_step_note(RefundEnvironment) == ""
+    note = openenv_support.served_step_note(StepOnly)
+    assert "overrides step() but inherits step_async() from MCPEnvironment" in note and "never runs" in note
+
+
+def test_tool_actions_with_their_own_type_field_are_filled_and_listed():
+    pytest.importorskip("openenv")
+    from typing import Any, Literal, Optional
+
+    from openenv.core.env_server.types import Action
+
+    class MCPAction(Action):  # a Space's own tool action: one class for listing and calling
+        action_type: Literal["ListToolsAction", "ToolCallAction"]
+        tool_name: Optional[str] = None
+        arguments: Optional[dict[str, Any]] = None
+
+    assert openenv_support.is_tool_action(MCPAction) and openenv_support.lists_through_action(MCPAction)
+    assert openenv_support.tool_fills(MCPAction, "call") == {"action_type": "ToolCallAction"}
+    assert openenv_support.tool_fills(MCPAction, "list") == {"action_type": "ListToolsAction"}
+    assert openenv_support.tool_fills(__import__("openenv.core.env_server.mcp_types", fromlist=["x"]).CallToolAction, "call") == {}
+
+
+def test_tool_spaces_are_recognised_from_their_source_and_aliases_avoid_installed_modules(tmp_path: Path):
+    assert openenv_support.declares_tools(TOOL_TOY) and not openenv_support.declares_tools(TOY)
+    (tmp_path / "server").mkdir()
+    (tmp_path / "server" / "app.py").write_text("try:\n    from textarena_env.models import A\nexcept ImportError:\n    from models import A\n")
+    assert openenv_support.alias_names(tmp_path, "server.app:app", "json") == ["textarena_env"]  # `json` is installed
+    assert openenv_support.alias_names(tmp_path, "server.app:app", "my-env") == ["textarena_env", "my_env"]
+
+
+def test_a_constant_prompt_is_said(tmp_path: Path, monkeypatch):
+    pytest.importorskip("openenv")
+    folder = tmp_path / "same_env"
+    folder.mkdir()
+    (folder / "openenv.yaml").write_text("spec_version: 1\nname: same_env\napp: same_env_app:app\n")
+    (folder / "same_env_app.py").write_text(GUESS_APP.replace("(game {seed or 0})", "").replace("guess_env", "same_env"))
+    _fresh_imports(monkeypatch, folder)
+    monkeypatch.setattr(sys, "modules", {k: v for k, v in sys.modules.items() if not k.startswith("same_env_app")})
+    scorer, pool, found = openenv_support.load(str(folder), 10, None, episodes=True)
+    assert len(pool) == 1 and any(n.startswith("every reset() showed the same text") for n in found["notes"])
+    asyncio.run(scorer.close())

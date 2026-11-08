@@ -161,7 +161,10 @@ def command_for(audit_dir: Path, script: str, source: Path | None) -> list[str]:
         floor = source_floor(package) if package else None
         if floor and env.get("verifiers") and newer(floor, env["verifiers"]):
             env = {**env, "verifiers": floor}
+        from falsepass.cli import env_vars
+
         command = [
+            *(["env", *env_vars(env)] if env_vars(env) else []),
             "uv", "run", "-q", "--isolated", "--no-project", "--python", env.get("python", "3.12"),
             *install_args(env, package), "python", str((audit_dir / script).resolve()),
         ]  # fmt: skip
@@ -183,23 +186,27 @@ def baseline(audit_dir: Path, script: str) -> tuple[Path, str, int]:
     return output, done.stderr[-2000:], done.returncode
 
 
-def twice(audit_dir: Path, script: str) -> dict:
-    """Run the unpatched script twice, each time in a fresh `uv run --isolated` virtualenv,
-    compare stdout and store the first run under a header that says whether the second was
-    identical (what makes a repro count). Writes `repro-run.json` with the summary."""
+def twice(audit_dir: Path, script: str, source: Path | None = None) -> dict:
+    """Run the script twice, each time in a fresh `uv run --isolated` virtualenv, compare
+    stdout and store the first run under a header that says whether the second was identical
+    (what makes a repro count). With `source`, the environment comes from that patched copy
+    and the output is stored apart (`<script>.source.output.txt`), so the unpatched baseline
+    verify-fix compares against stays. Writes `repro-run.json` with the summary."""
     import hashlib
     import json
     from datetime import date
 
     audit_dir = audit_dir.resolve()
-    output = audit_dir / (Path(script).stem + ".output.txt")
-    command = command_for(audit_dir, script, None)
+    source = Path(source).resolve() if source is not None else None
+    output = audit_dir / (Path(script).stem + (".source" if source else "") + ".output.txt")
+    command = command_for(audit_dir, script, source)
     runs = []
     for n in (1, 2):
         print(f"falsepass: repro: run {n} of 2 of {script}, in a fresh virtualenv", file=sys.stderr, flush=True)
         runs.append(subprocess.run(command, capture_output=True, text=True, check=False))
     first, second = runs
-    result: dict = {"script": script, "command": shlex.join(command), "exit_codes": [r.returncode for r in runs]}
+    result: dict = {"script": script, "command": shlex.join(command), "exit_codes": [r.returncode for r in runs],
+                    **({"source": str(source)} if source else {})}
     if first.returncode != 0 or not first.stdout.strip():
         result.update(identical=False, error=f"the first run exited {first.returncode}", stderr=first.stderr[-2000:])
     else:
@@ -226,6 +233,10 @@ def twice(audit_dir: Path, script: str) -> dict:
             result.update(cases=len(cases), reproduced=sum(wrong(o, e) for o, e in cases), raised=raised,
                           cases_note="the script holds the first failing rows of each probe variant, not every task; "
                                      "`falsepass reach <env> <probe>` counts a form on the whole dataset")
+            if raised == len(cases):
+                first_raise = next(line for line in lines if CASE_LINE.match(line) and line.strip().startswith("raised"))
+                result["inconclusive"] = (f"every case raised, so nothing was reproduced (first: {first_raise.strip()[:300]}): "
+                                          "the script or the environment's set-up fails, not necessarily the grader")
     (audit_dir / "repro-run.json").write_text(json.dumps(result, indent=1))
     return result
 

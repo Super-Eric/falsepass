@@ -458,7 +458,9 @@ def scan(root: Path) -> list[Hint]:
     files = []
     for path in sorted(p for p in root.rglob("*") if p.is_file()):
         parts = path.relative_to(root).parts
-        if any(p.startswith(".") or p in ("tests", "test", "outputs", "__pycache__") for p in parts):
+        if any(p.startswith(".") or p in ("tests", "test", "outputs", "__pycache__", "site-packages", ".venv") for p in parts):
+            continue
+        if "/".join(parts).find("openenv/core/") >= 0 or "openenv_core" in parts:  # a vendored copy of the framework, not the grader
             continue
         files.append(path)
         if path.suffix == ".py":

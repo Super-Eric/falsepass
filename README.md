@@ -142,7 +142,11 @@ episode, in a tool environment). Fill in `solver(example)` (the control; it may 
 `example.raw`, `example.answer` or the live environment through `ENV()`) and
 `exploits(example)` (policies that never read the task). The reward is the episode's return
 (`REWARD = "last"` takes the last step's). `repro` replays each stored episode step by step with
-openenv alone. `examples/openenv-tool-toy/` is an MCP refund desk with a planted defect.
+openenv alone. `examples/openenv-tool-toy/` is an MCP refund desk with a planted defect. The
+run is inconclusive when the solver earns less than the maximum on most tasks or every tool
+call failed, and the summary's load notes say what is odd (a `step()` override the server
+never calls, tasks drawn at random). `init --var NAME=VALUE` sets a variable the Space reads
+(a data path) on every run.
 
 ## Inspect AI and HUD
 

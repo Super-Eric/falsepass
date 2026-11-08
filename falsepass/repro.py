@@ -501,7 +501,7 @@ async def score(key, completion):
         if entry.get("tool_calls"):
             for call in entry["tool_calls"]:
                 try:
-                    action = tool_class(tool_name=call["name"], arguments=call.get("arguments") or {})
+                    action = tool_class(**(TOOL_FILLS if tools_only else {}), tool_name=call["name"], arguments=call.get("arguments") or {})
                 except ValueError:  # pydantic's ValidationError: the call is refused, nothing is stepped
                     continue
                 observation = await _call("step", action)
@@ -606,6 +606,7 @@ async def main():
                 scale = f"  (raw {raw:.6f}; floor {case['floor']:.6f}, reference {case['reference']:.6f})"
         except Exception as exc:  # the reward code raising is itself the observation
             observed = f"raised {type(exc).__name__}"
+            scale = "  (" + (str(exc).splitlines() or [""])[0][:160] + ")"
         print(f"{observed:>9}  expected {case['expected']:<5} {case['probe']} {case['name']}/{case['variant']} on {case['example']}{scale}")
 
 
@@ -693,7 +694,7 @@ def generate(audit_dir: Path, probes: list[str] | None = None, per_group: int = 
             "ALIAS": loader.get("alias", ""), "ACTION_CLASS_SPEC": loader["action_class"], "FACTORY_SPEC": loader.get("factory", ""),
             "ENV_CLASS_SPEC": loader["env_class"], "FIELD": loader.get("field"), "FILLS": loader.get("fills", {}),
             "RESETS": {k: v for k, v in loader.get("resets", {}).items() if k in keys}, "PROMPTS": prompts,
-            "RETRIES": loader.get("retries", 150), "REWARD": loader.get("reward", "sum"),
+            "RETRIES": loader.get("retries", 150), "REWARD": loader.get("reward", "sum"), "TOOL_FILLS": loader.get("tool_fills", {}),
         }  # fmt: skip
         script += "".join(f"{name} = json.loads({json.dumps(json.dumps(value, ensure_ascii=True))})\n"  # null, true: JSON, not Python
                           for name, value in settings.items()) + LOAD_OPENENV  # fmt: skip

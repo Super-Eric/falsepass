@@ -38,7 +38,9 @@ solver as the control and task-aware exploits, `--policies` writes a v1 skeleton
 rows on tasks where refusing is right are marked `no_control` and not counted.
 An OpenEnv tool environment (MCP `CallToolAction`), or one whose reward comes after several
 steps, takes `--policies` too: the skeleton's policies play whole episodes through the
-environment's own `reset()` and `step()`, tool calls included.
+environment's own `reset()` and `step()`, tool calls included. Read the summary's `Load note:`
+lines first (a `step()` the server never runs, random task draws, a failed tool listing); a
+Space that reads a data path from the environment takes `init --var NAME=VALUE`.
 
 ## 2. Read the results
 

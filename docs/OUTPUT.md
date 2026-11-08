@@ -104,6 +104,13 @@ finished run of task-blind policies (no control) adds `facts_that_hold`, `not_co
 }
 ```
 
+Also in the digest when they apply: `meta.notes` (a hand-written adapter's load notes),
+`meta.source` (the audit ran on a patched copy), and `warning` (automatic mode left the
+episode open after its one reply on most rows: the environment takes several steps). A
+policy run whose tool calls all failed, or whose solver (X0) earned less than the maximum on
+at least half the tasks, is `inconclusive`; probe-results.json keeps the counts under
+`meta.tool_calls` (`tool_calls`, `failed`, `first_failure`).
+
 `reward_terms` (when the reward has named terms) says which part of the reward paid on
 known-bad and fixed-strategy rows: `{"term": "format_reward", "weight": 0.2, "nonzero_share":
 0.82, "mean": 0.164}` per term, the same as summary.md's "Reward terms" table. A correctness
@@ -136,6 +143,9 @@ Written by `falsepass repro <env> --run` (and returned by MCP `falsepass_repro` 
  "differences": [], "cases": 12, "reproduced": 12}
 ```
 
+With `--source` (MCP `source`) the result carries `source` and the output is stored as
+`<script>.source.output.txt`, apart from the unpatched baseline. When every case raised, the
+result has `inconclusive` (the first exception line) and MCP returns status `inconclusive`.
 `cases` and `reproduced` appear for scripts `falsepass repro` wrote: `reproduced` counts the
 cases that still miss what a correct verifier gives. A first run that fails gives `error`
 and `stderr` instead, and nothing is stored.

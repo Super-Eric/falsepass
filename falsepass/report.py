@@ -106,6 +106,34 @@ def control_failed(results: list[dict[str, Any]]) -> tuple[int, int] | None:
     return (len(rows), failed) if rows and failed * 2 >= len(rows) else None
 
 
+def tools_all_failed(meta: dict[str, Any]) -> dict[str, Any] | None:
+    """The run's tool-call counts when every tool call of every episode failed (refused by the
+    action schema, or answered with an error): the tools did not run here, so no row says
+    anything about the grader."""
+    counts = meta.get("tool_calls") or {}
+    return counts if counts.get("tool_calls") and counts.get("failed") == counts["tool_calls"] else None
+
+
+def open_after_one_reply(meta: dict[str, Any]) -> str:
+    """A warning when the environment's episodes were still open after the one reply automatic
+    mode sends on most rows: it takes several steps, and the rows show the first step's reward."""
+    steps = meta.get("one_step") or {}
+    if steps.get("replies") and steps["not_done"] * 2 > steps["replies"]:
+        return (f"the episode was still open after the one reply on {steps['not_done']} of {steps['replies']} rows: this "
+                "environment takes several steps (a game, a dialogue) and the rows show the first step's reward only. Play "
+                "whole episodes with policies: falsepass init <target> --force --policies (MCP: policies=true, force=true)")
+    return ""
+
+
+def solver_failed(results: list[dict[str, Any]]) -> tuple[int, int] | None:
+    """(tasks, failed) of an adapter's solver (X0, the control) when it earned less than the
+    maximum on at least half of them: either the solver is wrong or a correct episode is not
+    paid, and the rows judged against the maximum say little until that is understood."""
+    rows = [r for r in results if r["probe"] == "X0" and r["score"] is not None]
+    failed = sum(not r["passed"] for r in rows)
+    return (len(rows), failed) if rows and failed * 2 >= len(rows) else None
+
+
 def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[str, Any] | None = None) -> dict[str, Any]:
     """A compact, machine-readable view of a probe run for scripts and coding agents: the
     headline numbers, every probe variant that failed (with one failing completion), and
@@ -183,6 +211,35 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
                     "https://super-eric.github.io/falsepass/docs/agents/#when-the-reference-is-not-a-reply",
         }  # fmt: skip
         failing = []
+    elif (calls := tools_all_failed(meta)):
+        extra = {
+            "status": "inconclusive",
+            "reason": f"every one of the {calls['tool_calls']} tool calls in this run failed (first: {calls['first_failure']}): "
+                      "the environment's tools did not run here, so no row says anything about its grader"
+                      + (f". Load notes: {'; '.join(meta['notes'])}" if meta.get("notes") else ""),
+            "failing_omitted": len(failing),
+            "next": "Make the tools run first: a refused call names the action field it wanted (set it in the adapter); an "
+                    "error answer usually means a database, a service or an environment variable the server sets up "
+                    "outside the environment class (its app's start-up, a second process). Read the environment's README "
+                    "and app module, and audit again once one tool call succeeds",
+        }  # fmt: skip
+        failing = []
+    elif (solver := solver_failed(payload["results"])):
+        tasks, failed = solver
+        notes = meta.get("notes") or []
+        extra = {
+            "status": "inconclusive",
+            "reason": f"the solver (X0, the control) earned less than the maximum ({_fmt(meta.get('max_reward', 1.0))}) on "
+                      f"{failed} of {tasks} tasks: either the solver is wrong or the environment does not pay a correct "
+                      "episode, and the rows judged against the maximum say little until that is known"
+                      + (f". Load notes: {'; '.join(notes)}" if notes else ""),
+            "failing_omitted": len(failing),
+            "next": "Read one X0 episode (`falsepass results <env> --completion <id>`; the id is on the X0 row in "
+                    "probe-results.json) and the environment's reward code. If the solver is right and the environment "
+                    "still pays nothing, that is the finding; if the solver earns a lower figure by design, set "
+                    "`max_reward` in adapter.py to what it earns and audit again",
+        }  # fmt: skip
+        failing = []
     elif unscored(payload["results"]):
         rows, none, first = unscored(payload["results"])
         own = first.startswith("could not build trace")
@@ -229,7 +286,7 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
         **extra,
         "environment": meta["environment"],
         "meta": {  # the rest of the run's metadata is in probe-results.json
-            **{k: meta[k] for k in ("date", "falsepass", "versions", "examples", "max_reward") if k in meta},
+            **{k: meta[k] for k in ("date", "falsepass", "versions", "examples", "max_reward", "notes", "source") if k in meta},
             "adapter": {k: adapter[k] for k in ("format", "answers", "turns", "validity", "note") if adapter.get(k)}
             if isinstance(adapter, dict) else adapter,
         },
@@ -242,6 +299,7 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
         **({"reward_terms": [{"term": term, "weight": weight, "nonzero_share": round(share, 3), "mean": round(mean, 6)}
                              for term, share, mean, weight in leaks]}
            if (leaks := term_leak(payload["results"], meta.get("weights") or {})) else {}),
+        **({"warning": open_after_one_reply(meta)} if open_after_one_reply(meta) else {}),
         "failing": failing,
         "static_hints": [{k: h[k] for k in ("rule", "file", "line", "evidence", "meaning", "verdict") if k in h}
                          for h in payload.get("static", [])],  # fmt: skip
@@ -434,6 +492,13 @@ def summary(payload: dict[str, Any]) -> str:
            f"{control_failed(results)[0]} tasks only** (the maximum below is the trial's mean): the field used as the reference "
            "is not the reply the grader wants; write an adapter whose reference is that reply (`falsepass init <target> "
            "--manual --force`)"] if control_failed(results) else []),
+        *([f"- **⚠ Result inconclusive: every one of the {meta['tool_calls']['tool_calls']} tool calls failed** (first: "
+           f"{meta['tool_calls']['first_failure']}): the tools did not run here"] if tools_all_failed(meta) else []),
+        *([f"- **⚠ Result inconclusive: the solver (X0, the control) earned less than the maximum on {solver_failed(results)[1]} "
+           f"of {solver_failed(results)[0]} tasks**: either the solver is wrong or a correct episode is not paid; read an X0 "
+           "episode and the reward code before reading the rows below"] if solver_failed(results) else []),
+        *[f"- **Load note:** {note}" for note in meta.get("notes") or []],
+        *([f"- **⚠ {open_after_one_reply(meta)}**"] if open_after_one_reply(meta) else []),
         *_weight_lines(meta, results),
         f"- **False-pass ceiling:** {_fmt(head['false_pass_ceiling'])} of {_fmt(meta['max_reward'])} "
         f"(highest reward given to a known-bad completion; via {head['false_pass_via']})",
