@@ -674,3 +674,28 @@ def test_nested_metadata_numbers_are_reward_terms():
     terms = openenv_support.reward_terms({"grade": {"task": 1.0, "integrity": 0.86, "step_count": 3, "ok": True},
                                           "reward_bonus": 0.1, "steps": 4, "note": "x"})
     assert terms == {"grade.task": 1.0, "grade.integrity": 0.86, "reward_bonus": 0.1}
+
+
+def test_an_answer_field_the_task_text_shows_is_not_the_reference():
+    """A card game's task records carry `target` (the number to make, in the prompt) and, after the
+    step, `solution`: the reference is the solution, and `target` alone means no reference."""
+    from falsepass.model import Example
+
+    def pool(records):
+        return [Example(f"test-{i}", f"Cards: 8 7 3 7\nTarget: {r['target']}", openenv_support.reference_for(r, {}, "", i),
+                        {"task": r}) for i, r in enumerate(records)]  # fmt: skip
+
+    both = pool([{"target": 24, "solution": "3 * (7 + 8 - 7)"}, {"target": 25, "solution": "8 * 3 + 7 / 7"}])
+    notes: list[str] = []
+    openenv_support._prefer_hidden_answer(both, notes)
+    assert [e.answer for e in both] == ["3 * (7 + 8 - 7)", "8 * 3 + 7 / 7"] and "`solution` is used" in notes[0]
+    shown_only = pool([{"target": 24}, {"target": 25}])
+    openenv_support._prefer_hidden_answer(shown_only, notes)
+    assert [e.answer for e in shown_only] == ["", ""] and "part of the question" in notes[1]
+    hidden = pool([{"answer": "42", "target": 24}])  # an answer the text does not show stays
+    openenv_support._prefer_hidden_answer(hidden, notes)
+    assert hidden[0].answer == "42" and len(notes) == 2
+    revealed = {"target": 24, "solution": "3 * (7 + 8 - 7)", "metadata": {}}
+    assert openenv_support._answer_in(revealed, "Target: 24") == "3 * (7 + 8 - 7)"
+    assert openenv_support._answer_in(revealed) == "24"
+    assert not openenv_support._shown_in("4", "Target: 24") and openenv_support._shown_in("24", "Target: 24.")

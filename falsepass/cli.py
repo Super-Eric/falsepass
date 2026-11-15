@@ -551,6 +551,10 @@ def find_audit(env: str, needs: str = "env.toml") -> Path | None:
     for candidate in (Path(env), Path("audits") / env, Path("audits") / env.lower().replace("_", "-")):
         if (candidate / needs).is_file():
             return candidate
+    # The folder given to `init --dir` holds the audit one level down: use it when there is one.
+    inside = sorted(p.parent for p in Path(env).glob("*/env.toml")) if Path(env).is_dir() else []
+    if len(inside) == 1 and (inside[0] / needs).is_file():
+        return inside[0]
     return None
 
 
@@ -561,8 +565,9 @@ def missing_audit(env: str, needs: str = "env.toml") -> int:
         # A folder given to `init --dir` holds the audit one level down.
         inside = sorted(p.parent for p in Path(env).glob("*/env.toml")) if Path(env).is_dir() else []
         if inside:
-            print(f"falsepass: {env!r} is not an audit folder, but it contains one: "
-                  f"{', '.join(str(p) for p in inside)}. Pass that path instead.", file=sys.stderr)  # fmt: skip
+            print(f"falsepass: {env!r} is not an audit folder, but it contains "
+                  f"{'one' if len(inside) == 1 else 'several'}: {', '.join(str(p) for p in inside)}. "
+                  f"Pass {'that path' if len(inside) == 1 else 'one of them'} instead.", file=sys.stderr)  # fmt: skip
             return 1
         known = sorted(p.name for p in Path("audits").glob("*") if (p / "env.toml").is_file()) if Path("audits").is_dir() else []
         print(f"falsepass: no audit named {env!r} in {Path.cwd() / 'audits'} (set up here: {', '.join(known) or 'none'}). "

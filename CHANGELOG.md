@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- OpenEnv: an answer-like field that the task text already shows is part of the question, not the reference. A card game whose task records carry `target` (the number to make, in the prompt) and reveal `solution` after the step was audited against `target`, and every format scored 0; now `solution` is used, a note says which field and why, and a record whose only answer-like field is shown runs answer-free.
+- `audit`, `results` and the other commands take the folder given to `init --dir` when it holds exactly one audit (with several, the error lists them).
+
 ## 0.15.0 — 2026-11-08
 
 - OpenEnv policies: `init --policies` on an OpenEnv folder or Space writes an adapter whose policies play whole episodes through the environment's own `reset()` and `step()` (`OpenEnvEpisodeScorer`): MCP tool calls as `CallToolAction` steps, text replies as the action in a text environment, the next observation (feedback included) or the tool's result back to the policy, until the environment says `done`. Tools are listed once through the MCP route, so no step counter moves. The reward is the episode's return (`REWARD = "last"` takes the last step's). T5 and T6 play these episodes too; `repro` replays a stored episode with openenv alone and `verify-fix` on a patched copy. Before, `--policies` refused on OpenEnv and an MCP tool environment could not be audited. `--manual` on OpenEnv writes the same skeleton (it wrote a verifiers one). New example `examples/openenv-tool-toy` (an MCP refund desk with a planted `>=`).

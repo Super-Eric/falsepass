@@ -958,6 +958,40 @@ def reference_for(record: Any, references: Any, key: str, position: int) -> str:
     return ""
 
 
+def _shown_in(value: str, text: str) -> bool:
+    """The value appears in the text as a whole token (a target number, a word to use)."""
+    value = value.strip()
+    return bool(value) and re.search(r"(?<![\w.])" + re.escape(value) + r"(?![\w])", text) is not None
+
+
+def _prefer_hidden_answer(pool: list[Example], notes: list[str]) -> None:
+    """Task records with several answer-like fields (`target` and `solution`): the first in
+    ANSWER_KEYS order may be part of the question (seen 2026-11-15: a card game whose `target` is
+    the number to make, shown in the prompt, next to the `solution` expression). Use the first
+    field the task text does not show, when the first one is shown on most tasks."""
+    fields = [n for n in ANSWER_KEYS if sum(_record_value(e.raw["task"], n) not in (None, "", [], {}) for e in pool) > len(pool) / 2]
+    if not fields:
+        return
+    shown = {n: sum(_shown_in(_as_text(_record_value(e.raw["task"], n) or ""), e.prompt) for e in pool) for n in fields}
+    if shown[fields[0]] <= len(pool) / 2:
+        return
+    hidden = [n for n in fields[1:] if shown[n] <= len(pool) / 2]
+    if not hidden:  # the only answer-like field is part of the question: no reference at all
+        for example in pool:
+            example.answer = ""
+        notes.append(f"the task records' `{fields[0]}` is shown in the task text on {shown[fields[0]]} of {len(pool)} tasks: "
+                     "it is part of the question, not an answer, so no reference is used (answer-free probes only); "
+                     "give reference answers with --answers to run every probe")  # fmt: skip
+        return
+    for example in pool:
+        value = _record_value(example.raw["task"], hidden[0])
+        if value not in (None, "", [], {}):
+            example.answer = _as_text(value)
+    notes.append(f"the task records carry several answer-like fields ({', '.join(fields)}); `{fields[0]}` is shown in the "
+                 f"task text on {shown[fields[0]]} of {len(pool)} tasks, so `{hidden[0]}` is used as the reference "
+                 "(to choose another, give --answers)")  # fmt: skip
+
+
 def _as_text(value: Any) -> str:
     return value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
 
@@ -1005,6 +1039,8 @@ async def _examples(scorer: OpenEnvScorer, max_rows: int, references: Any, tasks
             kwargs = {"split": split, "index": index}
             observation = await _call(env, "reset", **_accepted(env.reset, kwargs))
             pool.append(Example(key, observation_text(observation), reference_for(record, references, key, position), {"reset": kwargs, "task": record}))
+        if not references:
+            _prefer_hidden_answer(pool, notes)
         return pool
     hints = reset_hints(env)
     if hints:
@@ -1052,13 +1088,14 @@ async def _examples(scorer: OpenEnvScorer, max_rows: int, references: Any, tasks
     return pool
 
 
-def _answer_in(value: Any) -> str:
-    """An answer-like field of an observation or state, top level or in its metadata."""
+def _answer_in(value: Any, prompt: str = "") -> str:
+    """An answer-like field of an observation or state, top level or in its metadata; a value
+    the task text already shows (a `target` to reach) is part of the question and skipped."""
     data = value.model_dump() if hasattr(value, "model_dump") else value if isinstance(value, dict) else {}
     for holder in (data, data.get("metadata") or {}):
         if isinstance(holder, dict):
             for name in ANSWER_KEYS:
-                if holder.get(name) not in (None, "", [], {}):
+                if holder.get(name) not in (None, "", [], {}) and not _shown_in(_as_text(holder[name]), prompt):
                     return _as_text(holder[name])
     return ""
 
@@ -1075,7 +1112,7 @@ async def _harvest(scorer: OpenEnvScorer, pool: list[Example], notes: list[str])
             observation = await _call(env, "step", scorer.action(""))
         except Exception:  # noqa: BLE001 - nothing revealed for this task
             continue
-        value = _answer_in(observation) or _answer_in(getattr(env, "state", None))
+        value = _answer_in(observation, example.prompt) or _answer_in(getattr(env, "state", None), example.prompt)
         if value:
             example.answer = value
             found += 1

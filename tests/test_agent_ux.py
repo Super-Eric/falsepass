@@ -2,6 +2,7 @@
 
 import json
 import os
+from pathlib import Path
 
 from falsepass import cli, report
 from falsepass.mcp_server import _safe
@@ -61,9 +62,12 @@ def test_a_folder_given_to_init_dir_points_at_the_audit_inside(tmp_path, monkeyp
     monkeypatch.chdir(tmp_path)
     (tmp_path / "triage" / "toy").mkdir(parents=True)
     (tmp_path / "triage" / "toy" / "env.toml").write_text("[env]\n")
+    assert cli.find_audit("triage") == Path("triage", "toy")  # the only audit inside is used
+    (tmp_path / "triage" / "other").mkdir()
+    (tmp_path / "triage" / "other" / "env.toml").write_text("[env]\n")
     assert cli.main(["results", "triage"]) == 1
     err = capsys.readouterr().err
-    assert "contains one" in err and str(tmp_path.joinpath("triage", "toy").relative_to(tmp_path)) in err
+    assert "contains several" in err and str(Path("triage", "toy")) in err and str(Path("triage", "other")) in err
 
 
 def test_init_refuses_to_overwrite_without_force(tmp_path, monkeypatch, capsys):
