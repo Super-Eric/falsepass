@@ -55,8 +55,21 @@ def changes(before: list[str], after: list[str]) -> list[Change]:
 def stored_command(output: Path) -> list[str] | None:
     first = output.read_text().splitlines()[:1]
     if first and first[0].startswith("# uv run"):
-        return shlex.split(first[0][2:])
+        # A hand-written header may end in a note after the command: "...repro.py   (2026-11-15; run twice ...)".
+        return shlex.split(re.split(r"\s{2,}\(", first[0][2:], maxsplit=1)[0])
     return None
+
+
+def _without_isolation(command: list[str]) -> list[str]:
+    """`python -I` ignores PYTHONPATH, so an overlay would never be imported: drop the flag."""
+    out, after_python = [], False
+    for part in command:
+        if after_python and part == "-I":
+            after_python = False
+            continue
+        after_python = Path(part).name.startswith("python") and not part.endswith(".py")
+        out.append(part)
+    return out
 
 
 def source_floor(source: Path) -> str | None:
@@ -170,7 +183,7 @@ def command_for(audit_dir: Path, script: str, source: Path | None) -> list[str]:
         ]  # fmt: skip
     if source is not None and openenv:
         return ["env", f"FALSEPASS_SOURCE={source.resolve()}", *command]
-    return ["env", f"PYTHONPATH={overlay_path(audit_dir, source)}", *command] if overlay(source) else command
+    return ["env", f"PYTHONPATH={overlay_path(audit_dir, source)}", *_without_isolation(command)] if overlay(source) else command
 
 
 CASE_LINE = re.compile(r"\s*(\S+(?: \S+)?)\s+expected (\S+)\s")  # a line of a script `falsepass repro` wrote

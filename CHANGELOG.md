@@ -3,6 +3,7 @@
 ## Unreleased
 
 - OpenEnv: an answer-like field that the task text already shows is part of the question, not the reference. A card game whose task records carry `target` (the number to make, in the prompt) and reveal `solution` after the step was audited against `target`, and every format scored 0; now `solution` is used, a note says which field and why, and a record whose only answer-like field is shown runs answer-free.
+- `verify-fix` on a repro whose stored header runs `python -I` dropped the patch: `-I` ignores `PYTHONPATH`, so the overlay never loaded and the result was "no line changed". The flag is left out when a patched folder is laid over the release, and a note written after the command on the header line is no longer passed to the script as arguments.
 - `audit`, `results` and the other commands take the folder given to `init --dir` when it holds exactly one audit (with several, the error lists them).
 
 ## 0.15.0 — 2026-11-08

@@ -110,6 +110,12 @@ def test_verify_fix_lays_a_plain_folder_over_the_release(tmp_path: Path):
     command = verify.command_for(audit, "repro.py", plain)
     assert command[:2] == ["env", f"PYTHONPATH={plain}"] and "my-env==0.2.0" in command
     assert verify.command_for(audit, "repro.py", None)[0] == "uv"  # the unpatched baseline
+    # A hand-written header: `python -I` (which ignores PYTHONPATH) and a note after the command.
+    (audit / "repro.output.txt").write_text("# uv run -q --isolated --with my-env==0.2.0 python -I audits/audit/repro.py   "
+                                            "(2026-11-15; run twice, second run identical: yes)\nA\n")
+    command = verify.command_for(audit, "repro.py", plain)
+    assert command[-2:] == ["python", str((audit / "repro.py").resolve())] and "-I" not in command
+    assert verify.command_for(audit, "repro.py", None)[-2:] == ["-I", str((audit / "repro.py").resolve())]  # unpatched: kept
 
 
 def test_verifiers_pin_respects_a_ceiling_below_the_default():
