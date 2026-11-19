@@ -498,6 +498,42 @@ def score_flag(parsed, truth):
     assert [h.where for h in static.scan(tmp_path / "prompts.py") if h.rule == "unreferenced_prompt_constant"] == ["SYSTEM_PROMPT", "USED_PROMPT"]
 
 
+def test_static_scan_flags_a_max_over_checks(tmp_path):
+    """Issue #1: `max(strict, loose)` pays whenever the looser check passes."""
+    from falsepass import static
+
+    (tmp_path / "taskset.py").write_text('''import verifiers.v1 as vf
+
+
+class Taskset:
+    @vf.reward(weight=1.0)
+    async def solved(self, trace):
+        return max(trace.metrics["db_hash"], trace.metrics["verify"])
+
+    @vf.reward(weight=1.0)
+    async def either_form(self, trace):
+        return max(exact_match(trace.answer, trace.reply), numeric_score(trace.answer, trace.reply))
+
+    @vf.reward(weight=1.0)
+    async def clamped(self, trace):
+        score = 1.0 - trace.metrics["penalty"]
+        return max(0.0, score) + max(-1, score)
+
+    @vf.reward(weight=1.0)
+    async def lengths(self, trace):
+        checks = [c for c in trace.metrics["checks"] if c]
+        return len(checks) / max(len(checks), 1) / max(len(checks), len(trace.answer))
+
+    @vf.reward(weight=1.0)
+    async def best_reference(self, trace):
+        return max(score_against(r, trace.reply) for r in trace.answers) + max(trace.scores, key=abs)
+''')
+    hints = [h for h in static.scan(tmp_path) if h.rule == "max_over_checks"]
+    assert [h.where for h in hints] == ["solved", "either_form"]
+    assert hints[0].to_dict()["confirm_with"] == []
+    assert "loosest" in hints[0].to_dict()["meaning"]
+
+
 def test_static_rules_from_the_pull_requests(tmp_path):
     from falsepass import static
 

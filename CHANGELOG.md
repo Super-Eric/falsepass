@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Static scan: new hint `max_over_checks` for a reward that is the larger of two or more checks (`max(trace.metrics["db_hash"], trace.metrics["verify"])`): the loosest check decides, so it is worth seeing whether each is strict enough on its own. Clamps (`max(0.0, score)`), lengths (`max(len(x), 1)`) and a best-of over one iterable do not fire. Proposed in #1 by @shwetank-kumar, who found it in a Hub sweep; on the sources we keep (87 environments, 971 files) it fires once, on that environment.
 - OpenEnv: an answer-like field that the task text already shows is part of the question, not the reference. A card game whose task records carry `target` (the number to make, in the prompt) and reveal `solution` after the step was audited against `target`, and every format scored 0; now `solution` is used, a note says which field and why, and a record whose only answer-like field is shown runs answer-free.
 - `verify-fix` on a repro whose stored header runs `python -I` dropped the patch: `-I` ignores `PYTHONPATH`, so the overlay never loaded and the result was "no line changed". The flag is left out when a patched folder is laid over the release, and a note written after the command on the header line is no longer passed to the script as arguments.
 - `audit`, `results` and the other commands take the folder given to `init --dir` when it holds exactly one audit (with several, the error lists them).

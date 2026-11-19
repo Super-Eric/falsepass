@@ -44,10 +44,12 @@ RULES: dict[str, tuple[tuple[str, ...], str]] = {
     "inspect_match_end": (("P15", "P9"), "Inspect's `match()` reads only the end of the output (the default `location=\"end\"`; with `numeric=True`, the last number in it) and ignores what comes before: `not 100` matches 100, and with `numeric=True` so does `100 (this is wrong)`. Documented inspect_ai behaviour: a design choice unless the task asks for more"),
     "inspect_choice_lenient": (("P15",), "Inspect's `choice()` scorer takes the letters `multiple_choice()` parsed, and that parser falls back to the letters right after `ANSWER:` when the line goes on, so `ANSWER: A (this is wrong)` counts as A. Documented inspect_ai behaviour: a design choice unless the task asks for more"),
     "empty_component_scores_zero": ((), "a per-item average that returns 0.0 when there are no items (`... if hits else 0.0`), so a component whose items were all excluded on purpose (for example after a correct abstention) counts as a failure instead of being skipped"),
+    "max_over_checks": ((), "the reward is the larger of two or more checks (`max(hash_match, verify)`), so the loosest one decides: a reply that fails the strict check is paid in full whenever a looser one passes. Often intended (\"either form is acceptable\"); look at whether each check is strict enough on its own"),
     "unreferenced_prompt_constant": ((), "a module-level *_PROMPT string that nothing in the package reads: the instructions in it (answer format, when to abstain) never reach the model, while the grader may still expect them to be followed"),
 }
 
 PROMPT_NAME = re.compile(r"(^|_)PROMPT(_|$)")
+CHECK_WORD = re.compile(r"metric|verif|hash|score|check|exact|match|correct|pass", re.I)
 
 WANT_WORD = re.compile(r"want|expect|answer|gold|truth|target|reference|key", re.IGNORECASE)
 TAG_PATTERN = re.compile(r"<[A-Za-z_][\w-]*>.*\(.*\).*</")
@@ -294,6 +296,8 @@ class _Scanner(ast.NodeVisitor):
                     self.hint("whole_text_fallback", node, where)
             elif isinstance(node, ast.Call):
                 name = _call_name(node)
+                if name == "max" and _is_max_over_checks(node):
+                    self.hint("max_over_checks", node, where)
                 if name == "search" and node.args:
                     receiver = node.func.value if isinstance(node.func, ast.Attribute) else None
                     compiled = isinstance(receiver, ast.Name) and receiver.id in self.tag_patterns
@@ -318,6 +322,23 @@ class _Scanner(ast.NodeVisitor):
                     if broad and isinstance(value, ast.Constant) and value.value not in (0, 0.0, False, None, ""):
                         if isinstance(value.value, (int, float, bool)):
                             self.hint("except_returns_reward", ret, where)
+
+
+def _is_max_over_checks(call: ast.Call) -> bool:
+    """`max(a, b, ...)` over two or more results that read like checks. A numeric constant
+    (`max(0.0, score)`, a clamp), a `len()` (`max(len(x), 1)`) or a starred argument does not
+    count; `max(scores)` over one iterable is a best-of, not an OR of checks."""
+    args = call.args
+    if len(args) < 2 or call.keywords:
+        return False
+    for arg in args:
+        if isinstance(arg, ast.Starred) or (isinstance(arg, ast.Constant) and isinstance(arg.value, (int, float))):
+            return False
+        if isinstance(arg, ast.Call) and _call_name(arg) == "len":
+            return False
+        if isinstance(arg, ast.UnaryOp) and isinstance(arg.operand, ast.Constant):
+            return False
+    return all(CHECK_WORD.search(ast.unparse(arg)) for arg in args)
 
 
 def _is_zero(node: ast.AST | None) -> bool:
