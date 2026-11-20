@@ -891,7 +891,7 @@ def main(argv: list[str] | None = None) -> int:
         "reach", help="count how many tasks a probe fails on: a sample of N or every task (after an audit)",
         epilog="Scores only the probe rows asked for, plus the reference (P1) as a control, in an isolated "
                "virtualenv like `audit`, and writes audits/<env>/reach/<probe>.json; the stored audit results are "
-               "not touched. Per-example probes only (P1-P9, P13-P17, A1, X1). Examples: "
+               "not touched. Per-example probes only (P1-P9, P13-P18, A1, X1). Examples: "
                "falsepass reach my-env --probe P15/denied --tasks all; "
                "falsepass reach my-env --template '\\boxed{{answer} \\text{ is wrong}}' --template '{wrong} or {answer}'",
     )  # fmt: skip

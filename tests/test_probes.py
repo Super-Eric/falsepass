@@ -722,3 +722,42 @@ def test_repro_selects_by_probe_or_probe_and_variant():
     stored = {"a": "A", "b": "B"}
     assert [c["variant"] for c in repro.select(rows, stored, ["X1/b"], 2)] == ["b"]
     assert len(repro.select(rows, stored, ["X1"], 2)) == 2
+
+
+def test_p18_keeps_the_old_lines_next_to_the_new_ones():
+    from falsepass.auto import AutoAdapter
+    from falsepass.model import Example
+    from falsepass.probes import edit_unions, p18_edit_union
+
+    prompt = "Use 3 eggs and bake for 40 minutes.\n\nPANCAKES\nFlour: 200 g\nEggs: 2\nBake: 30 minutes\nServe warm."
+    reference = "PANCAKES\nFlour: 200 g\nEggs: 3\nBake: 40 minutes\nServe warm."
+    union = edit_unions(reference, prompt)["old_and_new_lines"]
+    assert union.splitlines() == ["PANCAKES", "Flour: 200 g", "Eggs: 2", "Bake: 30 minutes",
+                                  "Eggs: 3", "Bake: 40 minutes", "Serve warm."]  # fmt: skip
+    assert "Use 3 eggs" not in union  # the instruction around the text is not kept
+    assert edit_unions("12", prompt) == {} and edit_unions("one\ntwo\nthree", "unrelated prompt") == {}
+    assert edit_unions("PANCAKES\nFlour: 200 g\nEggs: 2\nBake: 30 minutes\nServe warm.\nEnjoy.", prompt) == {}  # only added lines
+    doc = "Title A\nline two\nline three\nline four"  # edits to the first and the last line
+    assert edit_unions("Title B\nline two\nline three\nline four", f"Fix the title:\n\n{doc}")["old_and_new_lines"] == \
+        "Title A\nTitle B\nline two\nline three\nline four"
+    assert edit_unions("Title A\nline 2\nline three\nline 4", f"Fix:\n{doc}\n\nReply with the full text.")["old_and_new_lines"] == \
+        "Title A\nline two\nline 2\nline three\nline four\nline 4"
+    code = "def limit():\n    x = 10\n    return x"
+    assert edit_unions(code.replace("10", "12"), f"Raise the limit to 12:\n{code}") == {}  # both lines can be a correct program
+    names = "Ada Lovelace\nAlan Turing\nGrace Hopper"
+    assert edit_unions(names.replace("Alan Turing", "Alan M. Turing"), f"Fix the middle name:\n{names}")  # text, not code
+
+    def lines_present(text, answer):  # pays every line of the answer it finds
+        have = set(text.splitlines())
+        return sum(line in have for line in answer.splitlines()) / len(answer.splitlines())
+
+    def exact(text, answer):
+        return float(text.strip() == answer.strip())
+
+    adapter = AutoAdapter({"id": "t", "framework": "verifiers"})
+    adapter.format = lambda a: a
+    ex = Example("t-0", prompt, reference)
+    leaky = asyncio.run(p18_edit_union(adapter, FakeScorer(lines_present), ex))
+    strict = asyncio.run(p18_edit_union(adapter, FakeScorer(exact), ex))
+    assert [(r.variant, r.score, r.passed) for r in leaky] == [("old_and_new_lines", 1.0, False)]
+    assert [(r.score, r.passed) for r in strict] == [(0.0, True)]

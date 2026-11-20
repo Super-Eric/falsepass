@@ -47,6 +47,7 @@ MEANING = {
     "P15": "a denied or hedged answer written inside the answer slot gets full credit",
     "P16": "a JSON reply whose free-text fields are the prompt pasted in is paid like the reference",
     "P17": "a JSON reply with one short field followed by a denial everywhere is paid like the reference: that field is not read, or not read to its end",
+    "P18": "an edit that keeps every replaced line next to its replacement is paid (close to) like the edited text: the grader checks that the new lines are there and does not check, or barely penalises, the old ones still being there",
     "C0": "the key written as the output file is not paid in full (no automatic submission format)",
     "C1": "a key with NaN, Infinity or fractional counts written as the output file is paid in full, or makes scoring raise",
     "C2": "an empty, truncated or copied output file is paid in full",

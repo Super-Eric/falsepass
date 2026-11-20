@@ -194,6 +194,31 @@ def test_v1_reference_reads_expected_structures_as_json():
     assert v1_reference(SimpleNamespace(prompt_text="say hi")) == ("", "", False)
 
 
+def _reward(fn):  # stands in for @vf.reward(...)
+    return fn
+
+
+class _OtherNameTask:  # a taskset that calls its expected values `esperado`
+    @_reward
+    async def exact_match(self, trace):
+        return float(trace.last_reply == str(self.data.esperado) and self.data.prompt_text != "")
+
+    async def validate(self):
+        return self.data.level > 0  # not a reward: not read as the reference
+
+
+def test_v1_reference_falls_back_to_the_field_the_reward_reads():
+    from types import SimpleNamespace
+
+    from falsepass.auto import v1_reference, v1_reward_fields
+
+    assert v1_reward_fields(_OtherNameTask()) == ["esperado"]  # prompt_text is the question, level is read outside a reward
+    data = SimpleNamespace(prompt_text="q", esperado={"total": "12.50"}, level=2)
+    assert v1_reference(data) == ("", "", False)
+    assert v1_reference(data, ("esperado",)) == ('{"total": "12.50"}', "esperado", True)
+    assert v1_reference(SimpleNamespace(answer="42", esperado="7"), ("esperado",))[1] == "answer"  # the usual names first
+
+
 def test_vf_compat_follows_the_runtime_api_of_each_release(monkeypatch):
     import asyncio
     import sys

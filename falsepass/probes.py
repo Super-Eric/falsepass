@@ -517,6 +517,77 @@ async def p17_field_hedge(adapter: Adapter, scorer: Scorer, ex: Example) -> list
     return results
 
 
+# --- P18: an edit that keeps the old lines next to the new ones ------------------------
+
+EDIT_COPIED = 0.5  # share of the reference's lines found, in order, in the prompt: an edit task
+EDIT_MIN_LINES = 3
+
+
+def _prompt_text(prompt: Any) -> str:
+    if isinstance(prompt, str):
+        return prompt
+    return "\n".join(str(m.get("content") or "") for m in prompt if isinstance(m, dict) and m.get("role") != "system")
+
+
+def _looks_like_code(text: str) -> bool:
+    """A fenced block, or Python with at least one statement that is not a bare expression."""
+    import ast
+
+    if "```" in text:
+        return True
+    try:
+        tree = ast.parse(text)
+    except (SyntaxError, ValueError):
+        return False
+    return any(not isinstance(node, ast.Expr) for node in tree.body)
+
+
+def edit_unions(answer: str, prompt: Any) -> dict[str, str]:
+    """For a reference that is a text from the prompt with some lines changed (an edit task):
+    the reference with each replaced or deleted line of that text kept in place, just before
+    its replacement (a block of changed lines: the old block, then the new one). The reply contradicts itself at every edit; a grader that checks only that
+    the new lines are present, or pays per matching line, pays it like the edited text.
+    A reference in a fenced block or that parses as Python is left out: a later line can
+    override an earlier one (`x = 10` then `x = 12`), so both versions together can be a
+    correct program. Other languages are not detected."""
+    import difflib
+
+    new, old = answer.splitlines(), _prompt_text(prompt).splitlines()
+    if sum(bool(line.strip()) for line in new) < EDIT_MIN_LINES or not old or _looks_like_code(answer):
+        return {}
+    matcher = difflib.SequenceMatcher(None, [line.strip() for line in old], [line.strip() for line in new], autojunk=False)
+    blocks = [b for b in matcher.get_matching_blocks() if any(line.strip() for line in new[b.b:b.b + b.size])]
+    copied = sum(sum(bool(line.strip()) for line in new[b.b:b.b + b.size]) for b in blocks)
+    if not blocks or copied < EDIT_COPIED * sum(bool(line.strip()) for line in new):
+        return {}
+    start, end = blocks[0].a, blocks[-1].a + blocks[-1].size  # the unchanged lines span this part of the prompt
+    out: list[str] = []
+    kept = 0
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag != "equal":
+            lo, hi = i1, i2
+            # An edit to the first or last line shares its chunk with the prompt text around the
+            # document: keep only as many old lines as were replaced, the ones nearest the text.
+            if i1 < start:
+                lo = max(i1, i2 - (j2 - j1)) if j2 > j1 else i2
+            if i2 > end:
+                hi = min(i2, i1 + (j2 - j1)) if j2 > j1 else i1
+            stale = [line for line in old[lo:hi] if line.strip()]
+            kept += len(stale)
+            out += stale
+        out += new[j1:j2]
+    return {"old_and_new_lines": "\n".join(out)} if kept else {}
+
+
+async def p18_edit_union(adapter: Adapter, scorer: Scorer, ex: Example) -> list[ProbeResult]:
+    """An edit that keeps every replaced line next to its replacement must not be paid: the
+    text then says both the old and the new thing."""
+    return [
+        await check("P18", "edit_union", variant, Expect.ZERO, adapter.render(done, ex), adapter, scorer, ex)
+        for variant, done in edit_unions(ex.answer, ex.prompt).items()
+    ]
+
+
 # --- T7: a tool call before the answer --------------------------------------------------
 
 
@@ -855,7 +926,8 @@ ANSWER_FREE_FEW = [p10_exception_path, a2_determinism]
 PER_EXAMPLE = [
     p1_ground_truth, p2_equivalent_forms, p3_empty, p4_echo, p5_shotgun,
     p6_format_only, p7_wrong_confident, p8_judge_injection, p9_oversized,
-    p13_special_numbers, p14_format_mentions, p15_hedged_in_slot, p16_field_echo, p17_field_hedge, a1_answer_free_spray,
+    p13_special_numbers, p14_format_mentions, p15_hedged_in_slot, p16_field_echo, p17_field_hedge, p18_edit_union,
+    a1_answer_free_spray,
 ]  # fmt: skip
 # Slower or input-independent probes run on a handful of examples only.
 FEW_EXAMPLES = [p10_exception_path, p11_determinism, t4_state_reset, t5_turn_limit, t7_tool_call_first, t8_after_the_end]

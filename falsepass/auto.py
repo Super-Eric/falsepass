@@ -137,11 +137,44 @@ V1_REFERENCE_FIELDS = ("answer", "expected", "reference", "key", "target", "solu
 are what tasksets call it when they keep a structure (a dict of expected values) instead of a string."""
 
 
-def v1_reference(data: Any) -> tuple[str, str, bool]:
+V1_NOT_REFERENCE = {"prompt", "prompt_text", "system_prompt", "id", "name", "info", "metadata", "tools", "config"}
+
+
+def v1_reward_fields(task: Any) -> list[str]:
+    """Task-data fields a v1 task's reward methods read (`self.data.<field>`), in order of appearance. A taskset
+    that names its expected values in another language (`esperado`, `erwartet`) or its own way is read through what
+    its reward compares against."""
+    import ast
+    import inspect
+    import textwrap
+
+    found: list[str] = []
+    for cls in type(task).__mro__:
+        if cls.__module__.startswith(("verifiers", "builtins", "pydantic", "typing")):
+            continue
+        try:
+            tree = ast.parse(textwrap.dedent(inspect.getsource(cls)))
+        except (OSError, TypeError, SyntaxError):
+            continue
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not any("reward" in ast.unparse(d) for d in fn.decorator_list):
+                continue
+            for node in ast.walk(fn):
+                if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Attribute) and node.value.attr == "data"
+                        and isinstance(node.value.value, ast.Name) and node.value.value.id == "self"
+                        and node.attr not in V1_NOT_REFERENCE and node.attr not in found):  # fmt: skip
+                    found.append(node.attr)
+    return found
+
+
+def v1_reference(data: Any, extra: tuple[str, ...] = ()) -> tuple[str, str, bool]:
     """(reference text, the field it came from, whether it was a structure dumped as JSON) for a v1 task's data.
     A dict or list becomes a JSON document, so a task whose grader parses the reply as JSON and compares fields
-    can be probed with its own expected values; the automatic format inference then has to find the wrapper."""
-    for field in V1_REFERENCE_FIELDS:
+    can be probed with its own expected values; the automatic format inference then has to find the wrapper.
+    `extra`: fields to try after the usual names (those the reward reads, from `v1_reward_fields`)."""
+    for field in (*V1_REFERENCE_FIELDS, *extra):
         value = getattr(data, field, None)
         if value is None or value == "" or value == {} or value == []:
             continue
@@ -360,11 +393,13 @@ class AutoAdapter(Adapter):
             episodic.insert(0, "a scripted user over several turns and no prompt")
         if episodic:
             return self._load_v1_episodes(tasks, episodic)
-        pool = [Example(f"task-{i}", t.data.prompt_text, v1_reference(t.data)[0], t) for i, t in enumerate(tasks)]
-        if tasks and (field := v1_reference(tasks[0].data)[1]) not in ("answer", ""):
+        extra = tuple(v1_reward_fields(tasks[0])) if tasks else ()
+        pool = [Example(f"task-{i}", t.data.prompt_text, v1_reference(t.data, extra)[0], t) for i, t in enumerate(tasks)]
+        if tasks and (field := v1_reference(tasks[0].data, extra)[1]) not in ("answer", ""):
             self.load_notes.append(
                 f"the reference is the task data's `{field}` field"
-                + (" (a JSON document, since the field holds a structure)" if v1_reference(tasks[0].data)[2] else "")
+                + (" (the field the reward reads)" if field not in V1_REFERENCE_FIELDS else "")
+                + (" (a JSON document, since the field holds a structure)" if v1_reference(tasks[0].data, extra)[2] else "")
                 + "; check that the control (P1) scores full before reading the rows (if it does not on most tasks the run is "
                 "inconclusive: the field holds targets, not the reply, and an adapter with a solver is needed)"
             )

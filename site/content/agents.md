@@ -193,6 +193,16 @@ through the environment's own rollout loop and rubric. Fill in:
   `policies.special_numbers()` turns it into variants with `nan`, `inf`, `-1`, `1e999` and
   `-0` in place of its numbers (ids such as `#1234` are left alone). A limit written as
   `amount > LIMIT` is false for NaN.
+- Edit tasks (the model changes a document through a tool; not code, where a later line can
+  override an earlier one): add a known-bad policy that makes the solver's edits but keeps
+  each old text next to its replacement. Widen each edit to whole lines first, then
+  `new_text = old_text + "\n" + new_text`; an edit inside a line would leave the new line
+  incomplete and the row would say nothing. Give it its own
+  `check("X1", "policy", "keeps_old_lines", Expect.ZERO, ...)` line in `policy_probes`
+  (it reads the answer, so not `answer_free`). The document then states both the old and
+  the new value; on one environment, which subtracts 0.02 for each old line left in, such
+  documents earned 0.89 on average where a correct one earns 1.0. P18 does the same for
+  single-turn replies.
 
 Then run `falsepass audit <env>` as usual. Each policy's episode (what it said, and the
 whole conversation) is kept: `falsepass_completion` shows it, and `falsepass repro`
@@ -223,6 +233,10 @@ writes a v1 skeleton. Policies there are `act(messages, tools)`: messages carry
   holes: claim success without acting; act on everything the tools show; a number written
   another way (`1, 2, 3, 4`, words); `nan`, `inf`, `-1`, `1e999` in an amount (send them as
   strings: JSON has no NaN); a reply that lists every candidate answer.
+- Edit tasks (a document changed through tools): a known-bad policy that makes the solver's
+  edits but keeps each old text next to its replacement, as above, with its own
+  `check("X1", "policy", "keeps_old_lines", bad, ...)` line in `policy_probes`, not in
+  `exploits()`: it reads the task data, so it is not `answer_free`.
 
 `LOAD_ARGS` takes the taskset's options (what `--env.taskset.<option>` sets on the
 command line), e.g. `{"families": ["pin_request"]}`. The harness runs in verifiers'
@@ -458,7 +472,7 @@ The output is a list of leads. Before an agent reports anything:
    tasks by default; `falsepass reach <env> --probe P15/denied` (MCP `falsepass_reach`)
    scores that one row, and the reference as a control, on every task (`--tasks N` for a
    sample) and writes the counts and failing task keys to `audits/<env>/reach/`. It covers
-   the per-example probes (P1–P9, P13–P17, A1, X1). A count is for the completion the
+   the per-example probes (P1–P9, P13–P18, A1, X1). A count is for the completion the
    probe wrote, including the wrong value falsepass picked and where it put it: P15 has
    both orders (`false_equation` and `false_equation_reversed`), because a grader that keeps
    one side pays only one. To count a completion of your own, pass it as a template:
