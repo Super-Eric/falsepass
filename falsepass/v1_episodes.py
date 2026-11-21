@@ -79,7 +79,8 @@ def policy_failure(name: str, turn: int, exc: BaseException) -> str:
     import linecache
     import traceback
 
-    frames = [f for f in traceback.extract_tb(exc.__traceback__) if "/falsepass/" not in f.filename.replace("\\", "/")]
+    package = str(Path(__file__).resolve().parent) + os.sep  # the tool's own frames, not a folder that happens to share its name
+    frames = [f for f in traceback.extract_tb(exc.__traceback__) if not str(Path(f.filename).resolve()).startswith(package)]
     where = ""
     if frames:
         frame = frames[-1]
