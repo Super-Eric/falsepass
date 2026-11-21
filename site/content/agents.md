@@ -177,8 +177,9 @@ falsepass init owner/environment --policies --force   # adds adapter.py: a polic
 
 A policy is a function from the conversation so far (a list of `{"role", "content"}`
 dicts) to the next assistant message, either a string or
-`{"content": ..., "tool_calls": [{"name": ..., "arguments": {...}}]}`. With
-`Policy(name, act, wants_tools=True)` it also gets the tool schemas. Each policy runs
+`{"content": ..., "tool_calls": [{"name": ..., "arguments": {...}}]}`. `Policy(name, act)`
+calls `act(messages)`; `Policy(name, act, wants_tools=True)` calls `act(messages, tools)` with
+the tool schemas (the `--policies` skeletons use this form throughout). Each policy runs
 through the environment's own rollout loop and rubric. Fill in:
 
 - `solver(example)`: a policy that does the task properly (it may read the row's answer).
@@ -227,7 +228,8 @@ writes a v1 skeleton. Policies there are `act(messages, tools)`: messages carry
   grader compares against). It should earn the maximum; set `max_reward` to what it earns.
   Its rows are the control, `X0 control/solver`, kept apart from the known-bad `X1` rows.
   When the package ships a step-by-step solver that calls the tools one at a time
-  (`solve(prompt, use)`), `falsepass.policies.sequential("solver", solve)` plays it as a
+  (`solve(prompt, use)`, where `use(tool_name, arguments_dict)` returns the tool's result,
+  parsed as JSON when it is JSON), `falsepass.policies.sequential("solver", solve)` plays it as a
   policy: on each turn it replays the solver against the tool results so far and sends the
   next call, then the final answer. The same works for broken variants of the solver.
 - Wrong episodes under per-rule partial credit (a forbidden step, then the correct run): a
@@ -319,8 +321,10 @@ What the skeleton's parts mean:
   the JSON object the prompt asks for, filled from the grading record.
 - `render(answer, example)` writes an answer the way the prompt asks for it, and
   `wrong_answer(example)` returns one that is certainly wrong.
-- `equivalent_forms(example)` gives P2 its correct variants. The default is three
-  (whitespace, a sentence after, CRLF); override it to add forms the prompt allows.
+- `equivalent_forms(example)` gives P2 its correct variants as a dict `{name: completion}`
+  (a name such as `"uppercase"` to the text). The default is three (whitespace, a sentence
+  after, CRLF); override it to add forms the prompt allows, e.g.
+  `return {**super().equivalent_forms(example), "uppercase": self.render(example.answer.upper(), example)}`.
 - `loader` tells `falsepass repro` how to load the same rows without the adapter: keep the
   skeleton's line, and keep example keys that end in the row's index (`row-17`, `task-17`).
 - `max_reward` is what the reference earns when it is below 1.0 by design.

@@ -761,3 +761,13 @@ def test_p18_keeps_the_old_lines_next_to_the_new_ones():
     strict = asyncio.run(p18_edit_union(adapter, FakeScorer(exact), ex))
     assert [(r.variant, r.score, r.passed) for r in leaky] == [("old_and_new_lines", 1.0, False)]
     assert [(r.score, r.passed) for r in strict] == [(0.0, True)]
+
+
+def test_a_short_wrapper_names_the_package_its_grader_lives_in():
+    from falsepass import hub
+
+    wrapper = (b"import json\nimport verifiers.v1 as vf\nfrom deskgym.adapters import DeskTask, DeskTaskset\n"
+               b"from mywrap.extra import helper\n\nclass T(vf.Taskset[DeskTask, object]):\n    load = DeskTaskset.load\n")
+    kind = hub.classify({"mywrap/__init__.py": wrapper, "mywrap/extra.py": b"def helper(): pass\n"})
+    assert kind["wraps"] == ["deskgym"]
+    assert "wraps" not in hub.classify({"env.py": b"import verifiers as vf\nimport numpy\n"})

@@ -262,16 +262,17 @@ def outside_hosts(module: str) -> list[str]:
     from pathlib import Path
 
     spec = importlib.util.find_spec(module.split(".")[0])
-    roots = list(spec.submodule_search_locations or []) if spec and spec.submodule_search_locations else \
-        ([str(Path(spec.origin).parent)] if spec and spec.origin else [])
+    if spec and spec.submodule_search_locations:
+        files = [p for root in spec.submodule_search_locations for p in Path(root).rglob("*.py")]
+    else:  # a single-file module sits in site-packages itself: read that file, not every package beside it
+        files = [Path(spec.origin)] if spec and spec.origin and spec.origin.endswith(".py") else []
     hosts: set[str] = set()
-    for root in roots:
-        for path in Path(root).rglob("*.py"):
-            try:
-                text = path.read_text(errors="replace")
-            except OSError:
-                continue
-            hosts |= set(re.findall(r"https?://([A-Za-z0-9.-]+\.[A-Za-z]{2,})", text))
+    for path in files:
+        try:
+            text = path.read_text(errors="replace")
+        except OSError:
+            continue
+        hosts |= set(re.findall(r"https?://([A-Za-z0-9.-]+\.[A-Za-z]{2,})", text))
     return sorted(h for h in hosts if h not in ("localhost",) and not h.endswith(("example.com", "example.org")))
 
 

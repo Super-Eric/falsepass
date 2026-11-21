@@ -204,9 +204,13 @@ async def p1_ground_truth(adapter: Adapter, scorer: Scorer, ex: Example) -> list
 
 async def p2_equivalent_forms(adapter: Adapter, scorer: Scorer, ex: Example) -> list[ProbeResult]:
     """Harmless variations of the correct answer must still get full reward."""
+    forms = adapter.equivalent_forms(ex)
+    if not isinstance(forms, dict):
+        raise TypeError(f"equivalent_forms() must return a dict {{name: completion}}, not {type(forms).__name__} "
+                        "(e.g. {\"uppercase\": self.render(example.answer.upper(), example)})")
     return [
         await check("P2", "equivalent_forms", variant, Expect.FULL, done, adapter, scorer, ex)
-        for variant, done in adapter.equivalent_forms(ex).items()
+        for variant, done in forms.items()
     ]
 
 

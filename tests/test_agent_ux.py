@@ -350,4 +350,22 @@ def test_episodes_left_open_after_one_reply_are_said():
     assert "warning" not in report.digest({"meta": {**meta, "one_step": {"replies": 10, "not_done": 1}}, "results": rows, "static": []})
     both = report.digest({"meta": {**meta, "default_reset": ["task_name", "level"]}, "results": rows, "static": []})
     assert both["warning"].startswith("reset() takes task_name, level") and '[{"task_name": ...}]' in both["warning"]
-    assert "takes several steps" in both["warning"]
+    assert "takes several steps" in both["warning"] and "audit again. the episode" in both["warning"]
+    assert out["status"] == "inconclusive" and "first step's reward" in out["reason"] and out["failing"] == []
+
+
+def test_a_policy_that_raises_is_not_counted_as_the_environment_raising():
+    rows = [_x_row("X0", "full", 1.0, True), _x_row("X1", "zero", 0.0, True)]
+    rows[1]["errors"] = ["policy 'nothing' raised TypeError on turn 1 at adapter.py:12 (def act(messages):)"]
+    head = report.headline(rows)
+    assert head["scoring_errors"] == 0 and head["policy_errors"] == 1
+    broken = [{**r, "score": None, "errors": rows[1]["errors"]} for r in rows]
+    out = report.digest({"meta": {"environment": "t", "max_reward": 1.0}, "results": broken, "static": []})
+    assert out["status"] == "inconclusive" and "the adapter's policies raised" in out["reason"] and "adapter.py" in out["next"]
+
+
+def test_the_digest_keeps_weighted_terms_and_drops_a_flood_of_unweighted_metrics():
+    leaks = [("score", 0.5, 0.1, 1.0)] + [(f"m{i}", 0.1, 0.0, None) for i in range(20)]
+    assert report.digest_terms(leaks) == leaks[:1]
+    few = leaks[:5]
+    assert report.digest_terms(few) == few

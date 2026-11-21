@@ -327,7 +327,26 @@ def classify(sources: dict[str, bytes]) -> dict:
     )
     automatic = generation in ("v0", "v1") and turns in ("single-turn", "multi-turn") and not needs and has_reference
     return {"generation": generation, "turns": turns, "needs": needs, "python_lines": lines,
-            "has_reference": has_reference, "automatic": automatic, "outside_hosts": services}
+            "has_reference": has_reference, "automatic": automatic, "outside_hosts": services,
+            **({"wraps": wraps} if (wraps := wrapped_packages(sources)) and lines < 120 else {})}
+
+
+def wrapped_packages(sources: dict[str, bytes]) -> list[str]:
+    """Top-level packages a short wheel imports its environment from (not the standard library,
+    not verifiers, not its own modules): its tasks and grader live there, out of sight of a
+    reading of the wheel's own source."""
+    import sys
+
+    own = {name.split("/")[0].removesuffix(".py") for name in sources}
+    found: list[str] = []
+    for name, content in sources.items():
+        if not name.endswith(".py"):
+            continue
+        for top in re.findall(r"^\s*(?:from|import)\s+([A-Za-z_]\w*)", content.decode(errors="replace"), re.M):
+            if top not in found and top not in own and top not in sys.stdlib_module_names \
+                    and top not in ("verifiers", "datasets", "openai", "pydantic", "numpy", "__future__"):
+                found.append(top)
+    return found
 
 
 SPACES_API = "https://huggingface.co/api/spaces"

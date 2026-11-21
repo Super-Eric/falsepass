@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from typing import Any
 
@@ -29,7 +30,8 @@ def headline(results: list[dict[str, Any]]) -> dict[str, Any]:
         "false_fail_rate": (sum(not r["passed"] for r in good) / len(good)) if good else None,
         "known_good": len(good),
         "known_bad": len(bad),
-        "scoring_errors": sum(bool(r["errors"]) for r in results),
+        "scoring_errors": sum(bool(r["errors"]) and not policy_raised(r) for r in results),
+        **({"policy_errors": n} if (n := sum(policy_raised(r) for r in results)) else {}),
         "same_as_good": sum(bool(r.get("same_as_good")) for r in results),
         "no_control": sum(bool(r.get("no_control")) for r in results),
         "no_control_tasks": len({r["example"] for r in results if r.get("no_control")}),
@@ -114,6 +116,21 @@ def tools_all_failed(meta: dict[str, Any]) -> dict[str, Any] | None:
     return counts if counts.get("tool_calls") and counts.get("failed") == counts["tool_calls"] else None
 
 
+MAX_UNWEIGHTED_TERMS = 8
+
+
+def digest_terms(leaks: list[tuple[str, float, float, Any]]) -> list[tuple[str, float, float, Any]]:
+    """The digest's reward terms: every weighted one, and unweighted metrics only while they are
+    few (an environment that logs 50 diagnostics would bury the terms that pay)."""
+    weighted = [t for t in leaks if t[3] is not None]
+    return leaks if len(leaks) - len(weighted) <= MAX_UNWEIGHTED_TERMS or not weighted else weighted
+
+
+def policy_raised(row: dict[str, Any]) -> bool:
+    """A row whose first error is the adapter's own policy raising, not the environment."""
+    return bool(row.get("errors")) and str(row["errors"][0]).startswith("policy '")
+
+
 def open_after_one_reply(meta: dict[str, Any]) -> str:
     """A warning when the environment's episodes were still open after the one reply automatic
     mode sends on most rows: it takes several steps, and the rows show the first step's reward."""
@@ -132,9 +149,10 @@ def default_reset(meta: dict[str, Any]) -> str:
     names = meta.get("default_reset") or []
     if not names:
         return ""
+    example = next((n for n in names if re.search(r"task|level|scenario|difficulty|split|name", n)), names[0])
     return (f"reset() takes {', '.join(names)} and no task list named any: every row ran reset()'s default set-up, which may "
             "not be one of the environment's tasks. Find the task names in its README or source, list them in tasks.json next "
-            'to env.toml (a JSON list of reset keyword sets, e.g. [{"' + names[0] + '": ...}]) and audit again')
+            'to env.toml (a JSON list of reset keyword sets, e.g. [{"' + example + '": ...}]) and audit again.')
 
 
 def warnings(meta: dict[str, Any]) -> list[str]:
@@ -259,10 +277,12 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
     elif unscored(payload["results"]):
         rows, none, first = unscored(payload["results"])
         own = first.startswith("could not build trace")
+        policy = first.startswith("policy '")
         extra = {
             "status": "inconclusive",
             "reason": f"{none} of {rows} probe rows produced no score ("
                       + ("falsepass could not build a trace for this taskset's tasks" if own
+                         else "the adapter's policies raised" if policy
                          else "the environment raised or an episode did not finish")
                       + f"), so the numbers say little; first error: {first}",
             "failing_omitted": len(failing),
@@ -270,6 +290,8 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
                      "trace builder expects (often a different verifiers version). Write an adapter that scores through "
                      "the environment's own loader (`falsepass init <target> --manual --force`; MCP: manual=true, "
                      "force=true) and report the error at https://github.com/Super-Eric/falsepass/issues" if own else
+                     "Fix the policy at the line the error names (adapter.py), then audit again; the environment was "
+                     "not at fault on these rows." if policy else
                      "Fix what stops the environment (the error above; `falsepass results <env> --completion <id>` shows a "
                      "row), then audit again. A runtime or packaging error is the environment's set-up, not its grader."),
         }  # fmt: skip
@@ -284,6 +306,19 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
             "next": "Write policies that play the task (`falsepass init <target> --policies --force`; MCP: policies=true, "
                     "force=true). For a reward with no fixed maximum (a cost, a P&L, a game score) give the adapter "
                     "`scale_points(example)` so scores are read against a floor and a reference strategy: "
+                    "https://super-eric.github.io/falsepass/docs/agents/#games-simulations-and-tool-tasks",
+        }  # fmt: skip
+        failing = []
+    elif open_after_one_reply(meta):
+        steps = meta["one_step"]
+        extra = {
+            "status": "inconclusive",
+            "reason": f"the episode was still open after the one reply on {steps['not_done']} of {steps['replies']} rows: "
+                      "every row is the first step's reward of a longer episode, so the ceiling and the rows say how the "
+                      "first step pays, not whether the episode's reward can be gamed",
+            "failing_omitted": len(failing),
+            "next": "Play whole episodes with policies: `falsepass init <target> --policies --force` (MCP: policies=true, "
+                    "force=true), a solver as the control; for a reward with no fixed maximum, `scale_points(example)`: "
                     "https://super-eric.github.io/falsepass/docs/agents/#games-simulations-and-tool-tasks",
         }  # fmt: skip
         failing = []
@@ -313,7 +348,9 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
            if headline(payload["results"])["scoring_errors"] else {}),
         **({"timings": {**meta["timings"], "words": timing_words(meta["timings"])}} if meta.get("timings") else {}),
         **({"reward_terms": [{"term": term, "weight": weight, "nonzero_share": round(share, 3), "mean": round(mean, 6)}
-                             for term, share, mean, weight in leaks]}
+                             for term, share, mean, weight in digest_terms(leaks)],
+            **({"reward_terms_note": f"{len(leaks) - len(digest_terms(leaks))} unweighted metrics left out (they do not "
+                                     "enter the reward); summary.md lists every term"} if len(digest_terms(leaks)) < len(leaks) else {})}
            if (leaks := term_leak(payload["results"], meta.get("weights") or {})) else {}),
         **({"warning": " ".join(warnings(meta))} if warnings(meta) else {}),
         "failing": failing,
@@ -514,7 +551,7 @@ def summary(payload: dict[str, Any]) -> str:
            f"of {solver_failed(results)[0]} tasks**: either the solver is wrong or a correct episode is not paid; read an X0 "
            "episode and the reward code before reading the rows below"] if solver_failed(results) else []),
         *[f"- **Load note:** {note}" for note in meta.get("notes") or []],
-        *[f"- **⚠ {w}**" for w in warnings(meta)],
+        *[f"- **⚠ {'Result inconclusive: ' if w == open_after_one_reply(meta) else ''}{w}**" for w in warnings(meta)],
         *_weight_lines(meta, results),
         f"- **False-pass ceiling:** {_fmt(head['false_pass_ceiling'])} of {_fmt(meta['max_reward'])} "
         f"(highest reward given to a known-bad completion; via {head['false_pass_via']})",
@@ -524,6 +561,8 @@ def summary(payload: dict[str, Any]) -> str:
         f"- **False-fail rate:** {_fmt(head['false_fail_rate'])} "
         f"({head['known_good']} known-good completions)",
         f"- **Completions on which reward code raised or timed out:** {head['scoring_errors']}",
+        *([f"- **Rows whose policy raised (the adapter's code, not the environment):** {head['policy_errors']}"]
+          if head.get("policy_errors") else []),
         *([f"- **Known-bad rows not counted:** {head['same_as_good']} said exactly what a known-good completion said "
            "on the same task (marked passed; left out of the ceiling, counted in the lazy-policy reward, which a fixed "
            "strategy earns on every task)"] if head.get("same_as_good") else []),

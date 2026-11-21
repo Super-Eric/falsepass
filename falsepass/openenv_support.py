@@ -241,8 +241,8 @@ def describe_plan(action_cls: type, plan: dict[str, Any]) -> str:
     parts = [f"a plain reply goes into `{plan['field']}`" if plan["field"] else "no free-text field: replies must be JSON actions"]
     if plan["fills"]:
         parts.append("required fields filled with constants: " + ", ".join(f"{k}={v!r}" for k, v in plan["fills"].items()))
-    defaults = {n: f.default for n, f in fields.items() if n != "metadata" and n != plan["field"] and n not in plan["fills"]
-                and not f.is_required()}  # fmt: skip
+    defaults = {n: f.get_default(call_default_factory=True) for n, f in fields.items() if n != "metadata"
+                and n != plan["field"] and n not in plan["fills"] and not f.is_required()}  # fmt: skip
     if defaults:
         parts.append("other fields keep their defaults: " + ", ".join(f"{k}={getattr(v, 'value', v)!r}" for k, v in list(defaults.items())[:8]))
     if plan["decision_text"]:

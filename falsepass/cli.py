@@ -392,9 +392,14 @@ def breaks_rule(example):
 async def policy_probes(adapter, scorer, ex):
     found = [await check("X0", "control", "solver", Expect.FULL, solver(ex), adapter, scorer, ex)]
     found.append(await check("X1", "policy", "gives_up", Expect.ZERO, gives_up(ex), adapter, scorer, ex, answer_free=True))
+    # Under a reward that measures an outcome (scale_points set: a simulation, a game score), a
+    # fixed strategy keeps what it really achieves: its rows are read as a mean, not as false passes.
+    fixed = Expect.LAZY if adapter.scale_points else Expect.ZERO
     for name, policy in exploits(ex).items():
-        found.append(await check("X1", "policy", name, Expect.ZERO, policy, adapter, scorer, ex, answer_free=True))
+        found.append(await check("X1", "policy", name, fixed, policy, adapter, scorer, ex, answer_free=True))
     for name, policy in breaks_rule(ex).items():
+        # Under per-rule partial credit, judge against the solver on the same task instead:
+        # Expect.BELOW_REFERENCE with reference=found[0].score
         found.append(await check("X3", "rule", name, Expect.ZERO, policy, adapter, scorer, ex))
     return found
 
@@ -402,6 +407,10 @@ async def policy_probes(adapter, scorer, ex):
 class Env(Adapter):
     name = "{id}"
     max_reward = 1.0  # what the solver earns; set it to the real figure once the X0 control rows show it
+    # A reward with no fixed scale (a cost, a simulation's service level, a game score): define
+    # scale_points(self, example) -> (floor policy, reference policy), e.g. (gives_up(example),
+    # solver(example)); every score is then reported from 0 (floor) to 1 (reference), and the
+    # exploits are read as fixed strategies (their mean), since they keep what they achieve.
     tool_mode = True  # played with policies: no text probes
     episode_probes = [policy_probes]
 
@@ -737,7 +746,11 @@ def scaffold(args) -> int:
         print(f"falsepass: kept the existing {audit_dir}/adapter.py (delete it first for a fresh skeleton)", file=sys.stderr)
     args.manual = args.manual or args.policies
     why = ""
-    if kind and not kind["automatic"]:
+    if kind and kind.get("wraps"):  # the grader is in a dependency: reading the wheel says nothing either way
+        kind = {**kind, "automatic": None}
+        why = (f"the package is a short wrapper around {', '.join(kind['wraps'][:3])}: its tasks and grader live there, so "
+               "reading its source cannot tell; run the audit to see (the static scan reads only the wrapper)")
+    elif kind and not kind["automatic"]:
         why = ", ".join([*kind["needs"], *([] if kind["has_reference"] else ["no reference answer found in the source"]),
                          *([] if kind["turns"] != "unknown" else ["turn structure not recognised"])])  # fmt: skip
     if args.json:
