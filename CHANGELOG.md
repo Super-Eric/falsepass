@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.16.0 — 2026-11-21
 
 - Policy adapters: `falsepass.policies.sequential(name, solve)` plays a step-by-step solver (`solve(prompt, use)`, calling the tools one at a time, as many packages ship) as a policy: on each turn it replays `solve` against the tool results so far and sends the next call, then the final answer. A solver whose own `except Exception` fallback would swallow the next call still works, and one that calls different tools on replay is named. Two adapters written by hand had needed about 30 lines each for this.
 - `check()` judges `Expect.BELOW_REFERENCE` for any row: a wrong episode under per-rule partial credit must earn less than the solver on the same task (`reference=` a number such as the X0 row's score, a completion or policy to score, or by default the adapter's rendering of the answer). Before, an adapter had to re-judge a row by hand. The v1 policy skeleton shows it.
