@@ -408,6 +408,9 @@ class Env(Adapter):
     def load(self, n, seed):
         global SCORER
         SCORER, examples, found = open_episodes(HERE, n, seed, REWARD)
+        # Policies read each observation's text fields, plus its other fields as JSON when they hold
+        # numbers. If the environment has its own text form of an observation, use that instead:
+        # SCORER.render_observation = lambda observation: observation.to_prompt()
         self.loader = found["loader"]  # how `falsepass repro` replays the same tasks
         self.load_notes = found["notes"]  # how tasks were found, and anything odd about the environment
         self.walk_capped = found["walk_capped"]  # reset() may hand out more tasks than were collected
@@ -480,7 +483,10 @@ def refusing_is_right(example):
 
 
 def solver(example):
-    """Known-good: does the task properly from its own data. Should earn the maximum."""
+    """Known-good: does the task properly from its own data. Should earn the maximum.
+    A package's own step-by-step solver (`solve(prompt, use)`, calling the tools one at a
+    time) plays as is: `return sequential("solver", lambda prompt, use: solve(prompt, use))`
+    (from falsepass.policies import sequential)."""
     def act(messages, tools):
         raise NotImplementedError("TODO: e.g. `return call(...) if turn(messages) == 0 else 'Done.'`")
     return Policy("solver", act, wants_tools=True)
@@ -508,6 +514,10 @@ async def policy_probes(adapter, scorer, ex):
     fixed = Expect.LAZY if refusing_is_right(ex) or adapter.scale_points else Expect.ZERO
     for name, policy in exploits(ex).items():
         found.append(await check("X1", "policy", name, fixed, policy, adapter, scorer, ex, answer_free=True))
+    # Under per-rule partial credit, a wrong episode (a forbidden step, then the right run) may
+    # keep some reward: judge it against the solver on the same task, not against zero:
+    # found.append(await check("X2", "wrong_episode", "forbidden_then_correct", Expect.BELOW_REFERENCE,
+    #                          policy, adapter, scorer, ex, reference=found[0].score))
     return found
 
 

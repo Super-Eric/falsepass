@@ -613,6 +613,20 @@ def test_text_episodes_take_several_steps_and_sum_or_keep_the_last_reward(tmp_pa
         openenv_support.OpenEnvEpisodeScorer(None, object, {}, reward="mean")
 
 
+def test_policies_see_the_numbers_an_observation_carries_beside_its_labels():
+    stock = {"day": 3, "step_count": 3, "skus": [{"sku_id": "insulin", "storage": "cold", "on_hand": 3.8, "demand": 7}],
+             "done": False, "reward": 0.2, "metadata": {"fill": 0.9}}
+    text = openenv_support.with_data(openenv_support.episode_text(stock), stock)
+    assert text.startswith("cold") and '"on_hand": 3.8' in text and '"sku_id": "insulin"' in text and "metadata" not in text
+    plain = {"prompt": "Guess my number.", "attempt": 2, "episode_id": 7, "done": False, "reward": None}
+    assert openenv_support.with_data(openenv_support.episode_text(plain), plain) == "Guess my number."  # counters and ids only
+    numbers_only = {"x": 1.5, "y": 2, "done": False}
+    assert openenv_support.with_data(openenv_support.episode_text(numbers_only), numbers_only) == '{"x": 1.5, "y": 2}'
+    scorer = openenv_support.OpenEnvEpisodeScorer(None, object, {})
+    scorer.render_observation = lambda observation: f"day {observation['day']}"
+    assert scorer.view(stock, first=True) == "day 3"
+
+
 def test_a_step_override_the_server_never_calls_is_named(monkeypatch):
     pytest.importorskip("openenv")
     pytest.importorskip("fastmcp")

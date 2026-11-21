@@ -24,6 +24,7 @@ import threading
 import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 
 from falsepass.model import Completion, Example, Policy, Score
@@ -68,10 +69,31 @@ def plain_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+class PolicyError(RuntimeError):
+    """A policy raised: the message names the policy, the turn and the line."""
+
+
+def policy_failure(name: str, turn: int, exc: BaseException) -> str:
+    """`policy 'solver' raised StopIteration on turn 3 at adapter.py:88 (return next(results))`:
+    the innermost frame outside falsepass, so the adapter's own line."""
+    import linecache
+    import traceback
+
+    frames = [f for f in traceback.extract_tb(exc.__traceback__) if "/falsepass/" not in f.filename.replace("\\", "/")]
+    where = ""
+    if frames:
+        frame = frames[-1]
+        line = (frame.line or linecache.getline(frame.filename, frame.lineno or 0)).strip()
+        where = f" at {Path(frame.filename).name}:{frame.lineno}" + (f" ({line})" if line else "")
+    detail = str(exc).strip()
+    return f"policy {name!r} raised {type(exc).__name__}{': ' + detail if detail else ''} on turn {turn + 1}{where}"
+
+
 class Player:
     """One episode's policy: what it is asked, what it answers, and how often."""
 
     def __init__(self, completion: Completion, cap: int = TURN_CAP) -> None:
+        self.name = completion.name if isinstance(completion, Policy) else "script"
         if isinstance(completion, Policy):
             self.act, self.wants_tools, self.script = completion.act, completion.wants_tools, None
         else:
@@ -88,7 +110,10 @@ class Player:
             entry = self.script[min(self.calls, len(self.script) - 1)]
         else:
             plain = plain_messages(messages)
-            entry = self.act(plain, [tool_schema(t) for t in tools]) if self.wants_tools else self.act(plain)
+            try:
+                entry = self.act(plain, [tool_schema(t) for t in tools]) if self.wants_tools else self.act(plain)
+            except Exception as exc:
+                raise PolicyError(policy_failure(self.name, self.calls, exc)) from exc
         entry = {"content": entry} if isinstance(entry, str) else dict(entry)
         self.calls += 1
         reply = {"content": entry.get("content") or ""}
@@ -125,7 +150,7 @@ class PolicyEndpoint:
                 try:
                     reply = player.next(body.get("messages") or [], body.get("tools") or [])
                 except Exception as exc:  # noqa: BLE001 - a policy error ends the episode, visibly
-                    player.error = f"{type(exc).__name__}: {exc}"
+                    player.error = str(exc) if isinstance(exc, PolicyError) else f"{type(exc).__name__}: {exc}"
                     return self._send(400, {"error": {"message": f"falsepass policy error: {player.error}"}})
                 self._answer(body, reply, player.calls)
 
@@ -256,6 +281,7 @@ class V1EpisodeScorer:
     multi_turn = True
     concurrent_safe = True
     episodes_independent = True  # verifiers builds each episode's state afresh; vf-eval runs them concurrently too
+    through_chat_api = True  # replies reach the harness as chat-completions JSON: a lone surrogate cannot be sent
 
     def __init__(self, taskset: str, load_args: dict[str, Any] | None = None, runtime: str = "subprocess",
                  args: list[str] | None = None, network: bool | list[str] = False) -> None:  # fmt: skip
@@ -315,8 +341,8 @@ class V1EpisodeScorer:
         trace = episode.traces[0] if episode.traces else None
         if trace is not None:
             errors += [f"{e.type}: {e.message}"[:800] if hasattr(e, "message") else str(e)[:800] for e in trace.errors]
-        if player.error and not any(player.error in e for e in errors):
-            errors.append(player.error)
+        if player.error:  # the policy's own failure first: the harness reports it only as an upstream 400
+            errors = [player.error, *[e for e in errors if player.error[:200] not in e]]
         info = self._info(player, trace)
         if trace is None or not episode.ok:
             return Score(None, {}, errors or ["the episode did not finish"], info)

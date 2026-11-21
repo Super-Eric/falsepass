@@ -255,6 +255,7 @@ def run(
             "adapter": getattr(adapter, "inferred", None) or "hand-written",
             **({"notes": list(adapter.load_notes)} if not getattr(adapter, "inferred", None) and getattr(adapter, "load_notes", None) else {}),
             **({"tool_calls": dict(scorer.counts)} if (getattr(scorer, "counts", None) or {}).get("tool_calls") else {}),
+            **({"default_reset": list(scorer.default_reset)} if getattr(scorer, "default_reset", None) else {}),
             **({"one_step": dict(scorer.steps)} if not getattr(scorer, "multi_turn", False) and (getattr(scorer, "steps", None) or {}).get("replies") else {}),
             **({"source": os.environ["FALSEPASS_AUDIT_SOURCE"]} if os.environ.get("FALSEPASS_AUDIT_SOURCE") else {}),
             "loader": getattr(adapter, "loader", None),

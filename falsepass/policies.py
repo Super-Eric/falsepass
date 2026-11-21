@@ -11,6 +11,10 @@ encode what found real holes when environments were played by hand:
   for NaN).
 
 Use them from an adapter's `exploits()` (see `falsepass init --policies`).
+
+`sequential` turns a step-by-step solution (many packages ship one: a function that calls
+the tools one at a time and returns the answer) into a policy, for the solver (X0) and for
+its broken variants.
 """
 
 from __future__ import annotations
@@ -89,3 +93,60 @@ def special_numbers(script: list[str]) -> dict[str, list[dict[str, str]]]:
         if last != script[-1]:
             variants[name] = [{"role": "assistant", "content": text} for text in [*script[:-1], last]]
     return variants
+
+
+class _NeedsTool(BaseException):  # not Exception: a solver's own `except Exception` must not catch it
+    def __init__(self, name: str, arguments: dict[str, Any]) -> None:
+        super().__init__(name)
+        self.name, self.arguments = name, arguments
+
+
+def _result(text: str) -> Any:
+    import json
+
+    try:
+        return json.loads(text)
+    except ValueError:
+        return text
+
+
+def sequential(name: str, solve: Callable[[str, Callable[..., Any]], Any], final: Callable[[Any], str] | None = None) -> Policy:
+    """A policy from a step-by-step solution `solve(prompt, use)`: `use(tool, arguments)`
+    returns that tool's result (parsed as JSON when it is JSON) and `solve` returns the final
+    answer. On every turn `solve` runs again from the start against the tool results so far;
+    the first call with no result yet becomes the policy's next tool call, and once every call
+    has its result, the answer is the final reply (`final(answer)`; default: the text, or
+    JSON for anything else). `solve` must call the same tools in the same order when given
+    the same results (no randomness, no clock); a different call on replay raises.
+
+        solver = sequential("solver", lambda prompt, use: package.solve({"prompt": prompt}, use))
+    """
+    import json
+
+    def act(messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> Any:
+        prompt = next((str(m.get("content") or "") for m in messages if m.get("role") == "user"), "")
+        made = [c for m in messages if m.get("role") == "assistant" for c in m.get("tool_calls") or []]
+        results = [_result(str(m.get("content") or "")) for m in messages if m.get("role") == "tool"]
+        position = 0
+
+        def use(tool: str, arguments: dict[str, Any] | None = None, **keywords: Any) -> Any:
+            nonlocal position
+            arguments = {**(arguments or {}), **keywords}
+            if position >= len(results):
+                raise _NeedsTool(tool, arguments)
+            if position < len(made) and made[position].get("name") != tool:
+                raise RuntimeError(f"sequential policy {name!r}: call {position + 1} was {made[position].get('name')!r} "
+                                   f"before and is {tool!r} now; solve() must repeat its calls when replayed")  # fmt: skip
+            position += 1
+            return results[position - 1]
+
+        try:
+            answer = solve(prompt, use)
+        except _NeedsTool as need:
+            return {"content": "", "tool_calls": [{"name": need.name, "arguments": need.arguments}]}
+        if final is not None:
+            return final(answer)
+        return answer if isinstance(answer, str) else json.dumps(answer, ensure_ascii=False, default=str)
+
+    return Policy(name, act, wants_tools=True)
+

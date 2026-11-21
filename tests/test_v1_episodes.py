@@ -13,7 +13,7 @@ import pytest
 
 from falsepass import cli
 from falsepass.model import Example, Expect, Policy, ProbeResult
-from falsepass.v1_episodes import Player, PolicyEndpoint, plain_messages
+from falsepass.v1_episodes import PolicyError, Player, PolicyEndpoint, plain_messages
 
 TOY = Path(__file__).resolve().parent.parent / "examples" / "v1-tool-toy"
 
@@ -61,6 +61,21 @@ def test_a_script_repeats_its_last_line_a_broken_policy_and_the_turn_cap_are_err
         for _ in range(100):
             endless.next([], [])
     assert plain_messages([{"role": "assistant", "content": None}]) == [{"role": "assistant", "content": ""}]
+
+
+def test_a_policy_that_raises_is_named_with_its_turn_and_line():
+    def act(messages):
+        if messages:
+            return next(iter([]))
+        return "first"
+
+    broken = Player(Policy("solver", act))
+    assert broken.next([], [])["content"] == "first"
+    with pytest.raises(PolicyError) as raised:
+        broken.next([{"role": "user", "content": "x"}], [])
+    message = str(raised.value)
+    assert message.startswith("policy 'solver' raised StopIteration on turn 2 at test_v1_episodes.py:")
+    assert "(return next(iter([])))" in message
 
 
 def test_tool_rows_on_refusal_tasks_are_not_counted():
@@ -271,3 +286,36 @@ def test_vf_compat_follows_the_runtime_api_of_each_release(monkeypatch):
 
     assert vf_compat.no_push_args(WithPush) == ["--no-push"] and vf_compat.no_push_args(WithoutPush) == []
 
+
+
+def test_a_one_turn_taskset_with_its_own_loop_and_no_tools_gets_the_text_probes(monkeypatch):
+    from types import SimpleNamespace
+
+    from falsepass import auto, v1_episodes
+    from falsepass.model import Score
+
+    class Quiz:  # a task whose own episode loop takes one reply and offers no tools
+        def __init__(self, answer):
+            self.data = SimpleNamespace(prompt_text="Which flag?", answer=answer)
+
+    class OneTurn:
+        turns = 1
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def score(self, example, completion):
+            return Score(1.0 if completion == example.answer else 0.0, info={"turns": self.turns, "tools": []})
+
+        async def close(self):
+            pass
+
+    monkeypatch.setattr(v1_episodes, "V1EpisodeScorer", OneTurn)
+    host = SimpleNamespace(module="quiz", load_args={}, load_notes=[], loader=None)
+    single = auto.AutoAdapter._v1_single_turn_episodes
+    scorer, pool, _ = single(host, [Quiz("-y"), Quiz("-c")], ["its own episode loop (QuizEnv)"], "subprocess", [], False)
+    assert isinstance(scorer, OneTurn) and [e.answer for e in pool] == ["-y", "-c"]
+    assert "one-turn episodes" in host.load_notes[0] and "`answer` field" in host.load_notes[0]
+    assert single(host, [Quiz(""), Quiz("")], ["loop"], "subprocess", [], False) is None  # no reference: stays on episodes
+    OneTurn.turns = 2  # the reference reply does not end the episode: a game, not a quiz
+    assert single(host, [Quiz("-y")], ["loop"], "subprocess", [], False) is None

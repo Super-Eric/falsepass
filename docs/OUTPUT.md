@@ -38,8 +38,9 @@ Everything an audit writes lives in `audits/<env>/` (or the folder given with `-
   the same score), `at_most_reference` (must not beat the concise correct answer), `lazy`
   (a fixed strategy that is right on some tasks by chance, such as O1's constant decision:
   the row never fails; only the mean of its rows, the lazy-policy reward, is read),
-  `below_reference` (a changed value, such as P17's denied field: must earn less than the
-  reference earns on the same task).
+  `below_reference` (a changed value, such as P17's denied field, or an adapter's wrong
+  episode judged with `check(..., Expect.BELOW_REFERENCE, reference=...)`: must earn less
+  than the reference earns on the same task).
 - `passed`: whether the grader did what `expected` asks.
 - `meta.scale` (only when the adapter defines `scale_points`, for a reward with no fixed
   scale): `{"kind": "reference-relative", "floor": "…", "reference": "…", "tasks": 24,
@@ -106,7 +107,9 @@ finished run of task-blind policies (no control) adds `facts_that_hold`, `not_co
 
 Also in the digest when they apply: `meta.notes` (a hand-written adapter's load notes),
 `meta.source` (the audit ran on a patched copy), and `warning` (automatic mode left the
-episode open after its one reply on most rows: the environment takes several steps). A
+episode open after its one reply on most rows: the environment takes several steps; or an
+OpenEnv `reset()` takes keywords that pick a task, listed in `meta.default_reset`, and no
+`tasks.json` named any, so every row ran the environment's default set-up). A
 policy run whose tool calls all failed, or whose solver (X0) earned less than the maximum on
 at least half the tasks, is `inconclusive`; probe-results.json keeps the counts under
 `meta.tool_calls` (`tool_calls`, `failed`, `first_failure`).

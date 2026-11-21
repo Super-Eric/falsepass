@@ -444,8 +444,12 @@ class AutoAdapter(Adapter):
                 f"finish: {'; '.join(tried.errors)[:600]}.{blocked} Other options: `runtime = \"docker\"` in env.toml, extra "
                 "vf-eval options as `vf_args = [...]` there, or write an adapter (falsepass init <env> --force --policies)"
             )
-        self.tool_mode, self.multi_turn = True, True
         tools = tried.info.get("tools") or []
+        if not tools and tried.info.get("turns") == 1 and "scripted user" not in " ".join(reasons):
+            single = self._v1_single_turn_episodes(tasks, reasons, runtime, args, network)
+            if single is not None:
+                return single
+        self.tool_mode, self.multi_turn = True, True
         if not tools:  # answered in text: answer-free replies are played as fixed replies too
             from falsepass import probes
 
@@ -462,6 +466,44 @@ class AutoAdapter(Adapter):
             self.load_notes.append(f"outside hosts named in the source ({', '.join(hosts[:8])}) were blocked during episodes "
                                    f"{'except ' + ', '.join(network) + ' ' if network else ''}(HTTP(S) proxies set to a closed port)")
         pool = [Example(f"task-{i}", t.data.prompt_text or (scripted_user_turns(t.data) or [""])[0], str(getattr(t.data, "answer", "") or ""), t) for i, t in enumerate(tasks)]
+        self.loader = {"kind": "v1-episode", "module": self.module, "load_args": self.load_args, "runtime": runtime, "args": args,
+                       "network": network}
+        system = getattr(tasks[0].data, "system_prompt", None) or ""
+        return V1EpisodeScorer(self.module, self.load_args, runtime, args, network), pool, (f"{system}\n{tasks[0].data.prompt_text}", None)
+
+    def _v1_single_turn_episodes(self, tasks: list[Any], reasons: list[str], runtime: str, args: list[str],
+                                 network: Any) -> tuple[Scorer, list[Example], tuple[str, Any]] | None:  # fmt: skip
+        """A taskset with its own episode loop that offers no tools and stops after one reply
+        (a quiz served through a custom `Env`): read the reference as for a single-turn taskset
+        and run the text probes, each reply sent as the episode's only message. None when the
+        tasks hold no reference or the reference reply does not also end the episode in one turn."""
+        from falsepass.v1_episodes import V1EpisodeScorer
+
+        extra = tuple(v1_reward_fields(tasks[0])) if tasks else ()
+        references = [v1_reference(t.data, extra) for t in tasks]
+        if not tasks or sum(bool(r[0].strip()) for r in references) * 2 <= len(tasks):
+            return None
+        scorer = V1EpisodeScorer(self.module, self.load_args, runtime, args, network)
+        first = next(i for i, r in enumerate(references) if r[0].strip())
+        example = Example(f"task-{first}", tasks[first].data.prompt_text or "", references[first][0], tasks[first])
+
+        async def control() -> Score:
+            try:
+                return await scorer.score(example, example.answer)
+            finally:
+                await scorer.close()
+
+        tried = asyncio.run(control())
+        if tried.reward is None or tried.info.get("turns") != 1 or tried.info.get("tools"):
+            return None
+        field = references[first][1]
+        self.load_notes.append(
+            f"played as one-turn episodes through the taskset's own loop ({'; '.join(reasons)}; no tools, and the episode ends "
+            f"after one reply): each reply is the episode's only message; the reference is the task data's `{field}` field "
+            f"(the reference reply scored {tried.reward:g} on {example.key}); check that the control (P1) scores full before "
+            "reading the rows"
+        )
+        pool = [Example(f"task-{i}", t.data.prompt_text or "", r[0], t) for i, (t, r) in enumerate(zip(tasks, references))]
         self.loader = {"kind": "v1-episode", "module": self.module, "load_args": self.load_args, "runtime": runtime, "args": args,
                        "network": network}
         system = getattr(tasks[0].data, "system_prompt", None) or ""

@@ -125,6 +125,22 @@ def open_after_one_reply(meta: dict[str, Any]) -> str:
     return ""
 
 
+def default_reset(meta: dict[str, Any]) -> str:
+    """A warning when an OpenEnv environment's reset() takes keywords that pick a task and no
+    task list named any: every row ran reset()'s own default set-up, which may be none of the
+    environment's documented tasks (a large starting stock, an easy level)."""
+    names = meta.get("default_reset") or []
+    if not names:
+        return ""
+    return (f"reset() takes {', '.join(names)} and no task list named any: every row ran reset()'s default set-up, which may "
+            "not be one of the environment's tasks. Find the task names in its README or source, list them in tasks.json next "
+            'to env.toml (a JSON list of reset keyword sets, e.g. [{"' + names[0] + '": ...}]) and audit again')
+
+
+def warnings(meta: dict[str, Any]) -> list[str]:
+    return [w for w in (default_reset(meta), open_after_one_reply(meta)) if w]
+
+
 def solver_failed(results: list[dict[str, Any]]) -> tuple[int, int] | None:
     """(tasks, failed) of an adapter's solver (X0, the control) when it earned less than the
     maximum on at least half of them: either the solver is wrong or a correct episode is not
@@ -299,7 +315,7 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
         **({"reward_terms": [{"term": term, "weight": weight, "nonzero_share": round(share, 3), "mean": round(mean, 6)}
                              for term, share, mean, weight in leaks]}
            if (leaks := term_leak(payload["results"], meta.get("weights") or {})) else {}),
-        **({"warning": open_after_one_reply(meta)} if open_after_one_reply(meta) else {}),
+        **({"warning": " ".join(warnings(meta))} if warnings(meta) else {}),
         "failing": failing,
         "static_hints": [{k: h[k] for k in ("rule", "file", "line", "evidence", "meaning", "verdict") if k in h}
                          for h in payload.get("static", [])],  # fmt: skip
@@ -498,7 +514,7 @@ def summary(payload: dict[str, Any]) -> str:
            f"of {solver_failed(results)[0]} tasks**: either the solver is wrong or a correct episode is not paid; read an X0 "
            "episode and the reward code before reading the rows below"] if solver_failed(results) else []),
         *[f"- **Load note:** {note}" for note in meta.get("notes") or []],
-        *([f"- **⚠ {open_after_one_reply(meta)}**"] if open_after_one_reply(meta) else []),
+        *[f"- **⚠ {w}**" for w in warnings(meta)],
         *_weight_lines(meta, results),
         f"- **False-pass ceiling:** {_fmt(head['false_pass_ceiling'])} of {_fmt(meta['max_reward'])} "
         f"(highest reward given to a known-bad completion; via {head['false_pass_via']})",

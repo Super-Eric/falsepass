@@ -226,6 +226,16 @@ writes a v1 skeleton. Policies there are `act(messages, tools)`: messages carry
 - `solver(example)`: does the task from its own data (`example.raw.data`, the fields the
   grader compares against). It should earn the maximum; set `max_reward` to what it earns.
   Its rows are the control, `X0 control/solver`, kept apart from the known-bad `X1` rows.
+  When the package ships a step-by-step solver that calls the tools one at a time
+  (`solve(prompt, use)`), `falsepass.policies.sequential("solver", solve)` plays it as a
+  policy: on each turn it replays the solver against the tool results so far and sends the
+  next call, then the final answer. The same works for broken variants of the solver.
+- Wrong episodes under per-rule partial credit (a forbidden step, then the correct run): a
+  grader that pays each rule separately keeps some reward for them, so judge them with
+  `Expect.BELOW_REFERENCE` and `reference=found[0].score` (the solver's score on the same
+  task) instead of `Expect.ZERO`; the row passes when it earns less than the solver.
+- A policy that raises shows as `policy 'solver' raised StopIteration on turn 3 at
+  adapter.py:88 (...)`, the first error of that row.
 - `refusing_is_right(example)`: true for tasks where the correct episode moves nothing (a
   scam to refuse, a request to decline). Known-bad policies are not judged there, and
   T5/T6 rows on those tasks are marked `no_control` instead of counting as false passes.
@@ -435,7 +445,12 @@ What to check in the results and how to steer the run:
   `source`); a hand-written `repro.py` for an OpenEnv folder reads the patched folder from
   `$FALSEPASS_SOURCE` (unset: the original); the audit records it (`meta.source`) and a patched repro is stored apart from the
   unpatched output. In automatic mode, an environment whose episode is still open after the
-  one reply gets a `warning`: it takes several steps, so play it with policies.
+  one reply gets a `warning`: it takes several steps, so play it with policies. So does one
+  whose `reset()` takes keywords that pick a task (`task_name`, `level`) when no `tasks.json`
+  named any: every row then ran the default set-up, which may be none of the documented tasks.
+  In a policy episode, each observation reaches the policy as its text fields plus, when they
+  leave numbers out, its other fields as JSON; an adapter can set
+  `SCORER.render_observation` to the environment's own text form instead.
 - **Git LFS.** A shallow clone of a Space leaves pointer files where its data should be; `init`
   fetches each one from the Space and checks its sha256, and names any it could not fetch.
   The environment class is read from the served app (what `create_app` was given); when

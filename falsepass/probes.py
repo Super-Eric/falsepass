@@ -93,13 +93,27 @@ async def check(
     scorer: Scorer,
     example: Example,
     answer_free: bool = False,
+    reference: float | Completion | None = None,
 ) -> ProbeResult:
+    """Score `completion` on `example` and judge it against `expected`. For
+    `Expect.BELOW_REFERENCE` (a changed or partly wrong answer under a grader that gives
+    partial credit), `reference` is what the correct answer earns on this task: a number (the
+    X0 row's score), a completion or policy to score, or None for `adapter.render(answer)`."""
     if not wanted(probe, variant):
         return ProbeResult(probe, name, variant, example.key, expected, None, True, SKIPPED, answer_free=answer_free)
     score = await scorer.score(example, completion)
-    passed = judge(expected, score.reward, adapter, "" if probe == "P1" else example.key,
-                   0.0 if probe == "P6" else getattr(adapter, "format_floor", 0.0))
-    detail = "" if passed else f"expected {expected.value}, got {score.reward}"
+    if expected is Expect.BELOW_REFERENCE:
+        if reference is None:
+            reference = adapter.render(example.answer, example)
+        if not isinstance(reference, (int, float)) or isinstance(reference, bool):
+            reference = (await scorer.score(example, reference)).reward
+        passed = score.reward is not None and reference is not None and score.reward < reference - EPS
+        detail = "" if passed else (f"the reference earns {reference:g} and this {score.reward}" if reference is not None
+                                    else "the reference could not be scored")  # fmt: skip
+    else:
+        passed = judge(expected, score.reward, adapter, "" if probe == "P1" else example.key,
+                       0.0 if probe == "P6" else getattr(adapter, "format_floor", 0.0))
+        detail = "" if passed else f"expected {expected.value}, got {score.reward}"
     return ProbeResult(
         probe, name, variant, example.key, expected, score.reward, passed,
         detail, preview(completion), score.metrics, score.errors, answer_free,
@@ -653,6 +667,8 @@ async def p10_exception_path(adapter: Adapter, scorer: Scorer, ex: Example) -> l
     """Malformed output must score zero without the reward code raising."""
     results = []
     for variant, done in MALFORMED.items():
+        if variant == "lone_surrogate" and getattr(scorer, "through_chat_api", False):
+            continue  # no model can send one through a chat API, and the harness's client fails on it before any reward code
         result = await check("P10", "exception_path", variant, Expect.ZERO, done, adapter, scorer, ex)
         if result.errors:  # scored 0 only because an exception was swallowed, or not at all
             result.passed = False

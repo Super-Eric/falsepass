@@ -35,12 +35,16 @@ Q&A environment whose answer format can't be inferred, `--manual` writes a simpl
 A `verifiers.v1` tool or multi-turn taskset needs no adapter to start: automatic mode plays
 generic tool policies (T5, T6) as whole episodes through the taskset's own loop; for a
 solver as the control and task-aware exploits, `--policies` writes a v1 skeleton. T5/T6
-rows on tasks where refusing is right are marked `no_control` and not counted.
+rows on tasks where refusing is right are marked `no_control` and not counted. A package's
+own step-by-step solver plays as the control through `falsepass.policies.sequential`; wrong
+episodes under per-rule partial credit are judged `Expect.BELOW_REFERENCE` against it.
 An OpenEnv tool environment (MCP `CallToolAction`), or one whose reward comes after several
 steps, takes `--policies` too: the skeleton's policies play whole episodes through the
 environment's own `reset()` and `step()`, tool calls included. Read the summary's `Load note:`
 lines first (a `step()` the server never runs, random task draws, a failed tool listing); a
-Space that reads a data path from the environment takes `init --var NAME=VALUE`.
+Space that reads a data path from the environment takes `init --var NAME=VALUE`. A `warning`
+that `reset()` takes task keywords means every row ran the default set-up: list the
+documented tasks in `tasks.json` before reading the rows.
 
 ## 2. Read the results
 

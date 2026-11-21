@@ -348,3 +348,6 @@ def test_episodes_left_open_after_one_reply_are_said():
     out = report.digest({"meta": meta, "results": rows, "static": []})
     assert "takes several steps" in out["warning"] and "--policies" in out["warning"]
     assert "warning" not in report.digest({"meta": {**meta, "one_step": {"replies": 10, "not_done": 1}}, "results": rows, "static": []})
+    both = report.digest({"meta": {**meta, "default_reset": ["task_name", "level"]}, "results": rows, "static": []})
+    assert both["warning"].startswith("reset() takes task_name, level") and '[{"task_name": ...}]' in both["warning"]
+    assert "takes several steps" in both["warning"]

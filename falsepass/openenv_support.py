@@ -265,6 +265,7 @@ class OpenEnvScorer:
         self.lock = asyncio.Lock()
         self.retries = 3  # resets to find the recorded task again when reset() draws tasks at random; set from the pool size
         self.steps = {"replies": 0, "not_done": 0}  # one reply per score: an episode still open after it takes several steps
+        self.default_reset: list[str] = []  # reset() keywords that pick a task, when no task list named them
 
     @property
     def weights(self) -> dict[str, float]:
@@ -429,6 +430,36 @@ def episode_text(observation: Any) -> str:
     return json.dumps(rest, ensure_ascii=False, default=str) if rest else ""
 
 
+def _shown_data(observation: Any) -> dict[str, Any]:
+    """The observation's fields a model would need beyond its text: everything but `done`,
+    `reward` and `metadata`, when some number in it is not a counter or an identifier (stock
+    levels, prices, positions). Empty when the text fields already carry everything."""
+    data = observation.model_dump() if hasattr(observation, "model_dump") else observation if isinstance(observation, dict) else {}
+    if not isinstance(data, dict):
+        return {}
+    rest = {k: v for k, v in data.items() if k not in ("done", "reward", "metadata") and v not in (None, "", [], {})}
+
+    def numbers(value: Any, key: str) -> bool:
+        if isinstance(value, dict):
+            return any(numbers(v, str(k)) for k, v in value.items())
+        if isinstance(value, (list, tuple)):
+            return any(numbers(v, key) for v in value)
+        return isinstance(value, (int, float)) and not isinstance(value, bool) and not COUNTER_KEY.search(key) \
+            and not ID_KEY.search(key)
+
+    return rest if any(numbers(v, str(k)) for k, v in rest.items()) else {}
+
+
+def with_data(text: str, observation: Any) -> str:
+    """`text` plus the observation's other fields as JSON when they hold numbers the text
+    fields leave out (a policy must see the state it acts on)."""
+    rest = _shown_data(observation)
+    if not rest or isinstance(_json_object(text.strip()), dict):  # nothing left out, or the text is already the fields as JSON
+        return text
+    dump = json.dumps(rest, ensure_ascii=False, default=str)
+    return f"{text}\n\n{dump}" if text.strip() else dump
+
+
 def tool_failed(observation: Any) -> bool:
     """openenv's `error`, or a Space's own `success=False` / `error_message`."""
     return getattr(observation, "error", None) is not None or getattr(observation, "success", True) is False \
@@ -495,6 +526,16 @@ class OpenEnvEpisodeScorer(OpenEnvScorer):
         self.reward_mode = reward
         self._tools: list[dict[str, Any]] | None = None
         self.counts = {"tool_calls": 0, "failed": 0, "first_failure": ""}  # over the whole run: every call failing is a set-up problem
+        # An adapter may set this to the environment's own text form of an observation (e.g.
+        # `lambda observation: observation.to_prompt()`); by default the text fields, plus the
+        # other fields as JSON when they hold numbers the text leaves out.
+        self.render_observation: Any = None
+
+    def view(self, observation: Any, first: bool = False) -> str:
+        """What the policy reads for an observation: the task (first) or the next observation."""
+        if self.render_observation is not None:
+            return str(self.render_observation(observation))
+        return with_data(observation_text(observation) if first else episode_text(observation), observation)
 
     def tool_action_class(self) -> type | None:
         if is_tool_action(self.action_cls):
@@ -559,7 +600,7 @@ class OpenEnvEpisodeScorer(OpenEnvScorer):
             async with self.lock:
                 observation = await self.reset(example)
                 tools = await self.tools() if tool_cls is not None else []
-                messages.append({"role": "user", "content": observation_text(observation)})
+                messages.append({"role": "user", "content": self.view(observation, first=True)})
                 env = self.environment()
                 while not state["stop"]:
                     reply = player.next(messages, tools)  # raises at the cap: "rollout did not stop after N model turns"
@@ -600,7 +641,7 @@ class OpenEnvEpisodeScorer(OpenEnvScorer):
                     if stepped(observation):
                         state["stop"] = "done"
                         break
-                    messages.append({"role": "user", "content": episode_text(observation)})
+                    messages.append({"role": "user", "content": self.view(observation)})
 
         ok = await _guarded(run(), errors)
         transcript = [{"role": m["role"], **({"name": m["name"]} if m.get("name") else {}), "content": " ".join(filter(None, [
@@ -1043,6 +1084,7 @@ async def _examples(scorer: OpenEnvScorer, max_rows: int, references: Any, tasks
             _prefer_hidden_answer(pool, notes)
         return pool
     hints = reset_hints(env)
+    scorer.default_reset = hints  # every row below runs reset() without the keywords that pick a task
     if hints:
         notes.append(f"reset() also takes {', '.join(hints)}: list the tasks to audit in {TASKS_FILE} next to env.toml "
                      "(a JSON list of reset keyword sets, each may carry an `answer`); without it, repeated reset() calls "
