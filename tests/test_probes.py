@@ -691,7 +691,12 @@ def test_a_json_reference_gets_a_wrong_answer_of_the_same_shape():
     adapter.pool = [Example("a", "q", reference), Example("b", "q", '{"id": 2, "username": "agent_2"}')]
     adapter.open_ended, adapter.closed = True, False  # a long JSON reference is classed open-ended; the shape still wins
     wrong = json.loads(adapter.wrong_answer(adapter.pool[0]))
-    assert wrong == {"id": 8, "username": "agent_1_x", "is_admin": True, "score": 17.5, "tags": ["a_x"], "parameters": {"metric_id": 10, "note": None}}
+    # strings: another task's value at the same place, else one that shares no substring with the original
+    assert wrong == {"id": 8, "username": "agent_2", "is_admin": True, "score": 17.5, "tags": ["qqq"], "parameters": {"metric_id": 10, "note": None}}
+    labels = [Example(str(i), "q", json.dumps({"task1": {"disposition": d}})) for i, d in enumerate(["snf", "snf", "home", "home_with_services"])]
+    adapter.pool = labels
+    assert json.loads(adapter.wrong_answer(labels[0])) == {"task1": {"disposition": "home"}}  # a real wrong label, not "snf_x"
+    assert json.loads(adapter.wrong_answer(labels[2])) == {"task1": {"disposition": "snf"}}  # "home_with_services" contains "home"
     assert list(wrong) == list(json.loads(reference))  # every key kept, in order
     assert json_structure("42") is None and json_structure("not json {") is None and json_structure("{}") is None
     assert values_replaced([]) == [] and values_replaced("") == "x"

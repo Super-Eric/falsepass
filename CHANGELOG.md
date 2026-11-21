@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- The wrong answer built from a JSON reference (P6 and others) changed a string by appending `_x`, so it still contained the right value: a grader that matches by substring paid it, and the summary read the row as a lazy strategy at 1.0. A string now becomes another task's value at the same place when one differs (a real wrong label), else one that shares no substring with the original.
+
 ## 0.16.0 — 2026-11-21
 
 - Policy adapters: `falsepass.policies.sequential(name, solve)` plays a step-by-step solver (`solve(prompt, use)`, calling the tools one at a time, as many packages ship) as a policy: on each turn it replays `solve` against the tool results so far and sends the next call, then the final answer. A solver whose own `except Exception` fallback would swallow the next call still works, and one that calls different tools on replay is named. Two adapters written by hand had needed about 30 lines each for this.

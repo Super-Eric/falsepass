@@ -115,12 +115,34 @@ def json_structure(text: str) -> dict | list | None:
     return value if isinstance(value, (dict, list)) and value else None
 
 
-def values_replaced(value: Any) -> Any:
-    """`value` with every leaf changed and every key and type kept: a wrong answer in the right shape."""
+def _at(document: Any, path: tuple[Any, ...]) -> Any:
+    for step in path:
+        if isinstance(document, dict) and step in document:
+            document = document[step]
+        elif isinstance(document, list) and isinstance(step, int) and step < len(document):
+            document = document[step]
+        else:
+            return None
+    return document
+
+
+def _unrelated(text: str) -> str:
+    """A string that neither contains `text` nor is contained in it."""
+    for candidate in ("qqq", "zzz", "wrong value"):
+        if text not in candidate and candidate not in text:
+            return candidate
+    return text[::-1] + "q"
+
+
+def values_replaced(value: Any, siblings: list[Any] = (), path: tuple[Any, ...] = ()) -> Any:
+    """`value` with every leaf changed and every key and type kept: a wrong answer in the right shape.
+    A string becomes another task's value at the same place when one differs (a real wrong label from a
+    closed set), else a string that neither contains it nor is contained in it, so a grader that matches
+    by substring does not read the original back."""
     if isinstance(value, dict):
-        return {k: values_replaced(v) for k, v in value.items()}
+        return {k: values_replaced(v, siblings, (*path, k)) for k, v in value.items()}
     if isinstance(value, list):
-        return [values_replaced(v) for v in value]
+        return [values_replaced(v, siblings, (*path, i)) for i, v in enumerate(value)]
     if isinstance(value, bool):
         return not value
     if isinstance(value, int):
@@ -128,7 +150,12 @@ def values_replaced(value: Any) -> Any:
     if isinstance(value, float):
         return value + 7.0
     if isinstance(value, str):
-        return value + "_x" if value else "x"
+        for other in siblings:
+            leaf = _at(other, path)
+            if isinstance(leaf, str) and leaf.strip() and value.strip().lower() not in leaf.lower() \
+                    and leaf.strip().lower() not in value.lower():
+                return leaf
+        return _unrelated(value) if value else "x"
     return value  # None stays None: JSON has no other null-like value to swap it for
 
 
@@ -703,7 +730,8 @@ class AutoAdapter(Adapter):
         if (document := json_structure(answer)) is not None:
             # A JSON reference (a repaired object, a plan, a set of expected values): the wrong answer keeps every
             # key and type and changes every value, so a term that pays for the shape alone shows up in P6.
-            return json.dumps(values_replaced(document), ensure_ascii=False)
+            siblings = [d for o in self.pool[:50] if o is not example and (d := json_structure(o.answer.strip())) is not None]
+            return json.dumps(values_replaced(document, siblings), ensure_ascii=False)
         if self.open_ended:
             # A passage that answers nothing. Another task's reference is probed separately
             # (X1): for open-ended tasks that measures task-independence, not wrongness.
