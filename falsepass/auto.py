@@ -137,7 +137,10 @@ V1_REFERENCE_FIELDS = ("answer", "expected", "reference", "key", "target", "solu
 are what tasksets call it when they keep a structure (a dict of expected values) instead of a string."""
 
 
-V1_NOT_REFERENCE = {"prompt", "prompt_text", "system_prompt", "id", "name", "info", "metadata", "tools", "config"}
+V1_NOT_REFERENCE = {"prompt", "prompt_text", "system_prompt", "id", "name", "info", "metadata", "tools", "config",
+                    # inputs the reward reads to rebuild or pick the task, not the answer it expects
+                    "seed", "task", "task_id", "task_name", "level", "split", "difficulty", "index", "idx", "kind", "family",
+                    "type", "category", "env_name", "max_steps", "max_turns", "mode", "language", "lang", "variant"}
 
 
 def v1_reward_fields(task: Any) -> list[str]:
@@ -174,10 +177,13 @@ def v1_reference(data: Any, extra: tuple[str, ...] = ()) -> tuple[str, str, bool
     A dict or list becomes a JSON document, so a task whose grader parses the reply as JSON and compares fields
     can be probed with its own expected values; the automatic format inference then has to find the wrapper.
     `extra`: fields to try after the usual names (those the reward reads, from `v1_reward_fields`)."""
+    prompt = str(getattr(data, "prompt_text", "") or "")
     for field in (*V1_REFERENCE_FIELDS, *extra):
         value = getattr(data, field, None)
         if value is None or value == "" or value == {} or value == []:
             continue
+        if field not in V1_REFERENCE_FIELDS and isinstance(value, str) and len(value.strip()) >= 3 and value.strip() in prompt:
+            continue  # a field the reward reads that the prompt already shows is part of the question
         if isinstance(value, (dict, list)):
             return json.dumps(value, ensure_ascii=False, sort_keys=False), field, True
         if isinstance(value, (str, int, float)) and not isinstance(value, bool):
@@ -395,6 +401,7 @@ class AutoAdapter(Adapter):
             return self._load_v1_episodes(tasks, episodic)
         extra = tuple(v1_reward_fields(tasks[0])) if tasks else ()
         pool = [Example(f"task-{i}", t.data.prompt_text, v1_reference(t.data, extra)[0], t) for i, t in enumerate(tasks)]
+        self.reference_field = v1_reference(tasks[0].data, extra)[1] if tasks else ""
         if tasks and (field := v1_reference(tasks[0].data, extra)[1]) not in ("answer", ""):
             self.load_notes.append(
                 f"the reference is the task data's `{field}` field"
@@ -570,8 +577,10 @@ class AutoAdapter(Adapter):
         self.format_name, self.format = best, candidate_formats(*self.hint)[best]
         if table[best] <= 0:
             raise RuntimeError(
-                f"no candidate format earned any reward for the reference answer ({table}): "
-                "write an adapter with `falsepass init --manual`"
+                f"no candidate format earned any reward for the reference answer ({table})"
+                + (f"; the reference was the task data's `{field}` field, which may be an input or a target rather than "
+                   "the reply the grader wants" if (field := getattr(self, "reference_field", "")) not in ("", "answer") else "")
+                + ": write an adapter with `falsepass init --manual` whose reference is that reply"
             )
         self.max_reward = round(table[best], 6) if abs(table[best] - 1.0) > 1e-9 else 1.0
         # Control: an audit built on the reference is only meaningful if the reward tells

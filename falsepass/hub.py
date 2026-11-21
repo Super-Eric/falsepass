@@ -248,7 +248,14 @@ def describe(env_id: str, version: str | None = None) -> dict:
         "verifiers": pin,
         "python": python_for(requires_python.group(1)) if requires_python else "",
         "declared": f"verifiers{requirement.group(1) or ''}{requirement.group(2)}".strip() if requirement else "",
+        **({"extra": urls} if (urls := url_requirements(metadata)) else {}),
     }
+
+
+def url_requirements(metadata: str) -> list[str]:
+    """Requirements the wheel names by URL (`tool @ git+https://...`): the package index cannot
+    resolve them, so they are passed to the installer as they are (markers dropped)."""
+    return [line.split(";")[0].strip() for line in re.findall(r"^Requires-Dist:[ \t]*(.+ @ .+)$", metadata, re.M)]
 
 
 INFRASTRUCTURE = {
@@ -361,7 +368,8 @@ def discover_spaces(days: int = 90, limit: int = 40, tag: str = "openenv") -> li
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
     url = f"{SPACES_API}?filter={tag}&sort=lastModified&direction=-1&limit={min(max(limit * 4, 100), 1000)}"
     rows = json.loads(_get(url).decode())
-    recent = [r for r in rows if (r.get("lastModified") or "")[:10] >= cutoff]
+    recent = [r for r in rows if (r.get("lastModified") or "")[:10] >= cutoff
+              and r.get("sdk") != "static" and "static" not in (r.get("tags") or [])]  # a static site serves no environment
     recent.sort(key=lambda r: (-(r.get("likes") or 0), r["id"]))
     return [
         {"id": r["id"], "likes": r.get("likes") or 0, "updated": (r.get("lastModified") or "")[:10],

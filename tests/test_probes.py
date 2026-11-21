@@ -771,3 +771,11 @@ def test_a_short_wrapper_names_the_package_its_grader_lives_in():
     kind = hub.classify({"mywrap/__init__.py": wrapper, "mywrap/extra.py": b"def helper(): pass\n"})
     assert kind["wraps"] == ["deskgym"]
     assert "wraps" not in hub.classify({"env.py": b"import verifiers as vf\nimport numpy\n"})
+
+
+def test_requirements_named_by_url_are_passed_to_the_installer():
+    from falsepass import hub
+
+    metadata = ("Requires-Dist: verifiers>=0.4\nRequires-Dist: openfda-tools @ git+https://example.org/x/tools.git@v1 ; "
+                "python_version >= '3.11'\nRequires-Dist: numpy\n")
+    assert hub.url_requirements(metadata) == ["openfda-tools @ git+https://example.org/x/tools.git@v1"]

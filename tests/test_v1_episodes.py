@@ -234,6 +234,23 @@ def test_v1_reference_falls_back_to_the_field_the_reward_reads():
     assert v1_reference(SimpleNamespace(answer="42", esperado="7"), ("esperado",))[1] == "answer"  # the usual names first
 
 
+class _RebuildsTheTask:  # a reward that replays the task from its seed and compares with the reply's plan
+    @_reward
+    async def solved(self, trace):
+        return float(self.data.seed > 0 and self.data.task in ("repair", "scale") and self.data.fix in trace.last_reply)
+
+
+def test_inputs_the_reward_reads_are_not_taken_for_the_reference():
+    from types import SimpleNamespace
+
+    from falsepass.auto import v1_reference, v1_reward_fields
+
+    assert v1_reward_fields(_RebuildsTheTask()) == ["fix"]  # seed and task rebuild the task
+    shown = SimpleNamespace(prompt_text="Fix the service `checkout-api`.", fix="checkout-api")
+    assert v1_reference(shown, ("fix",)) == ("", "", False)  # the prompt shows it: part of the question
+    assert v1_reference(SimpleNamespace(prompt_text="Fix it.", fix="restart"), ("fix",))[1] == "fix"
+
+
 def test_vf_compat_follows_the_runtime_api_of_each_release(monkeypatch):
     import asyncio
     import sys
