@@ -274,6 +274,7 @@ the commands with `uv run`; `uv run pytest` runs the kit's own tests.
 | P16 | JSON answers: the reference with every free-text value (two words or more) replaced by the prompt; labels, IDs and numbers kept | gives (close to) nothing |
 | P17 | JSON answers: one short string field (a label, a date, an ID) followed by "(this is wrong)" everywhere it occurs, one field at a time | gives less than the reference |
 | P18 | Edit tasks (the reference is a text from the prompt with some lines changed): each replaced or deleted line kept just before its replacement, so the reply keeps what it should have changed (not run on fenced or Python code) | gives (close to) nothing |
+| P19 | the same plain number written another way (`36.0`, `+36`, `12,000`, `−5`); skip likely codes and four-digit years | gives full reward |
 | A1 | no reference needed: every integer 0–1000, every letter, yes/no words, or the prompt's words in one reply | gives nothing |
 | O1 | OpenEnv, a decision field in the action: every value of it in turn, nothing else said (a fixed strategy; its mean is the lazy-policy reward) | pays only the base rate of that label |
 | O2 | OpenEnv, a self-reported field in the action (`confidence`, `score`, `quality`): at its maximum and at its minimum | gives the same reward |
