@@ -759,6 +759,7 @@ def scaffold(args) -> int:
                           "automatic_likely": kind["automatic"] if kind else None,
                           **({"task_data_fields": hub.task_data_fields(info["sources"])} if args.manual and info.get("sources") else {}),
                           **({"automatic_unlikely_because": why} if why else {}),
+                          **({"reference_files": refs} if (refs := hub.reference_files(info.get("sources") or {})) else {}),
                           **({"outside_hosts": kind["outside_hosts"]} if kind and kind.get("outside_hosts") else {}),
                           "others": info.get("others", []), "next": f"falsepass audit {ref}"}, indent=1))  # fmt: skip
         return 0
@@ -790,6 +791,9 @@ def scaffold(args) -> int:
               f"stops, rerun with --force --manual (or --policies for a game, simulation or tool task):")
     else:
         print(f"created {audit_dir}/env.toml — no adapter needed for single-turn environments with reference answers:")
+    if refs := hub.reference_files(info.get("sources") or {}):
+        print(f"  (files in the package named like a known-good output, copied to src/; one may serve as the control: "
+              f"{', '.join(refs[:6])}{', ...' if len(refs) > 6 else ''})")
     if kind and kind.get("outside_hosts"):
         print(f"  (the code calls an outside service: {', '.join(kind['outside_hosts'])}. An audit should not reach it: "
               "v1 episodes block outside hosts; otherwise give the adapter a local stand-in)")

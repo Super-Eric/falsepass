@@ -150,6 +150,24 @@ def test_wheel_data_files_are_kept_for_src_up_to_the_caps(monkeypatch):
     assert set(hub.data_files(opened, opened.namelist())) == {"pkg/data/tasks.jsonl"}
 
 
+def test_files_named_like_a_known_good_output_are_kept_whatever_their_suffix():
+    """A repair task's grader compares against `_reference_good.ocio`: without it in src/, a
+    reader of the source never sees the control. Other binaries stay out."""
+    import io
+    import zipfile
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("pkg/tasks/_reference_good.ocio", "roles: {}")
+        archive.writestr("pkg/tasks/gold.exr", b"\x76\x2f\x31\x01")
+        archive.writestr("pkg/tasks/broken.exr", b"\x00")
+        archive.writestr("pkg/solution.py", "x = 1")
+    opened = zipfile.ZipFile(io.BytesIO(buffer.getvalue()))
+    kept = hub.data_files(opened, opened.namelist())
+    assert set(kept) == {"pkg/tasks/_reference_good.ocio", "pkg/tasks/gold.exr"}
+    assert hub.reference_files({**kept, "pkg/solution.py": b""}) == ["pkg/tasks/_reference_good.ocio", "pkg/tasks/gold.exr"]
+
+
 def test_discover_lists_openenv_spaces_from_the_hub_listing(monkeypatch):
     rows = [
         {"id": "a/old", "likes": 50, "lastModified": "2020-01-01T00:00:00.000Z", "tags": ["openenv", "docker"]},

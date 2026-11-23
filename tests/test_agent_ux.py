@@ -390,3 +390,15 @@ def test_a_shotgun_paid_no_more_than_a_wrong_answer_is_labelled_partial_credit(t
     assert draft.draft(folder).read_text().count("no more than a single wrong answer") == 1
     paid = {**payload, "results": [{**r, "score": 1.0} if r["probe"] == "P6" else r for r in rows]}
     assert "note" not in {f["probe"]: f for f in report.digest(paid)["failing"]}["P5"]  # a wrong answer paid in full is the finding
+
+
+def test_near_misses_paid_like_the_reference_are_counted_outside_the_ceiling():
+    """A wrong link slot in a repaired graph earns what the fix earns: the headline says so, and the
+    ceiling stays the known-bad rows' (the changed part may simply not be graded)."""
+    near = {**_row("X2", "wrong_slot", "a", 1.0), "expected": "below_reference", "passed": False}
+    rows = [_row("P3", "empty", "a", 0.0), near, {**near, "example": "b"},
+            {**near, "variant": "partial", "score": 0.4, "passed": True}]
+    head = report.headline(rows)
+    assert head["false_pass_ceiling"] == 0.0 and head["near_misses_paid"] == 2
+    assert head["near_misses_paid_via"] == ["X2 n/wrong_slot"]
+    assert "near_misses_paid" not in report.headline(rows[:1])

@@ -138,6 +138,10 @@ The headline numbers:
   dataset under any correct grader; subtract that base rate before reading it.
 - **false-fail rate**: the share of known-good completions denied full reward. Some of
   these are deliberate strictness about format; read the variant names.
+- **near misses paid** (`near_misses_paid`, `near_misses_paid_via`; only when there are
+  some): `below_reference` rows that earned as much as the reference on their task, such as an
+  adapter's repair with one link still wrong, or P17's denied field. They stay out of the
+  ceiling, because the changed part may simply not be graded; read one before deciding.
 
 `completion` shows the start and the end of the first failing completion (the answer is
 usually at the end); `falsepass results <env> --completion <completion_id>` prints all of it.
@@ -210,7 +214,9 @@ is no wheel to read (local folders, Inspect registry names). With `false`,
 `automatic_unlikely_because` says why (e.g. "sandbox, no reference answer found in the
 source"). `outside_hosts` lists the hosts of an outside service the code calls (an HTTP
 client in the source and a URL that is not local and not a data or documentation host: a game
-server, a judge service, a live API); an audit should not reach them.
+server, a judge service, a live API); an audit should not reach them. `reference_files` lists
+files in the package named like a known-good output (`_reference_good.ocio`, `gold.exr`), kept
+in `src/` whatever their suffix: for a repair or render task, one is often the control.
 
 env.toml records `wheel_sha256` (the exact bytes audited) and the package's `project_urls`
 for a Hub environment.

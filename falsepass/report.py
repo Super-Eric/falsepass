@@ -32,6 +32,12 @@ def headline(results: list[dict[str, Any]]) -> dict[str, Any]:
         "known_bad": len(bad),
         "scoring_errors": sum(bool(r["errors"]) and not policy_raised(r) for r in results),
         **({"policy_errors": n} if (n := sum(policy_raised(r) for r in results)) else {}),
+        # A changed answer that had to earn less than the reference and did not (P17's denied field, an
+        # adapter's near miss): kept out of the ceiling, since the change may sit in a part that is not
+        # graded at all, but counted, so a run where every near miss is paid like the solution says so.
+        **({"near_misses_paid": len(paid), "near_misses_paid_via": sorted({f'{r["probe"]} {r["name"]}/{r["variant"]}' for r in paid})[:5]}
+           if (paid := [r for r in counted if r["expected"] == "below_reference" and not r["passed"] and r["score"] is not None])
+           else {}),
         "same_as_good": sum(bool(r.get("same_as_good")) for r in results),
         "no_control": sum(bool(r.get("no_control")) for r in results),
         "no_control_tasks": len({r["example"] for r in results if r.get("no_control")}),
@@ -587,6 +593,9 @@ def summary(payload: dict[str, Any]) -> str:
         *_weight_lines(meta, results),
         f"- **False-pass ceiling:** {_fmt(head['false_pass_ceiling'])} of {_fmt(meta['max_reward'])} "
         f"(highest reward given to a known-bad completion; via {head['false_pass_via']})",
+        *([f"- **Near misses paid like the reference:** {head['near_misses_paid']} rows that had to earn less than the "
+           f"reference on their task did not (via {', '.join(head['near_misses_paid_via'])}); kept out of the ceiling, "
+           "since the changed part may not be graded at all: read one"] if head.get("near_misses_paid") else []),
         f"- **Lazy-policy reward:** {_fmt(head['lazy_policy_reward'])} "
         f"(best average reward of one fixed strategy that never uses the reference answer; "
         f"via {head['lazy_policy_via']})",
