@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add P19 `numeric_forms`, a per-example check for equivalent numeric answers (extra decimal zero, explicit plus, thousands separator and Unicode minus). Skip likely codes with leading zeros and four-digit-year grouping; format-strict graders still require manual interpretation.
+
 - The wrong answer built from a JSON reference (P6 and others) changed a string by appending `_x`, so it still contained the right value: a grader that matches by substring paid it, and the summary read the row as a lazy strategy at 1.0. A string now becomes another task's value at the same place when one differs (a real wrong label), else one that shares no substring with the original.
 
 ## 0.16.0 — 2026-11-21
