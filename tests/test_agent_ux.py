@@ -402,3 +402,48 @@ def test_near_misses_paid_like_the_reference_are_counted_outside_the_ceiling():
     assert head["false_pass_ceiling"] == 0.0 and head["near_misses_paid"] == 2
     assert head["near_misses_paid_via"] == ["X2 n/wrong_slot"]
     assert "near_misses_paid" not in report.headline(rows[:1])
+
+
+def test_summary_wording_when_nothing_is_paid_and_too_few_tasks_ran():
+    meta = {"environment": "toy", "date": "x", "falsepass": "0", "versions": {}, "python": "3", "examples": 2, "seed": 0,
+            "max_reward": 1.0, "bad_tolerance": 0.0}
+    text = report.summary({"meta": meta, "results": [_row("P3", "empty", "a", 0.0)], "rewardlint": None})
+    assert "completion; no known-bad row was paid)" in text and "via no known-bad" not in text
+    assert "no fixed strategy ran on three or more tasks)" in text and "via None" not in text
+
+
+def test_a_hand_written_adapters_scorer_notes_reach_the_summary(tmp_path):
+    """A v1 episode scorer notes that the harness runs code on this machine; a policy adapter
+    built from the skeleton never copied that note into its own load notes."""
+    import json as _json
+
+    from falsepass import runner
+
+    folder = tmp_path / "toy"
+    folder.mkdir()
+    (folder / "src").mkdir()
+    (folder / "adapter.py").write_text('''
+from falsepass import Adapter, Example, Score
+
+class Scorer:
+    notes = ["the harness (bash) can run code, and runs it on this machine"]
+    async def score(self, example, completion):
+        return Score(0.0)
+    async def close(self):
+        pass
+
+class Toy(Adapter):
+    name = "toy"
+    load_notes = ["adapter note"]
+    def load(self, n, seed):
+        return Scorer(), [Example("a", "q", "1")]
+    def render(self, answer, example):
+        return answer
+    def wrong_answer(self, example):
+        return "2"
+
+ADAPTER = Toy()
+''')
+    runner.run(folder, n=1, few=1, jobs=1, hash_seed=False)
+    notes = _json.loads((folder / "probe-results.json").read_text())["meta"]["notes"]
+    assert notes == ["adapter note", "the harness (bash) can run code, and runs it on this machine"]

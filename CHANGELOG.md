@@ -8,6 +8,8 @@
 - The static hint `empty_component_scores_zero` also names the other risk of a per-item average: items that should count but are missing from it (a skipped step) raise the mean of the rest.
 - The headline counts near misses paid like the reference (`near_misses_paid`, with the rows' names; a summary line): `below_reference` rows were visible only in `failing`, so a run where an adapter's seven wrong-link repairs all earned the solution's 1.0 still read "False-pass ceiling: 0". The ceiling itself is unchanged.
 - `init` keeps files named like a known-good output (`_reference_good.ocio`, `gold.exr`, `expected_output.mp4`) in `src/` whatever their suffix, and lists them (`reference_files` in `--json`, a line in the text output): four repair tasksets grade against such a file, and neither `src/` nor the stop message showed it.
+- A hand-written adapter's run carries its scorer's notes too (`meta.notes`): the v1 policy skeleton never copied the episode scorer's "the harness (bash) can run code, and runs it on this machine", so a run whose generic policy called bash said nothing about it.
+- Summary wording: "no known-bad row was paid" no longer follows "via"; a lazy-policy figure that no fixed strategy ran often enough to average says so instead of "via None"; under a per-task scale the reward-terms table says its values are raw and are read against the solver's, not against 0.
 
 ## 0.16.0 — 2026-11-21
 

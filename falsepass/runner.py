@@ -347,7 +347,10 @@ def run(
             "bad_tolerance": adapter.bad_tolerance,
             "weights": getattr(scorer, "weights", {}),
             "adapter": getattr(adapter, "inferred", None) or "hand-written",
-            **({"notes": list(adapter.load_notes)} if not getattr(adapter, "inferred", None) and getattr(adapter, "load_notes", None) else {}),
+            # a hand-written adapter's notes, and its scorer's (a v1 episode scorer says where the harness runs code)
+            **({"notes": notes} if not getattr(adapter, "inferred", None) and (notes := list(dict.fromkeys(
+                [*(getattr(adapter, "load_notes", None) or []), *(n for n in (getattr(scorer, "notes", None) or []) if isinstance(n, str))]
+            ))) else {}),
             **({"tool_calls": dict(scorer.counts)} if (getattr(scorer, "counts", None) or {}).get("tool_calls") else {}),
             **({"default_reset": list(scorer.default_reset)} if getattr(scorer, "default_reset", None) else {}),
             **({"one_step": dict(scorer.steps)} if not getattr(scorer, "multi_turn", False) and (getattr(scorer, "steps", None) or {}).get("replies") else {}),

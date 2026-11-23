@@ -592,13 +592,14 @@ def summary(payload: dict[str, Any]) -> str:
         *[f"- **⚠ {'Result inconclusive: ' if w == open_after_one_reply(meta) else ''}{w}**" for w in warnings(meta)],
         *_weight_lines(meta, results),
         f"- **False-pass ceiling:** {_fmt(head['false_pass_ceiling'])} of {_fmt(meta['max_reward'])} "
-        f"(highest reward given to a known-bad completion; via {head['false_pass_via']})",
+        f"(highest reward given to a known-bad completion; "
+        f"{head['false_pass_via'] if head['false_pass_via'] == 'no known-bad row was paid' else 'via ' + str(head['false_pass_via'])})",
         *([f"- **Near misses paid like the reference:** {head['near_misses_paid']} rows that had to earn less than the "
            f"reference on their task did not (via {', '.join(head['near_misses_paid_via'])}); kept out of the ceiling, "
            "since the changed part may not be graded at all: read one"] if head.get("near_misses_paid") else []),
         f"- **Lazy-policy reward:** {_fmt(head['lazy_policy_reward'])} "
         f"(best average reward of one fixed strategy that never uses the reference answer; "
-        f"via {head['lazy_policy_via']})",
+        + (f"via {head['lazy_policy_via']})" if head["lazy_policy_via"] else "no fixed strategy ran on three or more tasks)"),
         f"- **False-fail rate:** {_fmt(head['false_fail_rate'])} "
         f"({head['known_good']} known-good completions)",
         f"- **Completions on which reward code raised or timed out:** {head['scoring_errors']}",
@@ -637,7 +638,10 @@ def summary(payload: dict[str, Any]) -> str:
             "## Reward terms on known-bad and fixed-strategy completions",
             "",
             "Which part of the reward pays when the answer is wrong, or when a fixed strategy that never reads the task "
-            "plays (expected `lazy`). A correctness term should be 0 everywhere.",
+            "plays (expected `lazy`). "
+            + ("Values are the raw terms, before the per-task scale; a fixed strategy keeps what it really achieves under "
+               "an outcome reward, so read these against the solver's, not against 0." if meta.get("scale")
+               else "A correctness term should be 0 everywhere."),
             "",
             "| Reward term | Weight | Non-zero on | Mean value |",
             "|---|---|---|---|",
