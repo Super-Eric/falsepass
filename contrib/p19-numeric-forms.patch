@@ -1,9 +1,0 @@
-This file was a first upload of the P19 change as a `git format-patch` mbox. It lost the single-space context lines when it was re-uploaded, so `git am` reports "corrupt patch" and it is not usable.
-
-Use `p19-numeric-forms.unidiff.patch` in this folder instead, applied with:
-
-```bash
-git apply --unidiff-zero p19-numeric-forms.unidiff.patch
-```
-
-That file was downloaded back from this branch, byte-compared against the local original, and applied to a fresh clone of `Super-Eric/falsepass@97583c4` before being linked anywhere.
