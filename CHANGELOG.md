@@ -10,6 +10,8 @@
 - `init` keeps files named like a known-good output (`_reference_good.ocio`, `gold.exr`, `expected_output.mp4`) in `src/` whatever their suffix, and lists them (`reference_files` in `--json`, a line in the text output): four repair tasksets grade against such a file, and neither `src/` nor the stop message showed it.
 - A hand-written adapter's run carries its scorer's notes too (`meta.notes`): the v1 policy skeleton never copied the episode scorer's "the harness (bash) can run code, and runs it on this machine", so a run whose generic policy called bash said nothing about it.
 - Summary wording: "no known-bad row was paid" no longer follows "via"; a lazy-policy figure that no fixed strategy ran often enough to average says so instead of "via None"; under a per-task scale the reward-terms table says its values are raw and are read against the solver's, not against 0.
+- `meta.versions` (and the summary's versions line) records packages installed from a git URL with the commit that was resolved (`fdagym 0.1.1 (https://...git@f8cabd5...)`): an unpinned URL is whatever the branch held that day, and for one environment it was the whole grader.
+- Commands that do not pass options on to the run (`init`, `discover`, `results`, ...) reject options they do not know; `init --bogus-flag yes` used to exit 0 with the option silently ignored.
 
 ## 0.16.0 — 2026-11-21
 

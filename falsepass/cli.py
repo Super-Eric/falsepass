@@ -977,6 +977,8 @@ def main(argv: list[str] | None = None) -> int:
                               help="read Hugging Face datasets from the local cache without checking the Hub first "
                                    "(HF_HUB_OFFLINE=1): seconds saved per run once the data is cached; a dataset not cached yet fails to load")
     args, extra = parser.parse_known_args(argv)
+    if extra and args.command not in ("audit", "rollout", "propose", "reach", "container"):  # only these pass options on to the run
+        parser.error(f"unrecognized arguments for {args.command}: {' '.join(extra)}")
     global OFFLINE
     OFFLINE = bool(getattr(args, "offline", False))
     if OFFLINE:

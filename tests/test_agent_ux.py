@@ -447,3 +447,35 @@ ADAPTER = Toy()
     runner.run(folder, n=1, few=1, jobs=1, hash_seed=False)
     notes = _json.loads((folder / "probe-results.json").read_text())["meta"]["notes"]
     assert notes == ["adapter note", "the harness (bash) can run code, and runs it on this machine"]
+
+
+def test_init_rejects_options_it_does_not_know(capsys):
+    import pytest
+
+    from falsepass import cli
+
+    with pytest.raises(SystemExit):
+        cli.main(["init", "owner/env", "--bogus-flag", "yes"])
+    assert "unrecognized arguments for init: --bogus-flag yes" in capsys.readouterr().err
+
+
+def test_packages_from_a_git_url_are_recorded_with_their_commit(monkeypatch):
+    import json as _json
+
+    from falsepass import runner
+
+    class Dist:
+        version = "0.1.0"
+        metadata = {"Name": "fdatool"}
+
+        def read_text(self, name):
+            return _json.dumps({"url": "https://example.org/fdatool.git", "vcs_info": {"vcs": "git", "commit_id": "f8cabd5" + "0" * 33}})
+
+    class Plain(Dist):
+        metadata = {"Name": "plain"}
+
+        def read_text(self, name):
+            return None
+
+    monkeypatch.setattr(runner.metadata, "distributions", lambda: [Dist(), Plain()])
+    assert runner.vcs_versions() == {"fdatool": "0.1.0 (https://example.org/fdatool.git@f8cabd500000)"}

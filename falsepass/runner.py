@@ -146,6 +146,22 @@ def load_adapter(audit_dir: Path) -> Adapter:
     return module.ADAPTER
 
 
+def vcs_versions() -> dict[str, str]:
+    """Packages installed from a git URL (`tool @ git+https://...`), with the commit that was
+    resolved: an unpinned URL is whatever the branch held that day, and it may be the grader."""
+    found: dict[str, str] = {}
+    for dist in metadata.distributions():
+        try:
+            direct = json.loads(dist.read_text("direct_url.json") or "{}")
+        except (OSError, ValueError):
+            continue
+        commit = (direct.get("vcs_info") or {}).get("commit_id")
+        name = dist.metadata["Name"] if dist.metadata else None
+        if commit and name:
+            found[name] = f"{dist.version} ({direct.get('url', '')}@{commit[:12]})"
+    return dict(sorted(found.items()))
+
+
 def _version(package: str) -> str:
     try:
         return metadata.version(package)
@@ -340,8 +356,9 @@ def run(
             "examples": len(examples),
             "seed": seed,
             "python": platform.python_version(),
-            "versions": {p: v for p in ["verifiers", "inspect-ai", "hud", "openenv", "rewardlint", *(packages or [])]
-                         if (v := _version(p)) != "not installed" or p not in ("verifiers", "inspect-ai", "hud", "openenv")},
+            "versions": {**{p: v for p in ["verifiers", "inspect-ai", "hud", "openenv", "rewardlint", *(packages or [])]
+                            if (v := _version(p)) != "not installed" or p not in ("verifiers", "inspect-ai", "hud", "openenv")},
+                         **vcs_versions()},
             "falsepass": falsepass.build_version(),
             "max_reward": adapter.max_reward,
             "bad_tolerance": adapter.bad_tolerance,
