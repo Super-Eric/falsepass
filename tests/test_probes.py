@@ -59,7 +59,7 @@ def numeric_tolerant(text, answer):
     """Example numeric-value grader accepting P19's different spellings."""
     from decimal import Decimal, InvalidOperation
 
-    marks = re.findall(r"^#### (\\S+)\\s*$", text, re.M)
+    marks = re.findall(r"^#### ([^ ]+)[ ]*$", text, re.M)
     if len(marks) != 1:
         return 0.0
     try:
