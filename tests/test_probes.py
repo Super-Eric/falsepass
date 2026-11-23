@@ -97,6 +97,18 @@ def test_p19_numeric_forms_only_produces_value_identical_spelling(reference, exp
     assert probes.numeric_forms(reference) == expected
 
 
+def test_p19_long_integer_grouping_does_not_hit_python_digit_limit():
+    # Under Python >=3.11, int-to-str conversion of 4301 digits raises by
+    # default. P19 must not crash or change its numeric reference.
+    number = "9" * 5000
+    forms = probes.numeric_forms(number)
+    grouping = forms["thousands_separator"]
+    assert grouping.replace(",", "") == number
+    assert grouping.count(",") == (len(number) - 1) // 3
+    assert probes.numeric_forms("-" + number)["thousands_separator"] == "-" + grouping
+    assert probes.numeric_forms("+" + number)["thousands_separator"] == "+" + grouping
+
+
 def test_leaky_verifier_is_caught():
     assert not run(probes.p5_shotgun, leaky)[0].passed
     format_only = run(probes.p6_format_only, leaky)[0]
