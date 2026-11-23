@@ -946,7 +946,7 @@ ANSWER_FREE_FEW = [p10_exception_path, a2_determinism]
 # --- P19: equivalent numeric spellings --------------------------------------
 
 
-NUMERIC = re.compile(r"[+-]?[0-9]+(?:\\.[0-9]+)?")
+NUMERIC = re.compile(r"[+-]?[0-9]+(?:[.][0-9]+)?")
 
 
 def numeric_forms(answer: str) -> dict[str, str]:
