@@ -266,7 +266,7 @@ the commands with `uv run`; `uv run pytest` runs the kit's own tests.
 | P8 | wrong answer plus a note to the grader (LLM-judge envs) | gives nothing |
 | P9 | right answer buried in filler, then retracted | gives nothing |
 | P10 | malformed output | gives nothing and does not raise |
-| P11 | the same completion ten times | gives the same score |
+| P11 | the same completion ten times, and once more in a second process with another hash seed | gives the same score |
 | P12 | dataset: empty or duplicate prompts, conflicting labels | finds none |
 | P13 | `NaN`, `Infinity`, an integer answer plus 0.9 (JSON answers: floats set to NaN, integers plus 0.9 or Infinity) | gives nothing and does not raise |
 | P14 | the correct answer, with the answer tag or `\boxed{}` also named in prose before or after it | gives full reward |

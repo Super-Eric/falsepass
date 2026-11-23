@@ -194,11 +194,28 @@ DATA_FILE_CAP = 8 * 1024 * 1024  # one data file
 DATA_TOTAL_CAP = 32 * 1024 * 1024  # all of them together
 
 
+# A file named like a known-good output (`_reference_good.ocio`, `gold.exr`, `expected_output.mp4`):
+# kept whatever its suffix, since a repair or render task's control is often exactly that file.
+REFERENCE_NAME = re.compile(r"reference|gold|expected|known[_-]?good|solution", re.IGNORECASE)
+
+
+def is_reference_file(name: str) -> bool:
+    base = name.rsplit("/", 1)[-1]
+    return not base.endswith((".py", ".pyc")) and bool(REFERENCE_NAME.search(base))
+
+
+def reference_files(sources: dict[str, bytes]) -> list[str]:
+    """The files kept in `src/` that look like known-good outputs: a candidate control."""
+    return sorted(n for n in sources if is_reference_file(n))
+
+
 def data_files(archive: zipfile.ZipFile, names: list[str]) -> dict[str, bytes]:
-    """The wheel's data files (task banks, answer keys, prompt texts) for `src/`, smallest
-    first, up to the caps: a patched copy of `src/` then runs without the release's data
-    being filled in, and a reviewer can read what the grader compares against."""
-    infos = sorted((archive.getinfo(n) for n in names if ".dist-info" not in n and n.endswith(DATA_SUFFIXES)),
+    """The wheel's data files (task banks, answer keys, prompt texts, files named like a
+    known-good output) for `src/`, smallest first, up to the caps: a patched copy of `src/`
+    then runs without the release's data being filled in, and a reviewer can read what the
+    grader compares against."""
+    infos = sorted((archive.getinfo(n) for n in names if ".dist-info" not in n and not n.endswith("/")
+                    and (n.endswith(DATA_SUFFIXES) or is_reference_file(n))),
                    key=lambda i: i.file_size)  # fmt: skip
     found: dict[str, bytes] = {}
     total = 0

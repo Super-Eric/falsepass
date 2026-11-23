@@ -8,7 +8,9 @@ import importlib.util
 import json
 import os
 import platform
+import subprocess
 import sys
+import tempfile
 import time
 from datetime import date
 from importlib import metadata
@@ -18,7 +20,7 @@ from typing import Any
 import falsepass
 from falsepass import hygiene, probes, report, rewardlint_bridge, scale
 from falsepass.adapter import Adapter
-from falsepass.model import ProbeResult
+from falsepass.model import Expect, ProbeResult
 
 DEFAULT_JOBS = min(8, os.cpu_count() or 1)
 INSPECT_MARK = ".installed-inspect-task"  # in a src/ the runner wrote; such a src/ is rewritten on every run
@@ -144,6 +146,22 @@ def load_adapter(audit_dir: Path) -> Adapter:
     return module.ADAPTER
 
 
+def vcs_versions() -> dict[str, str]:
+    """Packages installed from a git URL (`tool @ git+https://...`), with the commit that was
+    resolved: an unpinned URL is whatever the branch held that day, and it may be the grader."""
+    found: dict[str, str] = {}
+    for dist in metadata.distributions():
+        try:
+            direct = json.loads(dist.read_text("direct_url.json") or "{}")
+        except (OSError, ValueError):
+            continue
+        commit = (direct.get("vcs_info") or {}).get("commit_id")
+        name = dist.metadata["Name"] if dist.metadata else None
+        if commit and name:
+            found[name] = f"{dist.version} ({direct.get('url', '')}@{commit[:12]})"
+    return dict(sorted(found.items()))
+
+
 def _version(package: str) -> str:
     try:
         return metadata.version(package)
@@ -151,9 +169,94 @@ def _version(package: str) -> str:
         return "not installed"
 
 
+# --- P11 across processes ----------------------------------------------------------------
+
+HASH_SEED_LOAD_LIMIT = 60.0  # seconds of loading: the second process loads the environment again
+HASH_SEED_VARIANTS = ("reference", "wrong_in_format")
+
+
+def _p11_completions(adapter: Adapter, ex: Any) -> dict[str, Any]:
+    return {"reference": adapter.render(ex.answer, ex), "wrong_in_format": adapter.render(adapter.wrong_answer(ex), ex)}
+
+
+def _fingerprint(completion: Any) -> str:
+    import hashlib
+
+    return hashlib.sha1(repr(completion).encode("utf-8", "surrogatepass")).hexdigest()
+
+
+def rescore(audit_dir: Path, n: int, seed: int, keys: set[str], out: Path) -> None:
+    """The second process of the hash-seed check: load the same sample and score the P11
+    completions of the given examples once each, with this process's own string hashing."""
+    adapter = load_adapter(audit_dir)
+    scorer, examples = adapter.load(n, seed)
+    loop = asyncio.new_event_loop()
+    found: dict[str, dict[str, Any]] = {}
+    try:
+        if hasattr(adapter, "prepare"):
+            loop.run_until_complete(adapter.prepare(scorer, examples))
+        for ex in examples:
+            if ex.key in keys:
+                found[ex.key] = {
+                    variant: {"reward": loop.run_until_complete(scorer.score(ex, done)).reward, "completion": _fingerprint(done)}
+                    for variant, done in _p11_completions(adapter, ex).items()
+                }
+    finally:
+        loop.run_until_complete(scorer.close())
+        loop.close()
+    out.write_text(json.dumps(found))
+
+
+def hash_seed_rows(audit_dir: Path, n: int, seed: int, adapter: Adapter, examples: list, results: list[ProbeResult],
+                   load_s: float) -> tuple[list[ProbeResult], str]:  # fmt: skip
+    """P11 scores each completion repeatedly in one process, where str hashes, and with them
+    the order of a set of strings, never change. A reward that depends on that order (the
+    first five items of `list(set(...))`) is stable there and different in the next run. So
+    the reference and the wrong reply P11 scored are scored once more in a second process
+    with another PYTHONHASHSEED. Returns the rows and, when it did not run, why."""
+    first = {(r.example, r.variant): r for r in results if r.probe == "P11" and r.variant in HASH_SEED_VARIANTS}
+    if not first:
+        return [], ""
+    if load_s > HASH_SEED_LOAD_LIMIT:
+        return [], f"not run: loading took {load_s:.0f} s, and the check loads the environment again"
+    other = "1" if os.environ.get("PYTHONHASHSEED") == "0" else "0"
+    keys = sorted({key for key, _ in first})
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "scores.json"
+        command = [sys.executable, "-m", "falsepass.runner", str(audit_dir), "-n", str(n), "--seed", str(seed),
+                   "--rescore", ",".join(keys), "--rescore-out", str(out)]  # fmt: skip
+        try:
+            done = subprocess.run(command, env={**os.environ, "PYTHONHASHSEED": other}, capture_output=True, text=True,
+                                  timeout=max(120.0, 4 * load_s + 60))  # fmt: skip
+        except subprocess.TimeoutExpired:
+            return [], "not run: the second process timed out"
+        if done.returncode or not out.is_file():
+            last = (done.stderr.strip().splitlines() or ["no output"])[-1][:200]
+            return [], f"not run: the second process failed ({last})"
+        there = json.loads(out.read_text())
+    by_key = {ex.key: ex for ex in examples}
+    rows: list[ProbeResult] = []
+    for (key, variant), row in first.items():
+        other_run = (there.get(key) or {}).get(variant)
+        if other_run is None or key not in by_key:
+            continue
+        done_here = _p11_completions(adapter, by_key[key])[variant]
+        if other_run["completion"] != _fingerprint(done_here):  # the completion itself was built differently
+            continue
+        same = repr(other_run["reward"]) == repr(row.score)
+        rows.append(ProbeResult(
+            "P11", "determinism", f"{variant}_other_hash_seed", key, Expect.STABLE, other_run["reward"], same,
+            f"scored again in a second process with PYTHONHASHSEED={other}: "
+            + ("identical" if same else f"{other_run['reward']!r} there, {row.score!r} here"),
+            row.completion,
+        ))  # fmt: skip
+    return rows, ""
+
+
 def run(
     audit_dir: Path, n: int = 25, seed: int = 0, few: int = 3, packages: list[str] | None = None,
     search_calls: int = 0, search_examples: int = 3, out: Path | None = None, jobs: int = DEFAULT_JOBS,
+    hash_seed: bool = True,
 ) -> dict[str, Any]:  # fmt: skip
     """Probe one environment. Results go to `out` (default: the audit folder itself; pass
     another folder for a trial run that must not replace the stored results). `jobs` is
@@ -211,6 +314,13 @@ def run(
             loop.run_until_complete(scorer.close())
         loop.close()
 
+    hash_seed_note = ""
+    if hash_seed and not scaled and not getattr(adapter, "tool_mode", False) and not getattr(adapter, "answer_free", False):
+        with watch.phase("hash_seed"):
+            rows, hash_seed_note = hash_seed_rows(audit_dir, n, seed, adapter, examples, results, watch.phases.get("load", 0.0))
+        at = max((i for i, r in enumerate(results) if r.probe == "P11"), default=len(results) - 1) + 1
+        results[at:at] = rows
+
     from falsepass import static
 
     source = audit_dir / "src"
@@ -246,20 +356,25 @@ def run(
             "examples": len(examples),
             "seed": seed,
             "python": platform.python_version(),
-            "versions": {p: v for p in ["verifiers", "inspect-ai", "hud", "openenv", "rewardlint", *(packages or [])]
-                         if (v := _version(p)) != "not installed" or p not in ("verifiers", "inspect-ai", "hud", "openenv")},
+            "versions": {**{p: v for p in ["verifiers", "inspect-ai", "hud", "openenv", "rewardlint", *(packages or [])]
+                            if (v := _version(p)) != "not installed" or p not in ("verifiers", "inspect-ai", "hud", "openenv")},
+                         **vcs_versions()},
             "falsepass": falsepass.build_version(),
             "max_reward": adapter.max_reward,
             "bad_tolerance": adapter.bad_tolerance,
             "weights": getattr(scorer, "weights", {}),
             "adapter": getattr(adapter, "inferred", None) or "hand-written",
-            **({"notes": list(adapter.load_notes)} if not getattr(adapter, "inferred", None) and getattr(adapter, "load_notes", None) else {}),
+            # a hand-written adapter's notes, and its scorer's (a v1 episode scorer says where the harness runs code)
+            **({"notes": notes} if not getattr(adapter, "inferred", None) and (notes := list(dict.fromkeys(
+                [*(getattr(adapter, "load_notes", None) or []), *(n for n in (getattr(scorer, "notes", None) or []) if isinstance(n, str))]
+            ))) else {}),
             **({"tool_calls": dict(scorer.counts)} if (getattr(scorer, "counts", None) or {}).get("tool_calls") else {}),
             **({"default_reset": list(scorer.default_reset)} if getattr(scorer, "default_reset", None) else {}),
             **({"one_step": dict(scorer.steps)} if not getattr(scorer, "multi_turn", False) and (getattr(scorer, "steps", None) or {}).get("replies") else {}),
             **({"source": os.environ["FALSEPASS_AUDIT_SOURCE"]} if os.environ.get("FALSEPASS_AUDIT_SOURCE") else {}),
             "loader": getattr(adapter, "loader", None),
             **({"scale": scaled} if scaled else {}),
+            **({"hash_seed_check": hash_seed_note} if hash_seed_note else {}),
             "timings": timings,
         },
         "results": [r.to_dict() for r in results],
@@ -290,6 +405,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, help="write results here instead of the audit folder")
     parser.add_argument("--jobs", type=int, default=DEFAULT_JOBS,
                         help=f"examples scored at once where safe (single-turn scoring); 1 = one at a time (default {DEFAULT_JOBS})")
+    parser.add_argument("--no-hash-seed-check", action="store_true",
+                        help="skip scoring the P11 replies again in a second process with another PYTHONHASHSEED")
+    parser.add_argument("--rescore", help=argparse.SUPPRESS)  # the second process of that check: example keys
+    parser.add_argument("--rescore-out", type=Path, help=argparse.SUPPRESS)
     parser.add_argument(
         "--fail-on", action="append", default=[], metavar="NAME>NUMBER",
         help="exit 1 when met; NAME is ceiling, lazy, false_fail or errors (repeatable)",
@@ -298,9 +417,12 @@ def main(argv: list[str] | None = None) -> int:
     # Absolute paths: a HUD environment is loaded from its own folder (its hooks use relative paths).
     args.audit_dir = args.audit_dir.resolve()
     args.out = args.out.resolve() if args.out else None
+    if args.rescore is not None:
+        rescore(args.audit_dir, args.n, args.seed, set(args.rescore.split(",")), args.rescore_out)
+        return 0
     try:
         payload = run(args.audit_dir, args.n, args.seed, args.few, args.package, args.search, args.search_examples, args.out,
-                      max(1, args.jobs))
+                      max(1, args.jobs), hash_seed=not args.no_hash_seed_check)
     except RuntimeError as stop:  # falsepass's own "cannot audit this as it stands" messages: no traceback
         print(f"falsepass: {stop or type(stop).__name__}", file=sys.stderr)
         if args.out is None:  # kept next to any earlier results, so the overview and a reader see why it stopped

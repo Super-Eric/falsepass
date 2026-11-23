@@ -369,3 +369,113 @@ def test_the_digest_keeps_weighted_terms_and_drops_a_flood_of_unweighted_metrics
     assert report.digest_terms(leaks) == leaks[:1]
     few = leaks[:5]
     assert report.digest_terms(few) == few
+
+
+def test_a_shotgun_paid_no_more_than_a_wrong_answer_is_labelled_partial_credit(tmp_path):
+    """A grader that gives 0.09 to any reply (a format term) pays a list of answers 0.09 too:
+    that row is partial credit, not a list being rewarded, and the digest and the draft say so."""
+    from falsepass import draft
+
+    rows = [_row("P6", "wrong_in_format", "a", 0.09), _row("P6", "wrong_in_format", "b", 0.09),
+            _row("P5", "list_bare", "a", 0.09), _row("P5", "list_bare", "b", 0.5)]
+    meta = {"environment": "o/e", "date": "2026-11-23", "versions": {}, "examples": 2, "seed": 0, "python": "3.12",
+            "falsepass": "0", "max_reward": 1.0, "bad_tolerance": 0.0, "weights": {}, "adapter": "hand-written"}
+    payload = {"meta": meta, "results": rows, "static": [], "rewardlint": None}
+    failing = {f["probe"]: f for f in report.digest(payload)["failing"]}
+    assert failing["P5"]["note"].startswith("on 1 of 2 failed rows this earns no more than a single wrong answer")
+    assert "note" not in failing["P6"]
+    folder = tmp_path / "e"
+    folder.mkdir()
+    (folder / "probe-results.json").write_text(json.dumps(payload))
+    assert draft.draft(folder).read_text().count("no more than a single wrong answer") == 1
+    paid = {**payload, "results": [{**r, "score": 1.0} if r["probe"] == "P6" else r for r in rows]}
+    assert "note" not in {f["probe"]: f for f in report.digest(paid)["failing"]}["P5"]  # a wrong answer paid in full is the finding
+
+
+def test_near_misses_paid_like_the_reference_are_counted_outside_the_ceiling():
+    """A wrong link slot in a repaired graph earns what the fix earns: the headline says so, and the
+    ceiling stays the known-bad rows' (the changed part may simply not be graded)."""
+    near = {**_row("X2", "wrong_slot", "a", 1.0), "expected": "below_reference", "passed": False}
+    rows = [_row("P3", "empty", "a", 0.0), near, {**near, "example": "b"},
+            {**near, "variant": "partial", "score": 0.4, "passed": True}]
+    head = report.headline(rows)
+    assert head["false_pass_ceiling"] == 0.0 and head["near_misses_paid"] == 2
+    assert head["near_misses_paid_via"] == ["X2 n/wrong_slot"]
+    assert "near_misses_paid" not in report.headline(rows[:1])
+
+
+def test_summary_wording_when_nothing_is_paid_and_too_few_tasks_ran():
+    meta = {"environment": "toy", "date": "x", "falsepass": "0", "versions": {}, "python": "3", "examples": 2, "seed": 0,
+            "max_reward": 1.0, "bad_tolerance": 0.0}
+    text = report.summary({"meta": meta, "results": [_row("P3", "empty", "a", 0.0)], "rewardlint": None})
+    assert "completion; no known-bad row was paid)" in text and "via no known-bad" not in text
+    assert "no fixed strategy ran on three or more tasks)" in text and "via None" not in text
+
+
+def test_a_hand_written_adapters_scorer_notes_reach_the_summary(tmp_path):
+    """A v1 episode scorer notes that the harness runs code on this machine; a policy adapter
+    built from the skeleton never copied that note into its own load notes."""
+    import json as _json
+
+    from falsepass import runner
+
+    folder = tmp_path / "toy"
+    folder.mkdir()
+    (folder / "src").mkdir()
+    (folder / "adapter.py").write_text('''
+from falsepass import Adapter, Example, Score
+
+class Scorer:
+    notes = ["the harness (bash) can run code, and runs it on this machine"]
+    async def score(self, example, completion):
+        return Score(0.0)
+    async def close(self):
+        pass
+
+class Toy(Adapter):
+    name = "toy"
+    load_notes = ["adapter note"]
+    def load(self, n, seed):
+        return Scorer(), [Example("a", "q", "1")]
+    def render(self, answer, example):
+        return answer
+    def wrong_answer(self, example):
+        return "2"
+
+ADAPTER = Toy()
+''')
+    runner.run(folder, n=1, few=1, jobs=1, hash_seed=False)
+    notes = _json.loads((folder / "probe-results.json").read_text())["meta"]["notes"]
+    assert notes == ["adapter note", "the harness (bash) can run code, and runs it on this machine"]
+
+
+def test_init_rejects_options_it_does_not_know(capsys):
+    import pytest
+
+    from falsepass import cli
+
+    with pytest.raises(SystemExit):
+        cli.main(["init", "owner/env", "--bogus-flag", "yes"])
+    assert "unrecognized arguments for init: --bogus-flag yes" in capsys.readouterr().err
+
+
+def test_packages_from_a_git_url_are_recorded_with_their_commit(monkeypatch):
+    import json as _json
+
+    from falsepass import runner
+
+    class Dist:
+        version = "0.1.0"
+        metadata = {"Name": "fdatool"}
+
+        def read_text(self, name):
+            return _json.dumps({"url": "https://example.org/fdatool.git", "vcs_info": {"vcs": "git", "commit_id": "f8cabd5" + "0" * 33}})
+
+    class Plain(Dist):
+        metadata = {"Name": "plain"}
+
+        def read_text(self, name):
+            return None
+
+    monkeypatch.setattr(runner.metadata, "distributions", lambda: [Dist(), Plain()])
+    assert runner.vcs_versions() == {"fdatool": "0.1.0 (https://example.org/fdatool.git@f8cabd500000)"}

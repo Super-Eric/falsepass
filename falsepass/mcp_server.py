@@ -451,7 +451,9 @@ def build():
             result["next"] = (f"Automatic mode will probably stop ({result.get('automatic_unlikely_because', 'see the source')}). "
                               f"Call falsepass_init again with force=true and manual=true (a Q&A task whose reply you can "
                               f"write) or policies=true (a game, simulation or tool task), fill in adapter.py, then "
-                              f"falsepass_audit(env={result['name']!r}). Or try falsepass_audit first: it says why it stops.")  # fmt: skip
+                              f"falsepass_audit(env={result['name']!r}). Or try falsepass_audit first: it says why it stops."
+                              + (f" The package ships files named like a known-good output ({', '.join(result['reference_files'][:3])}): "
+                                 "one may be the control, the reply render() returns." if result.get("reference_files") else ""))  # fmt: skip
         else:
             result["next"] = f"Call falsepass_audit(env={result['name']!r})"
         return result

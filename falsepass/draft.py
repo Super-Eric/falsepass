@@ -118,6 +118,7 @@ def draft(audit_dir: Path) -> Path:
     for r in results:
         groups[(r["probe"], r["name"])].append(r)
     hints = payload.get("static") or []
+    wrong = report.single_wrong_scores(results)
     lines += ["", "## Candidate findings", ""]
     number = 0
     for (probe, name), rows in groups.items():
@@ -149,6 +150,8 @@ def draft(audit_dir: Path) -> Path:
             lines.append("- Note: for open-ended tasks this shows the reward barely depends on which task was set. It is not a wrong answer being accepted.")
         if probe in report.OTHER_ANSWER_PROBES and report.structured_answers(meta):
             lines.append(f"- Note: {report.STRUCTURED_NOTE}.")
+        if note := report.partial_credit_note(probe, failed, wrong, meta.get("max_reward", 1.0)):
+            lines.append(f"- Note: {note}.")
         lines += ["- Cause: TODO (read the reward code)", "- Impact on training: TODO", "- Suggested fix: TODO", ""]
     if number == 0:
         lines += ["None: every probe passed.", ""]

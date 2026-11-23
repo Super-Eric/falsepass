@@ -32,6 +32,12 @@ def headline(results: list[dict[str, Any]]) -> dict[str, Any]:
         "known_bad": len(bad),
         "scoring_errors": sum(bool(r["errors"]) and not policy_raised(r) for r in results),
         **({"policy_errors": n} if (n := sum(policy_raised(r) for r in results)) else {}),
+        # A changed answer that had to earn less than the reference and did not (P17's denied field, an
+        # adapter's near miss): kept out of the ceiling, since the change may sit in a part that is not
+        # graded at all, but counted, so a run where every near miss is paid like the solution says so.
+        **({"near_misses_paid": len(paid), "near_misses_paid_via": sorted({f'{r["probe"]} {r["name"]}/{r["variant"]}' for r in paid})[:5]}
+           if (paid := [r for r in counted if r["expected"] == "below_reference" and not r["passed"] and r["score"] is not None])
+           else {}),
         "same_as_good": sum(bool(r.get("same_as_good")) for r in results),
         "no_control": sum(bool(r.get("no_control")) for r in results),
         "no_control_tasks": len({r["example"] for r in results if r.get("no_control")}),
@@ -180,6 +186,7 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
     for r in payload["results"]:
         groups[(r["probe"], r["name"], r["variant"], r["expected"])].append(r)
     failing = []
+    wrong = single_wrong_scores(payload["results"])
     for (probe, name, variant, expected), rows in groups.items():
         bad = [r for r in rows if not r["passed"]]
         if not bad:
@@ -203,7 +210,10 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
                 "(generated payloads such as P10's 2 MB reply) are stored as a preview only; the probe code rebuilds them"}),
             "answer_free": bool(first.get("answer_free")),
             **({"errors": first["errors"][:2]} if first.get("errors") else {}),
-            **({"note": STRUCTURED_NOTE} if probe in OTHER_ANSWER_PROBES and structured_answers(payload["meta"]) else {}),
+            **({"note": "; ".join(notes)} if (notes := [n for n in (
+                STRUCTURED_NOTE if probe in OTHER_ANSWER_PROBES and structured_answers(payload["meta"]) else "",
+                partial_credit_note(probe, bad, wrong, payload["meta"].get("max_reward", 1.0)),
+            ) if n]) else {}),
         })  # fmt: skip
     # False passes first (a known-bad completion paid), the most consistent ones on top; then false fails.
     failing.sort(key=lambda f: (f["expected"] != "zero", -f["failed"] / f["runs"]))
@@ -454,6 +464,33 @@ def timing_words(timings: dict[str, Any] | None) -> str:
     return words
 
 
+SINGLE_WRONG_PROBES = ("P6", "P7")  # one wrong answer, nothing else: what partial credit pays any reply
+
+
+def single_wrong_scores(results: list[dict[str, Any]]) -> dict[str, float]:
+    """The most a single wrong answer (P6, P7) earned on each task."""
+    best: dict[str, float] = {}
+    for r in results:
+        if r["probe"] in SINGLE_WRONG_PROBES and r.get("score") is not None:
+            best[r["example"]] = max(best.get(r["example"], r["score"]), r["score"])
+    return best
+
+
+def partial_credit_note(probe: str, bad: list[dict[str, Any]], wrong: dict[str, float], max_reward: float) -> str:
+    """A known-bad row paid less than full may earn only what a plain wrong answer earns on the
+    same task (a format term, a share of matching fields). That is the grader's partial credit
+    for any reply, not a reward for listing, denying or hedging: say so before a reader calls it
+    "shotgun rewarded"."""
+    if probe in SINGLE_WRONG_PROBES or not bad or bad[0]["expected"] != "zero":
+        return ""
+    level = [r for r in bad if r.get("score") is not None and r["example"] in wrong
+             and wrong[r["example"]] < max_reward - 1e-9 and r["score"] <= wrong[r["example"]] + 1e-9]  # fmt: skip
+    if not level:
+        return ""
+    return (f"on {len(level)} of {len(bad)} failed rows this earns no more than a single wrong answer (P6/P7) on the same "
+            "task: partial credit the grader gives any reply, not a reward for what this probe tries")
+
+
 OTHER_ANSWER_PROBES = ("P5", "P6", "P7", "X1")  # the rows whose "wrong" answer is a complete other answer
 STRUCTURED_NOTE = ("the reference is a structured answer (a plan, an action) and the wrong answer here is another task's "
                    "reference: a validity grader accepts any valid answer, so check whether this one is valid for this task "
@@ -551,13 +588,18 @@ def summary(payload: dict[str, Any]) -> str:
            f"of {solver_failed(results)[0]} tasks**: either the solver is wrong or a correct episode is not paid; read an X0 "
            "episode and the reward code before reading the rows below"] if solver_failed(results) else []),
         *[f"- **Load note:** {note}" for note in meta.get("notes") or []],
+        *([f"- **Hash-seed check (P11):** {meta['hash_seed_check']}"] if meta.get("hash_seed_check") else []),
         *[f"- **⚠ {'Result inconclusive: ' if w == open_after_one_reply(meta) else ''}{w}**" for w in warnings(meta)],
         *_weight_lines(meta, results),
         f"- **False-pass ceiling:** {_fmt(head['false_pass_ceiling'])} of {_fmt(meta['max_reward'])} "
-        f"(highest reward given to a known-bad completion; via {head['false_pass_via']})",
+        f"(highest reward given to a known-bad completion; "
+        f"{head['false_pass_via'] if head['false_pass_via'] == 'no known-bad row was paid' else 'via ' + str(head['false_pass_via'])})",
+        *([f"- **Near misses paid like the reference:** {head['near_misses_paid']} rows that had to earn less than the "
+           f"reference on their task did not (via {', '.join(head['near_misses_paid_via'])}); kept out of the ceiling, "
+           "since the changed part may not be graded at all: read one"] if head.get("near_misses_paid") else []),
         f"- **Lazy-policy reward:** {_fmt(head['lazy_policy_reward'])} "
         f"(best average reward of one fixed strategy that never uses the reference answer; "
-        f"via {head['lazy_policy_via']})",
+        + (f"via {head['lazy_policy_via']})" if head["lazy_policy_via"] else "no fixed strategy ran on three or more tasks)"),
         f"- **False-fail rate:** {_fmt(head['false_fail_rate'])} "
         f"({head['known_good']} known-good completions)",
         f"- **Completions on which reward code raised or timed out:** {head['scoring_errors']}",
@@ -596,7 +638,10 @@ def summary(payload: dict[str, Any]) -> str:
             "## Reward terms on known-bad and fixed-strategy completions",
             "",
             "Which part of the reward pays when the answer is wrong, or when a fixed strategy that never reads the task "
-            "plays (expected `lazy`). A correctness term should be 0 everywhere.",
+            "plays (expected `lazy`). "
+            + ("Values are the raw terms, before the per-task scale; a fixed strategy keeps what it really achieves under "
+               "an outcome reward, so read these against the solver's, not against 0." if meta.get("scale")
+               else "A correctness term should be 0 everywhere."),
             "",
             "| Reward term | Weight | Non-zero on | Mean value |",
             "|---|---|---|---|",

@@ -759,6 +759,7 @@ def scaffold(args) -> int:
                           "automatic_likely": kind["automatic"] if kind else None,
                           **({"task_data_fields": hub.task_data_fields(info["sources"])} if args.manual and info.get("sources") else {}),
                           **({"automatic_unlikely_because": why} if why else {}),
+                          **({"reference_files": refs} if (refs := hub.reference_files(info.get("sources") or {})) else {}),
                           **({"outside_hosts": kind["outside_hosts"]} if kind and kind.get("outside_hosts") else {}),
                           "others": info.get("others", []), "next": f"falsepass audit {ref}"}, indent=1))  # fmt: skip
         return 0
@@ -790,6 +791,9 @@ def scaffold(args) -> int:
               f"stops, rerun with --force --manual (or --policies for a game, simulation or tool task):")
     else:
         print(f"created {audit_dir}/env.toml — no adapter needed for single-turn environments with reference answers:")
+    if refs := hub.reference_files(info.get("sources") or {}):
+        print(f"  (files in the package named like a known-good output, copied to src/; one may serve as the control: "
+              f"{', '.join(refs[:6])}{', ...' if len(refs) > 6 else ''})")
     if kind and kind.get("outside_hosts"):
         print(f"  (the code calls an outside service: {', '.join(kind['outside_hosts'])}. An audit should not reach it: "
               "v1 episodes block outside hosts; otherwise give the adapter a local stand-in)")
@@ -839,7 +843,8 @@ def main(argv: list[str] | None = None) -> int:
                "--few N (tasks for the slower probes, default 3), --search CALLS (mutation search budget per "
                "direction and task; 120 is a good value), --search-examples N, --out DIR (write results "
                "elsewhere), --jobs N (tasks scored at once for single-turn rewards; default up to 8, 1 = one at "
-               "a time), --fail-on COND (repeatable, e.g. 'ceiling>0.1' 'errors>0': exit 1 when met).",
+               "a time), --no-hash-seed-check (skip scoring the P11 replies again in a second process with another "
+               "PYTHONHASHSEED), --fail-on COND (repeatable, e.g. 'ceiling>0.1' 'errors>0': exit 1 when met).",
     )  # fmt: skip
     audit.add_argument("env", help="name of a folder under audits/, or a path to one")
     audit.add_argument("--print-command", action="store_true", help="show the uv command and exit")
@@ -972,6 +977,8 @@ def main(argv: list[str] | None = None) -> int:
                               help="read Hugging Face datasets from the local cache without checking the Hub first "
                                    "(HF_HUB_OFFLINE=1): seconds saved per run once the data is cached; a dataset not cached yet fails to load")
     args, extra = parser.parse_known_args(argv)
+    if extra and args.command not in ("audit", "rollout", "propose", "reach", "container"):  # only these pass options on to the run
+        parser.error(f"unrecognized arguments for {args.command}: {' '.join(extra)}")
     global OFFLINE
     OFFLINE = bool(getattr(args, "offline", False))
     if OFFLINE:
