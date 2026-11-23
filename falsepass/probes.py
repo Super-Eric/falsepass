@@ -973,8 +973,13 @@ def numeric_forms(answer: str) -> dict[str, str]:
         forms["one_more_decimal"] = text + "0"
 
     if value == value.to_integral_value() and len(digits.split(".")[0]) >= 5:
-        grouped = f"{int(value):,}"
-        forms["thousands_separator"] = "+" + grouped if text.startswith("+") else grouped
+        # Group digits without int(value): Python 3.11+ rejects converting
+        # 4301+-digit integers to str by default, even though these are valid
+        # numeric references. Preserve the original sign exactly.
+        integer = digits.split(".")[0]
+        chunks = (integer[max(0, i - 3):i] for i in range(len(integer), 0, -3))
+        sign = text[0] if text[0] in "+-" else ""
+        forms["thousands_separator"] = sign + ",".join(reversed(tuple(chunks)))
 
     if text.startswith("-"):
         forms["unicode_minus"] = "\u2212" + text[1:]
