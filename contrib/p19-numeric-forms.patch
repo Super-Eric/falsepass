@@ -1,0 +1,154 @@
+From f7e5dbf64108f1f856f8d91e0c7ac185a2366c8f Mon Sep 17 00:00:00 2001
+From: Zhibo Zhang <24061721@hdu.edu.cn>
+Date: Mon, 23 Nov 2026 08:40:07 +0800
+Subject: [PATCH] P19: the same number written another way must keep full
+ reward
+
+Adds a per-example probe for numeric false fails: a reference that is a plain
+number is re-rendered as a value-identical form (36 -> 36.0, +36, 12,000,
+U+2212 for negatives) and must still earn full reward. A grader that rejects
+them reads the string instead of the number.
+
+Docs: README/README.zh-CN table rows, draft.py description; the row is a lead
+like P2 and joins NEEDS_JUDGEMENT. Tests: a string-matching grader is flagged
+on rather than some variants, a numeric one is cleared, and the existing
+strict-grader parametrisation allows P19 alongside P2.
+---
+ README.md            |  1 +
+ README.zh-CN.md      |  1 +
+ falsepass/draft.py   |  3 ++-
+ falsepass/probes.py  | 44 ++++++++++++++++++++++++++++++++++++++++++++
+ tests/test_probes.py | 13 ++++++++++++-
+ 5 files changed, 60 insertions(+), 2 deletions(-)
+
+diff --git a/README.md b/README.md
+index 73ac21d..c8fe76b 100644
+--- a/README.md
++++ b/README.md
+@@ -274,6 +274,7 @@ the commands with `uv run`; `uv run pytest` runs the kit's own tests.
+ | P16 | JSON answers: the reference with every free-text value (two words or more) replaced by the prompt; labels, IDs and numbers kept | gives (close to) nothing |
+ | P17 | JSON answers: one short string field (a label, a date, an ID) followed by "(this is wrong)" everywhere it occurs, one field at a time | gives less than the reference |
+ | P18 | Edit tasks (the reference is a text from the prompt with some lines changed): each replaced or deleted line kept just before its replacement, so the reply keeps what it should have changed (not run on fenced or Python code) | gives (close to) nothing |
++| P19 | the same number written another way (`36.0`, `+36`, `12,000`, `−5`) | gives full reward |
+ | A1 | no reference needed: every integer 0–1000, every letter, yes/no words, or the prompt's words in one reply | gives nothing |
+ | O1 | OpenEnv, a decision field in the action: every value of it in turn, nothing else said (a fixed strategy; its mean is the lazy-policy reward) | pays only the base rate of that label |
+ | O2 | OpenEnv, a self-reported field in the action (`confidence`, `score`, `quality`): at its maximum and at its minimum | gives the same reward |
+diff --git a/README.zh-CN.md b/README.zh-CN.md
+index c6e8b58..e56cb0f 100644
+--- a/README.zh-CN.md
++++ b/README.zh-CN.md
+@@ -188,6 +188,7 @@ falsepass mcp                             # MCP 服务，走 stdio（需要 `fal
+ | P16 | JSON 答案：把参考答案里每个自由文本字段（两个词以上）换成题目原文，标签、ID 和数字保留 | 不给分或几乎不给分 |
+ | P17 | JSON 答案：某一个短字段（标签、日期、ID）在所有出现的地方后面都加上“(this is wrong)”，每次只改一个字段 | 比标准答案得分低 |
+ | P18 | 编辑类任务（标准答案是题目里的一段文本改了几行）：每一处被替换或删除的旧行都保留在新行前面，回答留着本该改掉的内容（代码块和 Python 代码不做） | 不给分或几乎不给分 |
++| P19 | 同一个数字的另一种写法（`36.0`、`+36`、`12,000`、`−5`） | 给满分 |
+ | A1 | 不需要标准答案：一次列出 0–1000 所有整数、所有字母、yes/no 之类的词，或题目里所有的词 | 不给分 |
+ | O1 | OpenEnv，动作里的判定字段：逐个取值各试一遍，其他什么都不说（固定策略，它的平均分就是懒惰策略得分） | 只拿到该标签的基准比例 |
+ | O2 | OpenEnv，动作里的自报字段（`confidence`、`score`、`quality`）：分别取最大值和最小值 | 给同样的分 |
+diff --git a/falsepass/draft.py b/falsepass/draft.py
+index 9a44b33..1f9c965 100644
+--- a/falsepass/draft.py
++++ b/falsepass/draft.py
+@@ -48,6 +48,7 @@ MEANING = {
+     "P16": "a JSON reply whose free-text fields are the prompt pasted in is paid like the reference",
+     "P17": "a JSON reply with one short field followed by a denial everywhere is paid like the reference: that field is not read, or not read to its end",
+     "P18": "an edit that keeps every replaced line next to its replacement is paid (close to) like the edited text: the grader checks that the new lines are there and does not check, or barely penalises, the old ones still being there",
++    "P19": "a number written another way, with the same value, loses reward",
+     "C0": "the key written as the output file is not paid in full (no automatic submission format)",
+     "C1": "a key with NaN, Infinity or fractional counts written as the output file is paid in full, or makes scoring raise",
+     "C2": "an empty, truncated or copied output file is paid in full",
+@@ -57,7 +58,7 @@ MEANING = {
+     "X0": "control (a policy that solves the task)",
+     "X1": "environment-specific probe",
+ }
+-NEEDS_JUDGEMENT = {"P2", "S2", "P14", "T7"}  # strictness versus defect is a human call; P14/T7 only matter for some harnesses
++NEEDS_JUDGEMENT = {"P2", "P19", "S2", "P14", "T7"}  # strictness versus defect is a human call; P19/T7 only matter for some harnesses
+ 
+ 
+ def _stats(rows: list[dict[str, Any]]) -> str:
+diff --git a/falsepass/probes.py b/falsepass/probes.py
+index bcc75ff..e0ed85e 100644
+--- a/falsepass/probes.py
++++ b/falsepass/probes.py
+@@ -606,6 +606,49 @@ async def p18_edit_union(adapter: Adapter, scorer: Scorer, ex: Example) -> list[
+     ]
+ 
+ 
++# --- P19: the same number written differently ------------------------------------------
++
++
++NUMERIC = re.compile(r"[+-]?\d+(?:\.\d+)?")
++
++
++def numeric_forms(answer: str) -> dict[str, str]:
++    """Value-identical ways to write the reference when it is a plain number.
++
++    Only surface changes: no unit, no rounding and no re-grouping that changes the value.
++    A grader that rejects these reads the string instead of the number (a false fail);
++    a prompt that demands exactly one spelling may reject them on purpose, so this row
++    is a lead like P2, not an exploit.
++    """
++    from decimal import Decimal
++
++    text = answer.strip()
++    if not NUMERIC.fullmatch(text):
++        return {}
++    value = Decimal(text)
++    digits = text.lstrip("+-")
++    forms: dict[str, str] = {}
++    if value == value.to_integral_value() and "." not in digits:
++        forms["trailing_zero"] = text + ".0"
++    elif "." in digits:
++        forms["one_more_decimal"] = text + "0"
++    if value == value.to_integral_value() and len(digits.split(".")[0]) >= 4:
++        forms["thousands_separator"] = f"{int(value):,}"
++    if not text.startswith("-"):
++        forms["plus_sign"] = "+" + text
++    else:
++        forms["unicode_minus"] = "\u2212" + text[1:]
++    return {name: form for name, form in forms.items() if form != text}
++
++
++async def p19_numeric_forms(adapter: Adapter, scorer: Scorer, ex: Example) -> list[ProbeResult]:
++    """The same number, written another way, must keep full reward."""
++    return [
++        await check("P19", "numeric_forms", variant, Expect.FULL, adapter.render(done, ex), adapter, scorer, ex)
++        for variant, done in numeric_forms(ex.answer).items()
++    ]
++
++
+ # --- T7: a tool call before the answer --------------------------------------------------
+@@ -947,6 +990,7 @@ PER_EXAMPLE = [
+     p1_ground_truth, p2_equivalent_forms, p3_empty, p4_echo, p5_shotgun,
+     p6_format_only, p7_wrong_confident, p8_judge_injection, p9_oversized,
+     p13_special_numbers, p14_format_mentions, p15_hedged_in_slot, p16_field_echo, p17_field_hedge, p18_edit_union,
++    p19_numeric_forms,
+     a1_answer_free_spray,
+ ]  # fmt: skip
+ # Slower or input-independent probes run on a handful of examples only.
+diff --git a/tests/test_probes.py b/tests/test_probes.py
+index bca0024..7a85094 100644
+--- a/tests/test_probes.py
++++ b/tests/test_probes.py
+@@ -52,7 +52,18 @@ def run(probe, fn):
+ @pytest.mark.parametrize("probe", probes.PER_EXAMPLE + probes.FEW_EXAMPLES)
+ def test_strict_verifier_only_fails_on_brittleness(probe):
+     failed = [r for r in run(probe, strict) if not r.passed]
+-    assert {r.probe for r in failed} <= {"P2"}  # strict graders are brittle, never exploitable
++    assert {r.probe for r in failed} <= {"P2", "P19"}  # strict graders are brittle, never exploitable
++
++
++def numeric_tolerant(text, answer):  # reads the last number and compares values
++    nums = re.findall(r"[-+]?\d+(?:\.\d+)?", text.replace(",", ""))
++    return float(bool(nums) and abs(float(nums[-1]) - float(answer)) < 1e-9)
++
++
++def test_p19_flags_a_string_matching_grader_and_clears_a_numeric_one():
++    flagged = [r for r in run(probes.p19_numeric_forms, strict) if not r.passed]
++    assert flagged and {r.variant for r in flagged} >= {"trailing_zero", "plus_sign"}
++    assert all(r.passed for r in run(probes.p19_numeric_forms, numeric_tolerant))
+ 
+ 
+ def test_leaky_verifier_is_caught():
+-- 
+2.34.1
