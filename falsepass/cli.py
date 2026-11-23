@@ -839,7 +839,8 @@ def main(argv: list[str] | None = None) -> int:
                "--few N (tasks for the slower probes, default 3), --search CALLS (mutation search budget per "
                "direction and task; 120 is a good value), --search-examples N, --out DIR (write results "
                "elsewhere), --jobs N (tasks scored at once for single-turn rewards; default up to 8, 1 = one at "
-               "a time), --fail-on COND (repeatable, e.g. 'ceiling>0.1' 'errors>0': exit 1 when met).",
+               "a time), --no-hash-seed-check (skip scoring the P11 replies again in a second process with another "
+               "PYTHONHASHSEED), --fail-on COND (repeatable, e.g. 'ceiling>0.1' 'errors>0': exit 1 when met).",
     )  # fmt: skip
     audit.add_argument("env", help="name of a folder under audits/, or a path to one")
     audit.add_argument("--print-command", action="store_true", help="show the uv command and exit")

@@ -28,7 +28,8 @@ class Slow:
         return Score(float(bool(marks) and marks[-1] == example.answer))
 
     async def close(self):
-        (pathlib.Path(__file__).parent / "most-in-flight.txt").write_text(str(Slow.most))
+        file = pathlib.Path(__file__).parent / "most-in-flight.txt"  # the most of any process (the P11 hash-seed check loads it again)
+        file.write_text(str(max(Slow.most, int(file.read_text()) if file.exists() else 0)))
 
 class Toy(Adapter):
     name = "toy"

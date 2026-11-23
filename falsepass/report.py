@@ -180,6 +180,7 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
     for r in payload["results"]:
         groups[(r["probe"], r["name"], r["variant"], r["expected"])].append(r)
     failing = []
+    wrong = single_wrong_scores(payload["results"])
     for (probe, name, variant, expected), rows in groups.items():
         bad = [r for r in rows if not r["passed"]]
         if not bad:
@@ -203,7 +204,10 @@ def digest(payload: dict[str, Any], example_chars: int = 400, completions: dict[
                 "(generated payloads such as P10's 2 MB reply) are stored as a preview only; the probe code rebuilds them"}),
             "answer_free": bool(first.get("answer_free")),
             **({"errors": first["errors"][:2]} if first.get("errors") else {}),
-            **({"note": STRUCTURED_NOTE} if probe in OTHER_ANSWER_PROBES and structured_answers(payload["meta"]) else {}),
+            **({"note": "; ".join(notes)} if (notes := [n for n in (
+                STRUCTURED_NOTE if probe in OTHER_ANSWER_PROBES and structured_answers(payload["meta"]) else "",
+                partial_credit_note(probe, bad, wrong, payload["meta"].get("max_reward", 1.0)),
+            ) if n]) else {}),
         })  # fmt: skip
     # False passes first (a known-bad completion paid), the most consistent ones on top; then false fails.
     failing.sort(key=lambda f: (f["expected"] != "zero", -f["failed"] / f["runs"]))
@@ -454,6 +458,33 @@ def timing_words(timings: dict[str, Any] | None) -> str:
     return words
 
 
+SINGLE_WRONG_PROBES = ("P6", "P7")  # one wrong answer, nothing else: what partial credit pays any reply
+
+
+def single_wrong_scores(results: list[dict[str, Any]]) -> dict[str, float]:
+    """The most a single wrong answer (P6, P7) earned on each task."""
+    best: dict[str, float] = {}
+    for r in results:
+        if r["probe"] in SINGLE_WRONG_PROBES and r.get("score") is not None:
+            best[r["example"]] = max(best.get(r["example"], r["score"]), r["score"])
+    return best
+
+
+def partial_credit_note(probe: str, bad: list[dict[str, Any]], wrong: dict[str, float], max_reward: float) -> str:
+    """A known-bad row paid less than full may earn only what a plain wrong answer earns on the
+    same task (a format term, a share of matching fields). That is the grader's partial credit
+    for any reply, not a reward for listing, denying or hedging: say so before a reader calls it
+    "shotgun rewarded"."""
+    if probe in SINGLE_WRONG_PROBES or not bad or bad[0]["expected"] != "zero":
+        return ""
+    level = [r for r in bad if r.get("score") is not None and r["example"] in wrong
+             and wrong[r["example"]] < max_reward - 1e-9 and r["score"] <= wrong[r["example"]] + 1e-9]  # fmt: skip
+    if not level:
+        return ""
+    return (f"on {len(level)} of {len(bad)} failed rows this earns no more than a single wrong answer (P6/P7) on the same "
+            "task: partial credit the grader gives any reply, not a reward for what this probe tries")
+
+
 OTHER_ANSWER_PROBES = ("P5", "P6", "P7", "X1")  # the rows whose "wrong" answer is a complete other answer
 STRUCTURED_NOTE = ("the reference is a structured answer (a plan, an action) and the wrong answer here is another task's "
                    "reference: a validity grader accepts any valid answer, so check whether this one is valid for this task "
@@ -551,6 +582,7 @@ def summary(payload: dict[str, Any]) -> str:
            f"of {solver_failed(results)[0]} tasks**: either the solver is wrong or a correct episode is not paid; read an X0 "
            "episode and the reward code before reading the rows below"] if solver_failed(results) else []),
         *[f"- **Load note:** {note}" for note in meta.get("notes") or []],
+        *([f"- **Hash-seed check (P11):** {meta['hash_seed_check']}"] if meta.get("hash_seed_check") else []),
         *[f"- **⚠ {'Result inconclusive: ' if w == open_after_one_reply(meta) else ''}{w}**" for w in warnings(meta)],
         *_weight_lines(meta, results),
         f"- **False-pass ceiling:** {_fmt(head['false_pass_ceiling'])} of {_fmt(meta['max_reward'])} "

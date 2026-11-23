@@ -47,10 +47,14 @@ Everything an audit writes lives in `audits/<env>/` (or the folder given with `-
   "points": {"task-3": [floor, reference]}, "excluded": {"task-0": "why"}}`. Every `score` is
   then `(raw - floor) / (reference - floor)` on its task, `max_reward` is 1.0, and the raw
   reward is in `metrics.raw_reward`.
+- P11 rows `reference_other_hash_seed` and `wrong_in_format_other_hash_seed`: the same replies
+  scored once more in a second process with another `PYTHONHASHSEED` (set order of strings
+  differs between processes, never within one). `meta.hash_seed_check` says why the check did
+  not run, when it did not (loading took over a minute; the second process failed).
 - `meta.timings`: where the time went, in seconds: `total_s` (the probe process, after set-up),
   `set_up_s` (resolving and installing the virtualenv, when started through the CLI; `words`
   adds the two), `phases` (`load`, `prepare`,
-  `probes`, `slower_probes`, `hygiene`, `rewardlint`, `close`, `static`), `jobs` (tasks scored
+  `probes`, `slower_probes`, `hygiene`, `rewardlint`, `close`, `hash_seed`, `static`), `jobs` (tasks scored
   at once; 1 where the scorer is not safe to run concurrently) and `hub_checked` (the dataset
   library was loaded with nothing telling it to stay offline, so a Hub-hosted dataset was checked
   with the Hub; `--offline` skips that once the data is cached). The summary's **Time** line and
@@ -120,8 +124,11 @@ known-bad and fixed-strategy rows: `{"term": "format_reward", "weight": 0.2, "no
 term should be 0 there; a format or length term that pays explains a ceiling.
 
 `failing` lists false passes first (a known-bad completion was paid), the most
-consistent ones on top, then false fails. `meta` and `static_hints` are trimmed to what an
-agent needs; everything else is in `probe-results.json`.
+consistent ones on top, then false fails. An entry's `note` adds what changes its reading:
+the reference is a structured answer, or the row earns no more than a single wrong answer
+(P6, P7) on the same task, which is the grader's partial credit for any reply rather than a
+reward for listing or denying. `meta` and `static_hints` are trimmed to what an agent needs;
+everything else is in `probe-results.json`.
 
 The headline numbers:
 

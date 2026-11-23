@@ -369,3 +369,24 @@ def test_the_digest_keeps_weighted_terms_and_drops_a_flood_of_unweighted_metrics
     assert report.digest_terms(leaks) == leaks[:1]
     few = leaks[:5]
     assert report.digest_terms(few) == few
+
+
+def test_a_shotgun_paid_no_more_than_a_wrong_answer_is_labelled_partial_credit(tmp_path):
+    """A grader that gives 0.09 to any reply (a format term) pays a list of answers 0.09 too:
+    that row is partial credit, not a list being rewarded, and the digest and the draft say so."""
+    from falsepass import draft
+
+    rows = [_row("P6", "wrong_in_format", "a", 0.09), _row("P6", "wrong_in_format", "b", 0.09),
+            _row("P5", "list_bare", "a", 0.09), _row("P5", "list_bare", "b", 0.5)]
+    meta = {"environment": "o/e", "date": "2026-11-23", "versions": {}, "examples": 2, "seed": 0, "python": "3.12",
+            "falsepass": "0", "max_reward": 1.0, "bad_tolerance": 0.0, "weights": {}, "adapter": "hand-written"}
+    payload = {"meta": meta, "results": rows, "static": [], "rewardlint": None}
+    failing = {f["probe"]: f for f in report.digest(payload)["failing"]}
+    assert failing["P5"]["note"].startswith("on 1 of 2 failed rows this earns no more than a single wrong answer")
+    assert "note" not in failing["P6"]
+    folder = tmp_path / "e"
+    folder.mkdir()
+    (folder / "probe-results.json").write_text(json.dumps(payload))
+    assert draft.draft(folder).read_text().count("no more than a single wrong answer") == 1
+    paid = {**payload, "results": [{**r, "score": 1.0} if r["probe"] == "P6" else r for r in rows]}
+    assert "note" not in {f["probe"]: f for f in report.digest(paid)["failing"]}["P5"]  # a wrong answer paid in full is the finding
