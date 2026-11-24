@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add P19 `numeric_forms`, a per-example check for equivalent numeric answers (extra decimal zero, explicit plus, thousands separator and Unicode minus). Skip likely codes with leading zeros and four-digit-year grouping; format-strict graders still require manual interpretation.
+
 - The wrong answer built from a JSON reference (P6 and others) changed a string by appending `_x`, so it still contained the right value: a grader that matches by substring paid it, and the summary read the row as a lazy strategy at 1.0. A string now becomes another task's value at the same place when one differs (a real wrong label), else one that shares no substring with the original.
 - P11 (determinism) also scores its two replies once more in a second process with another `PYTHONHASHSEED` (rows `reference_other_hash_seed`, `wrong_in_format_other_hash_seed`). Within one process the order of a set of strings never changes, so a reward that takes the first items of `list(set(...))` passed P11 and still changed from run to run: in an audited environment 183 of 233 tasks got a different reward under another seed. The check loads the environment again, so it is skipped when loading took over a minute (`meta.hash_seed_check` and the summary say so); `--no-hash-seed-check` turns it off.
 - Partial credit is named as such: a known-bad row paid less than full that earns no more than a single wrong answer (P6, P7) on the same task gets a `note` in the digest and the draft ("partial credit the grader gives any reply"), so a 0.09 format term on a list of answers is not read as a shotgun being rewarded.

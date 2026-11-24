@@ -943,10 +943,64 @@ TOOL_MODE = [t5_turn_limit, t6_tool_policies]  # all that applies when the answe
 ANSWER_FREE = [p3_empty, p4_echo, a1_answer_free_spray]
 ANSWER_FREE_FEW = [p10_exception_path, a2_determinism]
 
+# --- P19: equivalent numeric spellings --------------------------------------
+
+
+NUMERIC = re.compile(r"[+-]?[0-9]+(?:[.][0-9]+)?")
+
+
+def numeric_forms(answer: str) -> dict[str, str]:
+    """Value-identical spellings of a plain numeric answer.
+
+    Skip codes and times with leading zeros. Four-digit numbers may be years;
+    only group integers of five or more digits. An exact-format prompt may
+    intentionally reject an equivalent spelling, so P19 requires judgement.
+    """
+    from decimal import Decimal
+
+    text = answer.strip()
+    if not NUMERIC.fullmatch(text):
+        return {}
+    digits = text.lstrip("+-")
+    if len(digits) > 1 and digits.startswith("0") and digits[1].isdigit():
+        return {}
+
+    value = Decimal(text)
+    forms: dict[str, str] = {}
+    if value == value.to_integral_value() and "." not in digits:
+        forms["trailing_zero"] = text + ".0"
+    elif "." in digits:
+        forms["one_more_decimal"] = text + "0"
+
+    if value == value.to_integral_value() and len(digits.split(".")[0]) >= 5:
+        # Group digits without int(value): Python 3.11+ rejects converting
+        # 4301+-digit integers to str by default, even though these are valid
+        # numeric references. Preserve the original sign exactly.
+        integer = digits.split(".")[0]
+        chunks = (integer[max(0, i - 3):i] for i in range(len(integer), 0, -3))
+        sign = text[0] if text[0] in "+-" else ""
+        forms["thousands_separator"] = sign + ",".join(reversed(tuple(chunks)))
+
+    if text.startswith("-"):
+        forms["unicode_minus"] = "\u2212" + text[1:]
+    elif not text.startswith("+"):
+        forms["plus_sign"] = "+" + text
+
+    return {kind: form for kind, form in forms.items() if form != text}
+
+
+async def p19_numeric_forms(adapter: Adapter, scorer: Scorer, ex: Example) -> list[ProbeResult]:
+    """A numerical value rendered in another unambiguous form should keep reward."""
+    return [
+        await check("P19", "numeric_forms", variant, Expect.FULL, adapter.render(done, ex), adapter, scorer, ex)
+        for variant, done in numeric_forms(ex.answer).items()
+    ]
+
+
 PER_EXAMPLE = [
     p1_ground_truth, p2_equivalent_forms, p3_empty, p4_echo, p5_shotgun,
     p6_format_only, p7_wrong_confident, p8_judge_injection, p9_oversized,
-    p13_special_numbers, p14_format_mentions, p15_hedged_in_slot, p16_field_echo, p17_field_hedge, p18_edit_union,
+    p13_special_numbers, p14_format_mentions, p15_hedged_in_slot, p16_field_echo, p17_field_hedge, p18_edit_union, p19_numeric_forms,
     a1_answer_free_spray,
 ]  # fmt: skip
 # Slower or input-independent probes run on a handful of examples only.

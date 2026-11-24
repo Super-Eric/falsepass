@@ -52,7 +52,61 @@ def run(probe, fn):
 @pytest.mark.parametrize("probe", probes.PER_EXAMPLE + probes.FEW_EXAMPLES)
 def test_strict_verifier_only_fails_on_brittleness(probe):
     failed = [r for r in run(probe, strict) if not r.passed]
-    assert {r.probe for r in failed} <= {"P2"}  # strict graders are brittle, never exploitable
+    assert {r.probe for r in failed} <= {"P2", "P19"}  # brittleness may be intentional, never exploitable
+
+
+def numeric_tolerant(text, answer):
+    """Example numeric-value grader accepting P19's different spellings."""
+    from decimal import Decimal, InvalidOperation
+
+    marks = re.findall(r"^#### ([^ ]+)[ ]*$", text, re.M)
+    if len(marks) != 1:
+        return 0.0
+    try:
+        actual = Decimal(marks[0].replace(",", "").replace("\u2212", "-"))
+        return float(actual == Decimal(answer))
+    except InvalidOperation:
+        return 0.0
+
+
+def test_p19_flags_string_matching_and_clears_numeric_value_comparison():
+    flagged = [r for r in run(probes.p19_numeric_forms, strict) if not r.passed]
+    assert {r.variant for r in flagged} >= {"trailing_zero", "plus_sign"}
+    assert all(r.passed for r in run(probes.p19_numeric_forms, numeric_tolerant))
+
+
+@pytest.mark.parametrize(
+    ("reference", "expected"),
+    [
+        ("42", {"trailing_zero": "42.0", "plus_sign": "+42"}),
+        ("+42", {"trailing_zero": "+42.0"}),
+        ("-5", {"trailing_zero": "-5.0", "unicode_minus": "\u22125"}),
+        ("12000", {"trailing_zero": "12000.0", "thousands_separator": "12,000", "plus_sign": "+12000"}),
+        ("1234", {"trailing_zero": "1234.0", "plus_sign": "+1234"}),
+        ("0830", {}),
+        ("0123", {}),
+        ("0.5", {"one_more_decimal": "0.50", "plus_sign": "+0.5"}),
+        ("+0.5", {"one_more_decimal": "+0.50"}),
+        ("-0.5", {"one_more_decimal": "-0.50", "unicode_minus": "\u22120.5"}),
+        ("1/2", {}),
+        ("25%", {}),
+        ("42 kg", {}),
+    ],
+)
+def test_p19_numeric_forms_only_produces_value_identical_spelling(reference, expected):
+    assert probes.numeric_forms(reference) == expected
+
+
+def test_p19_long_integer_grouping_does_not_hit_python_digit_limit():
+    # Under Python >=3.11, int-to-str conversion of 4301 digits raises by
+    # default. P19 must not crash or change its numeric reference.
+    number = "9" * 5000
+    forms = probes.numeric_forms(number)
+    grouping = forms["thousands_separator"]
+    assert grouping.replace(",", "") == number
+    assert grouping.count(",") == (len(number) - 1) // 3
+    assert probes.numeric_forms("-" + number)["thousands_separator"] == "-" + grouping
+    assert probes.numeric_forms("+" + number)["thousands_separator"] == "+" + grouping
 
 
 def test_leaky_verifier_is_caught():

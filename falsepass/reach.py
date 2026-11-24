@@ -10,7 +10,7 @@ scores only what it was asked for, plus the reference (P1) as a control, and wri
 `{answer_in_format}` and `{wrong_in_format}` by the same written in the answer format the audit
 uses (`\\boxed{42}`, `#### 42`, ...). Every other brace stays as written.
 
-Per-example probes only (P1-P9, P13-P18, A1, X1; in tool mode T5, T6 and the adapter's own
+Per-example probes only (P1-P9, P13-P19, A1, X1; in tool mode T5, T6 and the adapter's own
 policy probes): the slower probes that repeat or replay an episode (P10, P11, T4, T7, T8) are
 not counted this way.
 """

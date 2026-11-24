@@ -48,6 +48,7 @@ MEANING = {
     "P16": "a JSON reply whose free-text fields are the prompt pasted in is paid like the reference",
     "P17": "a JSON reply with one short field followed by a denial everywhere is paid like the reference: that field is not read, or not read to its end",
     "P18": "an edit that keeps every replaced line next to its replacement is paid (close to) like the edited text: the grader checks that the new lines are there and does not check, or barely penalises, the old ones still being there",
+    "P19": "a number written another way, with the same value, loses reward",
     "C0": "the key written as the output file is not paid in full (no automatic submission format)",
     "C1": "a key with NaN, Infinity or fractional counts written as the output file is paid in full, or makes scoring raise",
     "C2": "an empty, truncated or copied output file is paid in full",
@@ -57,7 +58,7 @@ MEANING = {
     "X0": "control (a policy that solves the task)",
     "X1": "environment-specific probe",
 }
-NEEDS_JUDGEMENT = {"P2", "S2", "P14", "T7"}  # strictness versus defect is a human call; P14/T7 only matter for some harnesses
+NEEDS_JUDGEMENT = {"P2", "P19", "S2", "P14", "T7"}  # P2/P19: strictness versus defect; P14/T7: harness-dependent
 
 
 def _stats(rows: list[dict[str, Any]]) -> str:
