@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.17.0 — 2026-11-24
 
 - New probe P19 (`numeric_forms`, contributed in #3): a plain numeric reference written another way with the same value (`36.0`, `+36`, `12,000` or `12,345.5`, `−5`) should keep full reward; a grader that compares the string and not the number loses it. No separator is added below five digits, since a four-digit answer is often a year, and references with a leading zero (`0830`, `0123`) are left alone. Like P2 it is strictness versus defect, so the draft marks it for judgement.
 - The wrong answer built from a JSON reference (P6 and others) changed a string by appending `_x`, so it still contained the right value: a grader that matches by substring paid it, and the summary read the row as a lazy strategy at 1.0. A string now becomes another task's value at the same place when one differs (a real wrong label), else one that shares no substring with the original.
