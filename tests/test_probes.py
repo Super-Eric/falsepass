@@ -86,6 +86,8 @@ def test_p19_flags_string_matching_and_clears_numeric_value_comparison():
         ("0830", {}),
         ("0123", {}),
         ("0.5", {"one_more_decimal": "0.50", "plus_sign": "+0.5"}),
+        ("12345.5", {"one_more_decimal": "12345.50", "thousands_separator": "12,345.5", "plus_sign": "+12345.5"}),
+        ("12345.0", {"one_more_decimal": "12345.00", "thousands_separator": "12,345.0", "plus_sign": "+12345.0"}),
         ("+0.5", {"one_more_decimal": "+0.50"}),
         ("-0.5", {"one_more_decimal": "-0.50", "unicode_minus": "\u22120.5"}),
         ("1/2", {}),

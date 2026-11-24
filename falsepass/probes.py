@@ -953,40 +953,28 @@ def numeric_forms(answer: str) -> dict[str, str]:
     """Value-identical spellings of a plain numeric answer.
 
     Skip codes and times with leading zeros. Four-digit numbers may be years;
-    only group integers of five or more digits. An exact-format prompt may
+    only group an integer part of five or more digits. An exact-format prompt may
     intentionally reject an equivalent spelling, so P19 requires judgement.
     """
-    from decimal import Decimal
-
     text = answer.strip()
     if not NUMERIC.fullmatch(text):
         return {}
-    digits = text.lstrip("+-")
+    sign, digits = text[: len(text) - len(text.lstrip("+-"))], text.lstrip("+-")
     if len(digits) > 1 and digits.startswith("0") and digits[1].isdigit():
         return {}
+    integer, _, fraction = digits.partition(".")
 
-    value = Decimal(text)
     forms: dict[str, str] = {}
-    if value == value.to_integral_value() and "." not in digits:
-        forms["trailing_zero"] = text + ".0"
-    elif "." in digits:
-        forms["one_more_decimal"] = text + "0"
-
-    if value == value.to_integral_value() and len(digits.split(".")[0]) >= 5:
-        # Group digits without int(value): Python 3.11+ rejects converting
-        # 4301+-digit integers to str by default, even though these are valid
-        # numeric references. Preserve the original sign exactly.
-        integer = digits.split(".")[0]
-        chunks = (integer[max(0, i - 3):i] for i in range(len(integer), 0, -3))
-        sign = text[0] if text[0] in "+-" else ""
-        forms["thousands_separator"] = sign + ",".join(reversed(tuple(chunks)))
-
-    if text.startswith("-"):
-        forms["unicode_minus"] = "\u2212" + text[1:]
-    elif not text.startswith("+"):
+    forms["one_more_decimal" if fraction else "trailing_zero"] = text + ("0" if fraction else ".0")
+    if len(integer) >= 5:
+        # grouped by hand: str(int(...)) refuses integers over 4300 digits on Python 3.11+
+        groups = [integer[max(0, i - 3) : i] for i in range(len(integer), 0, -3)][::-1]
+        forms["thousands_separator"] = sign + ",".join(groups) + ("." + fraction if fraction else "")
+    if sign == "-":
+        forms["unicode_minus"] = "\u2212" + digits
+    elif not sign:
         forms["plus_sign"] = "+" + text
-
-    return {kind: form for kind, form in forms.items() if form != text}
+    return forms
 
 
 async def p19_numeric_forms(adapter: Adapter, scorer: Scorer, ex: Example) -> list[ProbeResult]:
