@@ -6,6 +6,7 @@ import hashlib
 import io
 import re
 import tomllib
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -14,9 +15,24 @@ HUB = "https://hub.primeintellect.ai"
 DEFAULT_VERIFIERS = "0.3.1"
 
 
+RETRY_WAITS = (2.0, 5.0, 15.0, 30.0)  # seconds before each retry of a rate-limited or unavailable index
+
+
 def _get(url: str) -> bytes:
-    with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "falsepass"}), timeout=60) as r:
-        return r.read()
+    """GET with retries on 429 and 5xx (several audits started at once share the index's rate
+    limit), honouring a numeric Retry-After up to a minute."""
+    import time
+
+    for wait in (*RETRY_WAITS, None):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "falsepass"}), timeout=60) as r:
+                return r.read()
+        except urllib.error.HTTPError as err:
+            if wait is None or (err.code != 429 and err.code < 500):
+                raise
+            after = (err.headers.get("Retry-After") or "").strip() if err.headers else ""
+            time.sleep(min(float(after), 60.0) if after.replace(".", "", 1).isdigit() else wait)
+    raise AssertionError("unreachable")
 
 
 def _version_key(version: str) -> tuple:

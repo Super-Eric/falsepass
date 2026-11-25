@@ -272,3 +272,39 @@ def test_results_on_a_killed_audit_points_to_its_partial_rows(tmp_path: Path, mo
     (folder / "partial-results.jsonl").write_text("".join(_json.dumps(r) + "\n" for r in rows))
     assert cli.main(["results", "demo"]) == 1
     assert "the rows of the 2 tasks it finished" in capsys.readouterr().err
+
+
+def test_index_requests_retry_on_rate_limits(monkeypatch):
+    import io
+    import urllib.error
+
+    calls, waits = [], []
+
+    class Answer(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def urlopen(request, timeout):
+        calls.append(request.full_url)
+        if len(calls) < 3:
+            raise urllib.error.HTTPError(request.full_url, 429, "Too Many Requests", {"Retry-After": "1"} if len(calls) == 1 else {}, None)
+        return Answer(b"ok")
+
+    monkeypatch.setattr(hub.urllib.request, "urlopen", urlopen)
+    monkeypatch.setattr("time.sleep", waits.append)
+    assert hub._get("https://example.invalid/simple/") == b"ok"
+    assert len(calls) == 3 and waits == [1.0, hub.RETRY_WAITS[1]]
+
+    def not_found(request, timeout):
+        raise urllib.error.HTTPError(request.full_url, 404, "Not Found", {}, None)
+
+    monkeypatch.setattr(hub.urllib.request, "urlopen", not_found)
+    try:
+        hub._get("https://example.invalid/x")
+    except urllib.error.HTTPError as err:
+        assert err.code == 404
+    else:
+        raise AssertionError("a 404 is not retried")

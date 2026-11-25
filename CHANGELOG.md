@@ -12,6 +12,7 @@
 - `draft` no longer stops with `UnicodeEncodeError` (leaving an empty `REPORT.draft.md`) when a quoted completion holds a lone surrogate (P10).
 - A run that is stopped keeps what it scored: each task's rows are appended to `partial-results.jsonl` as the task finishes (removed when the run completes), so a run killed by a caller's timeout no longer leaves nothing. `audit --time-limit SECONDS`, SIGTERM and Ctrl-C stop cleanly with a `stopped.md` that names the phase, the rows kept and the highest reward a known-bad row got so far; `results` points to the partial rows when a run was killed outright. On one environment a 25-minute run had been killed with no output at all.
 - The headline says on how many tasks the false-pass ceiling was reached (`false_pass_ceiling_tasks`, and "reached on 2 of the 111 tasks it ran on" in the summary): a ceiling of 1 from a fixed reply that passes two documented weak tasks read like a reward paid everywhere.
+- Package-index requests (`init`, `discover`, `upstream`) retry on HTTP 429 and 5xx, honouring `Retry-After`: `init` failed outright when several audits started at once.
 - The docs no longer promise that `--jobs 32` speeds up every episode run: a reward that computes in the audit's own process runs on one core.
 
 ## 0.17.0 — 2026-11-24
