@@ -176,7 +176,7 @@ def draft(audit_dir: Path) -> Path:
     if isinstance(adapter, dict):
         lines.append("- The adapter was inferred, not written: the answer format and the notion of a wrong answer are the tool's guesses.")
     path = audit_dir / "REPORT.draft.md"
-    path.write_text("\n".join(lines) + "\n")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8", errors="backslashreplace")  # P10's lone surrogate
     return path
 
 

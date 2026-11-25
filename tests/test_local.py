@@ -152,7 +152,7 @@ def test_wheel_data_files_are_kept_for_src_up_to_the_caps(monkeypatch):
 
 def test_files_named_like_a_known_good_output_are_kept_whatever_their_suffix():
     """A repair task's grader compares against `_reference_good.ocio`: without it in src/, a
-    reader of the source never sees the control. Other binaries stay out."""
+    reader of the source never sees the control. The broken inputs are kept too; compiled code is not."""
     import io
     import zipfile
 
@@ -161,10 +161,12 @@ def test_files_named_like_a_known_good_output_are_kept_whatever_their_suffix():
         archive.writestr("pkg/tasks/_reference_good.ocio", "roles: {}")
         archive.writestr("pkg/tasks/gold.exr", b"\x76\x2f\x31\x01")
         archive.writestr("pkg/tasks/broken.exr", b"\x00")
+        archive.writestr("pkg/tasks/dangling_role.ocio", "roles: {}")
         archive.writestr("pkg/solution.py", "x = 1")
+        archive.writestr("pkg/_speedups.cpython-312-darwin.so", b"\x00")
     opened = zipfile.ZipFile(io.BytesIO(buffer.getvalue()))
     kept = hub.data_files(opened, opened.namelist())
-    assert set(kept) == {"pkg/tasks/_reference_good.ocio", "pkg/tasks/gold.exr"}
+    assert set(kept) == {"pkg/tasks/_reference_good.ocio", "pkg/tasks/gold.exr", "pkg/tasks/broken.exr", "pkg/tasks/dangling_role.ocio"}
     assert hub.reference_files({**kept, "pkg/solution.py": b""}) == ["pkg/tasks/_reference_good.ocio", "pkg/tasks/gold.exr"]
 
 
@@ -223,13 +225,14 @@ def test_a_hub_wheel_is_described_with_its_hash_and_project_urls(monkeypatch):
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as wheel:
         wheel.writestr("demo/__init__.py", "def load_environment(): pass\n")
-        wheel.writestr("demo-1.0.dist-info/METADATA", "Name: demo\nRequires-Dist: verifiers>=0.1.8\nProject-URL: Source, https://github.com/o/demo\n")
+        wheel.writestr("demo-1.0.dist-info/METADATA", "Name: demo\nRequires-Dist: verifiers>=0.1.8\nProject-URL: Source, https://github.com/o/demo\n"
+                                                      "\n# demo\n\n## Source\n\nhttps://github.com/o/monorepo (environments/demo)\n")
     data = buffer.getvalue()
     monkeypatch.setattr(hub, "_wheels", lambda env_id: ("index/", "demo", {"1.0": "wheel-url"}))
     monkeypatch.setattr(hub, "_get", lambda url: data)
     info = hub.describe("o/demo")
     assert info["wheel_sha256"] == hashlib.sha256(data).hexdigest()
-    assert info["project_urls"] == ["Source, https://github.com/o/demo"]
+    assert info["project_urls"] == ["Source, https://github.com/o/demo", "README: https://github.com/o/monorepo"]
 
 
 def test_results_on_a_stopped_audit_prints_its_reason(tmp_path: Path, monkeypatch, capsys):

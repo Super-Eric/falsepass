@@ -72,6 +72,16 @@ def test_draft_lists_candidates_with_hints_and_marks_judgement_calls(audit_dir):
     assert "| P1 ground_truth | 1 |" in text and text.count("### C") == 3
 
 
+def test_draft_survives_a_lone_surrogate_in_a_completion(audit_dir):
+    payload = json.loads((audit_dir / "probe-results.json").read_text())
+    payload["results"].append(result("P15", "hedged_in_slot", "denied", "zero", 1.0, False, "eee",
+                                      detail="expected zero, got 1.0"))  # fmt: skip
+    (audit_dir / "probe-results.json").write_text(json.dumps(payload))
+    completions = json.loads((audit_dir / "completions.json").read_text())
+    (audit_dir / "completions.json").write_text(json.dumps({**completions, "eee": "\\boxed{A} \ud800"}))
+    assert "\\ud800" in draft.draft(audit_dir).read_text()
+
+
 def test_overview_has_one_row_per_audit_with_status(audit_dir):
     table = draft.overview(audit_dir.parent)
     assert "`owner/demo`" in table and "probe run only" in table and "1/1" in table

@@ -185,11 +185,9 @@ def _wheels(env_id: str) -> tuple[str, str, dict[str, str]]:
 
 
 SOURCE_SUFFIXES = (".py", ".toml", ".md")
-DATA_SUFFIXES = (".json", ".jsonl", ".csv", ".tsv", ".yaml", ".yml", ".txt",
-                 # code the grader may run outside Python (a game engine, a checker)
-                 ".js", ".mjs", ".cjs", ".ts", ".wasm", ".sh", ".sql", ".lua", ".rs", ".go", ".c", ".h", ".cpp",
-                 # files a checker or a simulator reads (proof sources, planning domains, arrays)
-                 ".lean", ".v", ".pddl", ".smt2", ".npz", ".npy")
+# Besides the source, every file of the wheel goes to src/ up to the caps (task banks, answer
+# keys, a repair task's broken inputs and known-good outputs), except compiled code.
+COMPILED_SUFFIXES = (".pyc", ".pyo", ".so", ".pyd", ".dylib", ".dll")
 DATA_FILE_CAP = 8 * 1024 * 1024  # one data file
 DATA_TOTAL_CAP = 32 * 1024 * 1024  # all of them together
 
@@ -210,12 +208,13 @@ def reference_files(sources: dict[str, bytes]) -> list[str]:
 
 
 def data_files(archive: zipfile.ZipFile, names: list[str]) -> dict[str, bytes]:
-    """The wheel's data files (task banks, answer keys, prompt texts, files named like a
-    known-good output) for `src/`, smallest first, up to the caps: a patched copy of `src/`
+    """The wheel's data files (task banks, answer keys, prompt texts, a repair task's broken
+    inputs and known-good outputs: every file but source and compiled code) for `src/`,
+    smallest first, up to the caps: a patched copy of `src/`
     then runs without the release's data being filled in, and a reviewer can read what the
     grader compares against."""
     infos = sorted((archive.getinfo(n) for n in names if ".dist-info" not in n and not n.endswith("/")
-                    and (n.endswith(DATA_SUFFIXES) or is_reference_file(n))),
+                    and not n.endswith(SOURCE_SUFFIXES + COMPILED_SUFFIXES)),
                    key=lambda i: i.file_size)  # fmt: skip
     found: dict[str, bytes] = {}
     total = 0
@@ -249,6 +248,9 @@ def describe(env_id: str, version: str | None = None) -> dict:
     requirement = re.search(r"^Requires-Dist: verifiers(\[[^\]]*\])?[ \t]*(.*)$", metadata, re.M)
     requires_python = re.search(r"^Requires-Python:[ \t]*(.*)$", metadata, re.M)
     project_urls = re.findall(r"^Project-URL: (.+)$", metadata, re.M)
+    # the README is the metadata's body: a "## Source" line there names the repository too
+    body = metadata.split("\n\n", 1)[1] if "\n\n" in metadata else ""
+    project_urls += [f"README: {u}" for u in dict.fromkeys(re.findall(r"https?://github\.com/[\w.-]+/[\w.-]+", body))]
     sources = {n: archive.read(n) for n in names if ".dist-info" not in n and n.endswith(SOURCE_SUFFIXES)}
     sources.update(data_files(archive, names))
     pin = verifiers_pin(requirement.group(2) if requirement else "", newest=classify(sources)["generation"] == "v1")

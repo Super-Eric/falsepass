@@ -7,6 +7,9 @@
 - P18 no longer keeps an old `key: value` or `key = value` line before a new line with the same key when the reference reads as a config (every line a key, a section, a list item, a comment or indented): YAML, INI and TOML readers often take the later key, so the pair is the edited config, not a contradiction. Prose such as a recipe's `Eggs: 2` is still kept.
 - An episode too long to store whole (a policy that ran into the 400-turn cap) kept no transcript at all (`completion_id: ""`), so the one row that needs reading could not be read. It is now kept with its first and last 10 messages and `"shortened": true`; `repro` leaves it out.
 - `init --policies` on a v1 taskset that reads as one turn with no tools says that a policy only ever sends one reply there and that `--manual` writes the text adapter; the "no reference answers found" stop says when each one fits (one reply built from a compared field, a known-good file or the package's solution, against an episode played over turns).
+- `init` copies every file of the wheel into `src/` up to the size caps, except compiled code: a repair taskset's broken inputs (`.ocio` configs) were left out unless named like a known-good output, so a reader of `src/` saw one task's input of five.
+- `upstream` also reads GitHub links in the wheel's README (the metadata body, e.g. a "## Source" section), not only `Project-URL`; a monorepo named only there was missed.
+- `draft` no longer stops with `UnicodeEncodeError` (leaving an empty `REPORT.draft.md`) when a quoted completion holds a lone surrogate (P10).
 - The docs no longer promise that `--jobs 32` speeds up every episode run: a reward that computes in the audit's own process runs on one core.
 
 ## 0.17.0 — 2026-11-24
