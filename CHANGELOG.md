@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.18.0 — 2026-11-25
 
 - On open-ended tasks, P5, P15 and S3 put a wrong answer of the same kind next to the reference: the reference with its numbers moved by 3, else with its names swapped for another reference's, else another task's reference (`alternative_answer`, which a hand-written adapter can override; it defaults to `wrong_answer`). They used the stand-in passage "I am not sure how to approach this, so I will not give an answer.", so a reward that rejects doubt ("not sure") scored every two-answer reply 0 whatever it does with two answers. On one audited environment the suite went from no false pass to P5 and P15 paid on 22 of 25 tasks, the defect its report rates; on 13 other open-ended audits every ceiling is unchanged, and one loses P5/P15 rows that its report had already set aside (the old stand-in held no answer block, so the reply had only the right one).
 - A reference that is a binary file sent as text (NUL bytes, a file signature such as EXR, PNG or MP4, or more than 1% control characters) no longer gets text written around it: P2's default forms (CRLF line endings and whitespace break the file, a sentence after it is ignored by the reader), P5, P9, P14, P15, P18, P19 and the search are skipped on such tasks, and the summary says so (`meta.binary_references`). On an audited image-repair taskset they had set the false-pass ceiling to 1 with the correct file plus trailing text, which a file reader sees as the correct file, and counted CRLF as a false fail.
