@@ -737,6 +737,11 @@ def scaffold(args) -> int:
     if args.manual and info.get("framework") == "openenv":  # an OpenEnv adapter is a policy adapter: one reply is a one-step policy
         args.policies = True
     kept_adapter = (args.manual or args.policies) and (audit_dir / "adapter.py").exists()
+    one_turn = bool(kind) and kind["generation"] == "v1" and kind.get("turns") == "single-turn" and "tools" not in kind.get("needs", [])
+    if args.policies and one_turn and info.get("framework") != "openenv" and not kept_adapter:  # one reply, no tools
+        print("falsepass: the taskset reads as one turn with no tools, so a policy only ever sends one reply: "
+              "`init --force --manual` writes the text adapter (render() returns the reply, the probes vary it); "
+              "keep this policy skeleton if the harness does loop", file=sys.stderr)
     if (args.manual or args.policies) and not kept_adapter:
         v1 = bool(kind) and kind["generation"] == "v1"
         policy_template = OPENENV_POLICY_TEMPLATE if info.get("framework") == "openenv" else V1_POLICY_TEMPLATE if v1 else POLICY_TEMPLATE

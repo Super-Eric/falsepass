@@ -243,3 +243,14 @@ def test_results_on_a_stopped_audit_prints_its_reason(tmp_path: Path, monkeypatc
     err = capsys.readouterr().err
     assert "stopped" in err and "write an adapter" in err and "no completed audit yet" not in err
 
+
+def test_init_policies_on_a_one_turn_taskset_without_tools_points_to_manual(tmp_path: Path, monkeypatch, capsys):
+    source = write_env(tmp_path / "work" / "my-env", "verifiers>=0.4.0")
+    (source / "my_env.py").write_text("from verifiers.v1 import Taskset\n\ndef reward(task, state):\n"
+                                      "    return float(state.last_reply == task.data.answer)\n")  # fmt: skip
+    monkeypatch.chdir(tmp_path)
+    assert cli.main(["init", str(source), "--policies"]) == 0
+    assert "`init --force --manual` writes the text adapter" in capsys.readouterr().err
+    assert cli.main(["init", str(source), "--force", "--manual"]) == 0
+    assert "--force --manual" not in capsys.readouterr().err
+

@@ -283,8 +283,9 @@ class AutoAdapter(Adapter):
         if not self.pool:
             raise RuntimeError(
                 "no reference answers found: this environment needs a hand-written adapter. Run "
-                f"`falsepass init {self.name} --force --manual` for a task with an answer to compare, or "
-                "`--policies` for a game, simulation or tool task, then fill in adapter.py"
+                f"`falsepass init {self.name} --force --manual` for a task answered in one reply (render() builds "
+                "the correct reply: from a field the grader compares, a known-good file in the package or its own "
+                "solution), or `--policies` for a game, simulation or tool task played over turns, then fill in adapter.py"
                 + "".join(f". Note: {note}" for note in self.load_notes)
             )
         lengths = sorted(len(e.answer) for e in self.pool)
