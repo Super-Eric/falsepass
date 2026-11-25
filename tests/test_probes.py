@@ -173,7 +173,9 @@ def test_headline_reports_ceiling_and_false_fail_rate():
     head = report.headline(results)
     assert head["false_pass_ceiling"] == pytest.approx(1.0)
     assert head["false_fail_rate"] == 0.0
-    assert "False-pass ceiling" in report.summary(
+    reached, ran = head["false_pass_ceiling_tasks"]
+    assert 1 <= reached <= ran
+    assert f"reached on {reached} of the {ran} tasks it ran on" in report.summary(
         {"meta": {"environment": "toy", "date": "x", "falsepass": "0", "versions": {}, "python": "3",
                   "examples": 1, "seed": 0, "max_reward": 1.0, "bad_tolerance": 0.0},
          "results": results, "rewardlint": None}

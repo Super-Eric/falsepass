@@ -27,6 +27,10 @@ def headline(results: list[dict[str, Any]]) -> dict[str, Any]:
         "false_pass_ceiling": worst["score"] if worst else None,
         "false_pass_via": (f'{worst["probe"]} {worst["name"]}/{worst["variant"]}' if worst and worst["score"] > 0
                            else "no known-bad row was paid" if worst else None),
+        # how often that row reached the ceiling: a ceiling met on 2 of 111 tasks reads differently from 111 of 111
+        **({"false_pass_ceiling_tasks": [sum(abs(r["score"] - worst["score"]) <= 1e-9 for r in same), len(same)]}
+           if worst and worst["score"] > 0 and (same := [r for r in bad if (r["probe"], r["name"], r["variant"]) ==
+                                                         (worst["probe"], worst["name"], worst["variant"])]) else {}),
         "false_fail_rate": (sum(not r["passed"] for r in good) / len(good)) if good else None,
         "known_good": len(good),
         "known_bad": len(bad),
@@ -596,7 +600,9 @@ def summary(payload: dict[str, Any]) -> str:
         *_weight_lines(meta, results),
         f"- **False-pass ceiling:** {_fmt(head['false_pass_ceiling'])} of {_fmt(meta['max_reward'])} "
         f"(highest reward given to a known-bad completion; "
-        f"{head['false_pass_via'] if head['false_pass_via'] == 'no known-bad row was paid' else 'via ' + str(head['false_pass_via'])})",
+        f"{head['false_pass_via'] if head['false_pass_via'] == 'no known-bad row was paid' else 'via ' + str(head['false_pass_via'])}"
+        + (f", reached on {head['false_pass_ceiling_tasks'][0]} of the {head['false_pass_ceiling_tasks'][1]} tasks it ran on"
+           if head.get("false_pass_ceiling_tasks") else "") + ")",
         *([f"- **Near misses paid like the reference:** {head['near_misses_paid']} rows that had to earn less than the "
            f"reference on their task did not (via {', '.join(head['near_misses_paid_via'])}); kept out of the ceiling, "
            "since the changed part may not be graded at all: read one"] if head.get("near_misses_paid") else []),

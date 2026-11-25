@@ -103,10 +103,12 @@ finished run of task-blind policies (no control) adds `facts_that_hold`, `not_co
   "meta": {"date": "…", "falsepass": "…", "versions": {"…": "…"}, "examples": 25, "max_reward": 1.0,
            "adapter": {"format": "<answer>", "answers": "open", "turns": "single-turn", "validity": "ok"}},
   "headline": {"false_pass_ceiling": 1.0, "false_pass_via": "P5 shotgun/all_in_one_slot",
+               "false_pass_ceiling_tasks": [10, 10],
                "lazy_policy_reward": 0.0, "lazy_policy_via": "P3 empty/empty",
                "false_fail_rate": 0.108, "known_good": 93, "known_bad": 233, "scoring_errors": 0,
                "same_as_good": 0},
-  "…": "when the ceiling rests on a row whose last reply equals a known-good one, the headline
+  "…": "false_pass_ceiling_tasks: on how many of the tasks that row ran on it reached the ceiling.
+        When the ceiling rests on a row whose last reply equals a known-good one, the headline
         also has false_pass_note, false_pass_ceiling_other and false_pass_other_via",
   "failing": [ {"probe": "P5", "name": "shotgun", "variant": "all_in_one_slot", "expected": "zero",
                 "runs": 10, "failed": 10, "scores": [1.0, 1.0, 1.0, 1.0, 1.0], "detail": "…", "example": "row-98",
