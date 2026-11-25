@@ -85,6 +85,10 @@ class Adapter:
             return {}
         if not isinstance(correct, str):
             return {}
+        from falsepass.probes import binary_reference
+
+        if binary_reference(correct):  # no text variation of a binary file is known to be harmless
+            return {}
         return {
             "surrounding_whitespace": f"\n\n  {correct}  \n\n",
             "sentence_after": f"{correct}\nThat is my final answer.",

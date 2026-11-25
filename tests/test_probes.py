@@ -770,6 +770,42 @@ def test_open_ended_alternatives_next_to_the_reference_do_not_voice_doubt():
     assert rows and not any(r.passed for r in rows)  # a two-answer reply is now seen to be paid
 
 
+def test_a_binary_reference_skips_the_probes_that_write_text_around_it():
+    import asyncio
+
+    from falsepass import probes
+    from falsepass.auto import AutoAdapter
+    from falsepass.model import Example, Score
+
+    exr = "v/1\x01" + "".join(chr(b) for b in bytes(range(256)) * 4)
+    mp4 = "\x00\x00\x00\x18ftypmp42" + "\x00" * 40
+    for text in (exr, mp4, "abc\x00def", "".join(chr(1 + i % 8) for i in range(200))):
+        assert probes.binary_reference(text)
+    for text in ("", "42", "Paris\r\n", "\tindented\n\x1b[1mbold\x1b[0m" + "x" * 200, "答案是 42", '{"a": [1, 2]}'):
+        assert not probes.binary_reference(text)
+
+    adapter = AutoAdapter({"id": "t", "framework": "verifiers"})
+    adapter.pool = [Example("a", "q", exr), Example("b", "q", exr[:-1] + "x")]
+    adapter.open_ended, adapter.closed = True, False
+    adapter.format = lambda a: a
+    assert adapter.equivalent_forms(adapter.pool[0]) == {}  # no harmless text form of a file
+
+    class FirstFile:
+        """Reads the file at the start of the reply and ignores what follows, like a file reader."""
+
+        async def score(self, example, completion):
+            return Score(1.0 if completion.startswith(example.answer) else 0.0)
+
+    probes.BINARY_REFERENCES.clear()
+    for probe in (probes.p5_shotgun, probes.p9_oversized, probes.p15_hedged_in_slot, probes.p18_edit_union):
+        assert asyncio.run(probe(adapter, FirstFile(), adapter.pool[0])) == []
+    assert probes.BINARY_REFERENCES == {"a"}
+    # the control and the answer-free rows still run
+    assert asyncio.run(probes.p1_ground_truth(adapter, FirstFile(), adapter.pool[0]))[0].passed
+    assert all(r.passed for r in asyncio.run(probes.p3_empty(adapter, FirstFile(), adapter.pool[0])))
+    probes.BINARY_REFERENCES.clear()
+
+
 def test_a_json_reference_gets_a_wrong_answer_of_the_same_shape():
     import json
 
@@ -839,6 +875,11 @@ def test_p18_keeps_the_old_lines_next_to_the_new_ones():
         "Title A\nline two\nline 2\nline three\nline four\nline 4"
     code = "def limit():\n    x = 10\n    return x"
     assert edit_unions(code.replace("10", "12"), f"Raise the limit to 12:\n{code}") == {}  # both lines can be a correct program
+    config = "roles:\n  default: raw\n  scene_linear: lin\ndisplays:\n  sRGB:\n    - name: view\n      colorspace: srgb"
+    fixed = config.replace("default: raw", "default: srgb")
+    assert edit_unions(fixed, f"Fix the default role:\n{config}") == {}  # a repeated key: many readers take the later one
+    both = edit_unions(fixed + "\n# reviewed", f"Fix the default role and add a note:\n{config}\n# draft")
+    assert both == {"old_and_new_lines": fixed + "\n# draft\n# reviewed"}  # other old lines are still kept
     names = "Ada Lovelace\nAlan Turing\nGrace Hopper"
     assert edit_unions(names.replace("Alan Turing", "Alan M. Turing"), f"Fix the middle name:\n{names}")  # text, not code
 

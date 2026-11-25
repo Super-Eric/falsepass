@@ -267,6 +267,7 @@ def run(
     watch = Stopwatch()
     adapter = load_adapter(audit_dir)
     probes.STORE.clear()
+    probes.BINARY_REFERENCES.clear()
     with watch.phase("load"):
         scorer, examples = adapter.load(n, seed)
         write_inspect_sources(audit_dir, adapter, scorer)
@@ -375,6 +376,8 @@ def run(
             "loader": getattr(adapter, "loader", None),
             **({"scale": scaled} if scaled else {}),
             **({"hash_seed_check": hash_seed_note} if hash_seed_note else {}),
+            # tasks whose reference is a binary file: text-composing probes (P5, P9, P14, P15, P18, P19, search) skipped
+            **({"binary_references": len(probes.BINARY_REFERENCES)} if probes.BINARY_REFERENCES else {}),
             "timings": timings,
         },
         "results": [r.to_dict() for r in results],

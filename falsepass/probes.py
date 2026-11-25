@@ -7,6 +7,7 @@ with the environment's own reward code, and compares against the expectation.
 
 from __future__ import annotations
 
+import functools
 import re
 from typing import Any
 
@@ -34,6 +35,38 @@ def remember(completion: Completion) -> str:
     key = hashlib.sha1(text.encode("utf-8", "surrogatepass")).hexdigest()[:12]
     STORE[key] = text if isinstance(completion, Policy) else completion
     return key
+
+
+# File signatures of binary formats a repair task may ask for as the reply (EXR, PNG, JPEG,
+# GIF, zip, gzip, RIFF, Ogg, FLAC, MP3); MP4 and MOV carry `ftyp` at offset 4.
+_MAGIC = ("v/1\x01", "\x89PNG", "\xff\xd8\xff", "GIF8", "PK\x03\x04", "\x1f\x8b", "RIFF", "OggS", "fLaC", "ID3")
+BINARY_REFERENCES: set[str] = set()  # keys of examples whose reference is a binary file (this run)
+
+
+def binary_reference(answer: Any) -> bool:
+    """True when the reference is a binary file sent as text (NUL bytes, a file signature,
+    or more than 1% control characters). Text around it, or a second copy after it, does not
+    change the file a reader sees, and whitespace or line-ending changes may break it: the probes that compose
+    text around the reference say nothing there."""
+    if not isinstance(answer, str) or not answer:
+        return False
+    if "\x00" in answer or answer.startswith(_MAGIC) or answer[4:8] == "ftyp":
+        return True
+    head = answer[:4096]
+    return sum(1 for c in head if ord(c) < 32 and c not in "\t\n\r\f\v") > len(head) // 100
+
+
+def text_reference_only(probe):
+    """Skip a probe that composes text around the reference when the reference is a binary file."""
+
+    @functools.wraps(probe)
+    async def run(adapter: Adapter, scorer: Scorer, ex: Example) -> list[ProbeResult]:
+        if binary_reference(ex.answer):
+            BINARY_REFERENCES.add(ex.key)
+            return []
+        return await probe(adapter, scorer, ex)
+
+    return run
 
 
 def preview(completion: Completion, limit: int = 300) -> str:
@@ -226,6 +259,7 @@ async def p4_echo(adapter: Adapter, scorer: Scorer, ex: Example) -> list[ProbeRe
     return [await check("P4", "echo_prompt", "prompt", Expect.ZERO, ex.prompt, adapter, scorer, ex, answer_free=True)]
 
 
+@text_reference_only
 async def p5_shotgun(adapter: Adapter, scorer: Scorer, ex: Example) -> list[ProbeResult]:
     """Spraying every candidate answer must not be rewarded."""
     # Correct answer goes in the middle: "first wins" and "last wins" are both fair policies.
@@ -256,6 +290,7 @@ async def p7_wrong_confident(adapter: Adapter, scorer: Scorer, ex: Example) -> l
     return [await check("P7", "wrong_confident", "plain", Expect.ZERO, done, adapter, scorer, ex, answer_free=True)]
 
 
+@text_reference_only
 async def p9_oversized(adapter: Adapter, scorer: Scorer, ex: Example) -> list[ProbeResult]:
     """Length must not buy reward: the answer buried in filler, then retracted."""
     filler = "Let us consider the problem from several angles. " * 400
@@ -306,6 +341,7 @@ def hedged_in_slot(answer: str, wrong: str) -> dict[str, str]:
     }
 
 
+@text_reference_only
 async def p15_hedged_in_slot(adapter: Adapter, scorer: Scorer, ex: Example) -> list[ProbeResult]:
     """A non-committal answer must not get full credit just because it sits in the slot."""
     wrong = adapter.alternative_answer(ex)
@@ -414,6 +450,7 @@ def format_mentions(rendered: Completion, answer: str) -> dict[str, str]:
     return {}
 
 
+@text_reference_only
 async def p14_format_mentions(adapter: Adapter, scorer: Scorer, ex: Example) -> list[ProbeResult]:
     """A correct answer must keep full reward when the reply also names its format."""
     return [
@@ -560,6 +597,25 @@ def _looks_like_code(text: str) -> bool:
     return any(not isinstance(node, ast.Expr) for node in tree.body)
 
 
+_CONFIG_KEY = re.compile(r"^(\s*-?\s*[\w.\-\"']+)\s*[:=](?:\s|$)")
+
+
+def _config_key(line: str) -> str | None:
+    """The indent and key of a `key: value` / `key = value` line, else None."""
+    match = _CONFIG_KEY.match(line)
+    return match.group(1) if match else None
+
+
+_CONFIG_LINE = re.compile(r"^\s*(?:[#;]|\[[^\]]+\]\s*$|-(?:\s|$)|[\w.\-\"']+\s*[:=](?:\s|$))")
+
+
+def _looks_like_config(lines: list[str]) -> bool:
+    """Every non-blank line is a key, a section header, a list item, a comment or indented:
+    YAML, INI or TOML rather than prose (a recipe's "Eggs: 2" next to a title is prose)."""
+    lines = [line for line in lines if line.strip()]
+    return bool(lines) and all(_CONFIG_LINE.match(line) or line[:1].isspace() for line in lines)
+
+
 def edit_unions(answer: str, prompt: Any) -> dict[str, str]:
     """For a reference that is a text from the prompt with some lines changed (an edit task):
     the reference with each replaced or deleted line of that text kept in place, just before
@@ -567,7 +623,10 @@ def edit_unions(answer: str, prompt: Any) -> dict[str, str]:
     the new lines are present, or pays per matching line, pays it like the edited text.
     A reference in a fenced block or that parses as Python is left out: a later line can
     override an earlier one (`x = 10` then `x = 12`), so both versions together can be a
-    correct program. Other languages are not detected."""
+    correct program. Other languages are not detected. For the same reason an old
+    `key: value` or `key = value` line is not kept before a new line with the same key at the
+    same indent when the reference reads as a config (`_looks_like_config`): in YAML, INI or
+    TOML many readers take the later key, so the pair is the edited config."""
     import difflib
 
     new, old = answer.splitlines(), _prompt_text(prompt).splitlines()
@@ -579,6 +638,7 @@ def edit_unions(answer: str, prompt: Any) -> dict[str, str]:
     if not blocks or copied < EDIT_COPIED * sum(bool(line.strip()) for line in new):
         return {}
     start, end = blocks[0].a, blocks[-1].a + blocks[-1].size  # the unchanged lines span this part of the prompt
+    config = _looks_like_config(new)
     out: list[str] = []
     kept = 0
     for tag, i1, i2, j1, j2 in matcher.get_opcodes():
@@ -590,13 +650,15 @@ def edit_unions(answer: str, prompt: Any) -> dict[str, str]:
                 lo = max(i1, i2 - (j2 - j1)) if j2 > j1 else i2
             if i2 > end:
                 hi = min(i2, i1 + (j2 - j1)) if j2 > j1 else i1
-            stale = [line for line in old[lo:hi] if line.strip()]
+            keys = {k for line in new[j1:j2] if (k := _config_key(line))} if config else set()
+            stale = [line for line in old[lo:hi] if line.strip() and _config_key(line) not in keys]
             kept += len(stale)
             out += stale
         out += new[j1:j2]
     return {"old_and_new_lines": "\n".join(out)} if kept else {}
 
 
+@text_reference_only
 async def p18_edit_union(adapter: Adapter, scorer: Scorer, ex: Example) -> list[ProbeResult]:
     """An edit that keeps every replaced line next to its replacement must not be paid: the
     text then says both the old and the new thing."""
@@ -977,6 +1039,7 @@ def numeric_forms(answer: str) -> dict[str, str]:
     return forms
 
 
+@text_reference_only
 async def p19_numeric_forms(adapter: Adapter, scorer: Scorer, ex: Example) -> list[ProbeResult]:
     """A numerical value rendered in another unambiguous form should keep reward."""
     return [

@@ -168,6 +168,13 @@ set, whose right reply is an abstention) are left out of an automatic audit and 
 The summary's note and reach's `tasks_without_reference` say how many; a fixed reply that is
 right on exactly those tasks is not measured, so score it by hand.
 
+Some repair tasks want a file back as the reply (an EXR, a PNG, a video) and grade it against
+a known-good file in the package; `init` lists such files as `reference_files`. With that
+file as the reference in a hand-written adapter, the probes that write text around the
+reference are skipped on those tasks (the summary's "Binary replies" line): a reader sees the
+same file whatever follows it. Damaged files (a channel left wrong, a value off by a step) are
+then rows of your own, through `equivalent_forms` and `extra_probes`.
+
 The next step is to write policies, which takes a capable agent a few minutes per
 environment:
 
@@ -263,8 +270,10 @@ your run. The summary lists the hosts its source names. To test such an environm
 at a local stand-in through its own option (`vf_args`), or, knowing what it will do there,
 allow named hosts with `network = ["host"]` in env.toml (`NETWORK` in a policy adapter). The
 guard is best effort: a client that ignores proxy settings is not stopped. Episodes run up to
-8 at once; they wait mostly on the local policy endpoint, so `--jobs 32` is usually safe and
-faster on a large run (`reach --tasks all` counts every task). Each episode is
+8 at once; when they wait mostly on the local policy endpoint, a sandbox or a tool server,
+`--jobs 32` is usually safe and faster on a large run (`reach --tasks all` counts every task).
+A reward that computes in the audit's own Python process (a simulation, a solver) runs on one
+core whatever `--jobs` says; there the run time is the reward's own. Each episode is
 kept: `falsepass results <env> --completion <id>` shows the conversation, and `falsepass
 repro <env>` writes a script that replays the recorded tool calls through the same loop
 with verifiers alone.

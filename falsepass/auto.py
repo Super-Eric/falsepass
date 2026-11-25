@@ -767,6 +767,10 @@ class AutoAdapter(Adapter):
         return [self.alternative_answer(example), example.answer]
 
     def equivalent_forms(self, example: Example) -> dict[str, str]:
+        from falsepass.probes import binary_reference
+
+        if binary_reference(example.answer):  # no text variation of a binary file is known to be harmless
+            return {}
         a, correct = example.answer, self.format(example.answer)
         forms = {
             "surrounding_whitespace": f"\n\n  {correct}  \n\n",

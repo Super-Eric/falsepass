@@ -589,6 +589,9 @@ def summary(payload: dict[str, Any]) -> str:
            "episode and the reward code before reading the rows below"] if solver_failed(results) else []),
         *[f"- **Load note:** {note}" for note in meta.get("notes") or []],
         *([f"- **Hash-seed check (P11):** {meta['hash_seed_check']}"] if meta.get("hash_seed_check") else []),
+        *([f"- **Binary replies:** the reference is a binary file on {meta['binary_references']} tasks; the probes that "
+           "write text around it (P5, P9, P14, P15, P18, P19, the search) were skipped there, since a reader sees the same "
+           "file. Test damaged files with an adapter's own rows"] if meta.get("binary_references") else []),
         *[f"- **⚠ {'Result inconclusive: ' if w == open_after_one_reply(meta) else ''}{w}**" for w in warnings(meta)],
         *_weight_lines(meta, results),
         f"- **False-pass ceiling:** {_fmt(head['false_pass_ceiling'])} of {_fmt(meta['max_reward'])} "

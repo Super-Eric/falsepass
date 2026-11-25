@@ -242,6 +242,11 @@ def make_probe(calls_per_direction: int = 120, seed: int = 0):
     """Build the search probe with a budget of scorer calls per direction and example."""
 
     async def search(adapter: Adapter, scorer: Scorer, ex: Example) -> list[ProbeResult]:
+        from falsepass.probes import BINARY_REFERENCES, binary_reference
+
+        if binary_reference(ex.answer):  # text mutations of a binary file say nothing
+            BINARY_REFERENCES.add(ex.key)
+            return []
         rng = random.Random(f"{seed}:{ex.key}")
         results = []
 

@@ -51,6 +51,11 @@ Everything an audit writes lives in `audits/<env>/` (or the folder given with `-
   scored once more in a second process with another `PYTHONHASHSEED` (set order of strings
   differs between processes, never within one). `meta.hash_seed_check` says why the check did
   not run, when it did not (loading took over a minute; the second process failed).
+- `meta.binary_references` (only when there were some): how many tasks' reference is a binary
+  file sent as text (an EXR, PNG or MP4 a repair task asks for). The probes that write text
+  around the reference (P2's default forms, P5, P9, P14, P15, P18, P19, the search) were
+  skipped there, since a file reader sees the same file; an adapter's own rows test damaged
+  files.
 - `meta.timings`: where the time went, in seconds: `total_s` (the probe process, after set-up),
   `set_up_s` (resolving and installing the virtualenv, when started through the CLI; `words`
   adds the two), `phases` (`load`, `prepare`,
