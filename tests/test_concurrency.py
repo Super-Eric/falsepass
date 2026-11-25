@@ -194,3 +194,18 @@ def test_a_running_job_can_be_cancelled(tmp_path: Path, monkeypatch):
     again = mcp_server._start_audit("toy", ["-n", "1"], str(tmp_path))  # a cancelled job does not block the next
     assert again["state"] == "running" and again["pid"] != job["pid"]
     mcp_server._cancel("toy", str(tmp_path))
+
+
+@pytest.mark.parametrize("jobs", [1, 4])
+def test_a_run_stopped_by_its_time_limit_keeps_the_finished_tasks(tmp_path: Path, jobs: int):
+    folder = audit(tmp_path, f"toy-limit-{jobs}", True)
+    (folder / "adapter.py").write_text((folder / "adapter.py").read_text().replace("await asyncio.sleep(0.002)", "await asyncio.sleep(0.05)"))
+    assert runner.main([str(folder), "-n", "200", "--few", "1", "--jobs", str(jobs), "--time-limit", "2"]) == 1
+    stopped = (folder / "stopped.md").read_text()
+    assert "the time limit (--time-limit) was reached" in stopped and "partial-results.jsonl" in stopped
+    rows = [json.loads(line) for line in (folder / "partial-results.jsonl").read_text().splitlines()]
+    assert rows and {r["probe"] for r in rows} >= {"P1", "P3"} and not (folder / "probe-results.json").exists()
+    assert f"{len(rows)} rows" in stopped
+    # a complete run afterwards removes both
+    assert runner.main([str(folder), "-n", "2", "--few", "1", "--no-hash-seed-check"]) == 0
+    assert not (folder / "partial-results.jsonl").exists() and not (folder / "stopped.md").exists()

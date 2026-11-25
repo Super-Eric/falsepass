@@ -144,6 +144,7 @@ falsepass audit environment               # 问答类任务不需要写适配器
 falsepass audit environment --search 120  # 加上变异搜索（每个方向、每道题调用判分器的次数）
 falsepass audit environment --jobs 1      # 一次只判一道题（默认在安全的情况下最多 8 道同时判）
 falsepass audit environment --offline     # 已缓存的 Hugging Face 数据集不再先向 Hub 核对（reach、repro --run、verify-fix 也可用）
+falsepass audit environment --time-limit 1200   # 20 分钟后停下，已跑完的任务结果留在 partial-results.jsonl
 falsepass audit environment --fail-on 'ceiling>0.1' --fail-on 'errors>0'   # CI 门槛，满足时退出码为 1
 falsepass results environment [--json]    # 上一次的结果：summary.md，或精简的 JSON
 falsepass results environment --completion ID   # 某个回答的全文（ID 在 JSON 摘要里）

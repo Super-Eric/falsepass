@@ -257,3 +257,18 @@ def test_init_policies_on_a_one_turn_taskset_without_tools_points_to_manual(tmp_
     assert cli.main(["init", str(source), "--force", "--manual"]) == 0
     assert "--force --manual" not in capsys.readouterr().err
 
+
+
+def test_results_on_a_killed_audit_points_to_its_partial_rows(tmp_path: Path, monkeypatch, capsys):
+    import json as _json
+
+    from falsepass import cli
+
+    monkeypatch.chdir(tmp_path)
+    folder = tmp_path / "audits" / "demo"
+    folder.mkdir(parents=True)
+    (folder / "env.toml").write_text('[env]\nid = "o/demo"\n')
+    rows = [{"probe": "P1", "example": e, "expected": "full", "passed": True, "score": 1.0} for e in ("a", "b")]
+    (folder / "partial-results.jsonl").write_text("".join(_json.dumps(r) + "\n" for r in rows))
+    assert cli.main(["results", "demo"]) == 1
+    assert "the rows of the 2 tasks it finished" in capsys.readouterr().err

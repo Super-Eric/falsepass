@@ -117,6 +117,7 @@ environment.
 falsepass init owner/environment          # or hf:owner/space (OpenEnv), ./folder, task.py, inspect_evals/<task>, a HUD folder
 falsepass audit environment --fail-on 'ceiling>0.1'   # exit 1 when the condition is met
 falsepass audit environment --jobs 1      # one task at a time (default: up to 8 at once where safe)
+falsepass audit environment --time-limit 1200   # stop after 20 minutes, keeping the finished tasks' rows
 falsepass audit environment --offline     # a cached Hugging Face dataset without the Hub check (also reach, repro --run, verify-fix)
 falsepass results environment --json      # compact digest, small enough for a context window
 falsepass scan path/to/source --json      # static pre-scan only

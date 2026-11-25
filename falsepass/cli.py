@@ -603,6 +603,13 @@ def missing_audit(env: str, needs: str = "env.toml") -> int:
     if stopped.is_file():  # the last audit stopped on purpose: its own message says what to do next
         print(f"falsepass: the last audit of {set_up.name} stopped ({stopped}):\n{stopped.read_text().strip()[:1500]}", file=sys.stderr)
         return 1
+    partial = set_up / "partial-results.jsonl"
+    if partial.is_file() and partial.stat().st_size:  # killed without a word (SIGKILL, a closed terminal)
+        rows = [json.loads(line) for line in partial.read_text(encoding="utf-8").splitlines() if line.strip()]
+        print(f"falsepass: the last audit of {set_up.name} did not finish; the rows of the {len({r['example'] for r in rows})} "
+              f"tasks it finished are in {partial} ({len(rows)} rows, one JSON object per line). For a complete run: fewer "
+              "tasks (-n), --few 1, no --search, or --time-limit SECONDS to stop cleanly.", file=sys.stderr)  # fmt: skip
+        return 1
     print(f"falsepass: {set_up} has no completed audit yet. Run `falsepass audit {draft.command_ref(set_up)}` first "
           "(if it stopped at the control, this environment needs a hand-written adapter: `falsepass init --manual`).",
           file=sys.stderr)  # fmt: skip
@@ -849,7 +856,8 @@ def main(argv: list[str] | None = None) -> int:
                "direction and task; 120 is a good value), --search-examples N, --out DIR (write results "
                "elsewhere), --jobs N (tasks scored at once for single-turn rewards; default up to 8, 1 = one at "
                "a time), --no-hash-seed-check (skip scoring the P11 replies again in a second process with another "
-               "PYTHONHASHSEED), --fail-on COND (repeatable, e.g. 'ceiling>0.1' 'errors>0': exit 1 when met).",
+               "PYTHONHASHSEED), --time-limit SECONDS (stop then and keep the finished tasks' rows in "
+               "partial-results.jsonl), --fail-on COND (repeatable, e.g. 'ceiling>0.1' 'errors>0': exit 1 when met).",
     )  # fmt: skip
     audit.add_argument("env", help="name of a folder under audits/, or a path to one")
     audit.add_argument("--print-command", action="store_true", help="show the uv command and exit")

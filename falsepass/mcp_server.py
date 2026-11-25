@@ -496,8 +496,9 @@ def build():
     def falsepass_cancel(env: Env, workdir: Workdir = ".") -> Any:
         """Stop the background job of `env` (an audit, reach, repro or verify-fix, started by
         this server or an earlier one): its process group gets SIGTERM, and SIGKILL if it is
-        still there 5 s later. Results stored by earlier runs stay; the job is recorded as
-        "cancelled" and a new one can be started."""
+        still there 5 s later. Results stored by earlier runs stay; a cancelled audit keeps the
+        rows of the tasks it finished in partial-results.jsonl (stopped.md says so); the job is
+        recorded as "cancelled" and a new one can be started."""
         return _cancel(env, workdir)
 
     @tool

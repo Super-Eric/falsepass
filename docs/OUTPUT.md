@@ -231,7 +231,9 @@ for a Hub environment.
 
 ## Exit codes
 
-`falsepass audit` exits 1 when a `--fail-on` condition is met and with the probe run's
-own code when it fails; `falsepass reach` exits 2 when the rows asked for do not exist (the
+`falsepass audit` exits 1 when a `--fail-on` condition is met, when the run was stopped
+(`--time-limit`, SIGTERM, Ctrl-C: `stopped.md` says where, and `partial-results.jsonl` holds the
+rows of every task finished, one JSON object per line as in `probe-results.json`), and with
+the probe run's own code when it fails; `falsepass reach` exits 2 when the rows asked for do not exist (the
 message lists those that do); `falsepass repro --run` exits 1 when the two runs differ; every other command exits 0 on success and 1 with a message on
 stderr when its input is missing.

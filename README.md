@@ -225,6 +225,7 @@ falsepass init rewards.py --dataset d.jsonl   # reward functions written for TRL
 falsepass audit environment               # no adapter needed for Q&A tasks: the answer format is inferred
 falsepass audit environment --search 120  # add mutation search (scorer calls per direction and example)
 falsepass audit environment --jobs 1      # score one task at a time (default: up to 8 at once where that is safe)
+falsepass audit environment --time-limit 1200   # stop after 20 minutes; the finished tasks' rows stay in partial-results.jsonl
 falsepass audit environment --offline     # a cached Hugging Face dataset without the Hub check (also reach, repro --run, verify-fix)
 falsepass audit environment --fail-on 'ceiling>0.1' --fail-on 'errors>0'   # CI gate, exit 1 when met
 falsepass results environment [--json]    # the last run: summary.md, or a compact JSON digest

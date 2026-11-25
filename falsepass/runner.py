@@ -71,6 +71,24 @@ def concurrent_ok(adapter: Adapter, scorer: Any) -> bool:
     )
 
 
+PARTIAL: dict[str, Any] = {"path": None, "rows": 0, "phase": ""}  # where a run in progress writes each finished example's rows
+
+
+class Stopped(BaseException):  # not Exception: a reward's own `except Exception` must not swallow it
+    """The run was told to stop (SIGTERM, Ctrl-C or --time-limit)."""
+
+
+def _keep(rows: list[ProbeResult]) -> None:
+    """Append one finished example's rows to partial-results.jsonl, so a run that is killed keeps them."""
+    path = PARTIAL["path"]
+    if path is None or not rows:
+        return
+    with open(path, "a", encoding="utf-8", errors="backslashreplace") as f:
+        for r in rows:
+            f.write(json.dumps({"phase": PARTIAL["phase"], **r.to_dict()}, ensure_ascii=True) + "\n")
+    PARTIAL["rows"] += len(rows)
+
+
 def score_examples(adapter: Adapter, scorer: Any, loop: asyncio.AbstractEventLoop, probe_list: list, subset: list,
                    jobs: int = 1, label: str = "probes") -> list[ProbeResult]:
     """Run `probe_list` on every example of `subset`; each example's probes in order. With
@@ -83,6 +101,7 @@ def score_examples(adapter: Adapter, scorer: Any, loop: asyncio.AbstractEventLoo
         out_: list[ProbeResult] = []
         for probe in probe_list:
             out_.extend(await probe(adapter, scorer, example))
+        _keep(out_)
         done += 1
         if len(subset) <= 200 or done % (len(subset) // 100) == 0 or done == len(subset):  # about 100 lines at most
             print(f"falsepass: {label}: example {done} of {len(subset)} done", file=sys.stderr, flush=True)  # progress for job.log
@@ -277,7 +296,11 @@ def run(
 
     parallel = jobs > 1 and concurrent_ok(adapter, scorer)
 
+    PARTIAL.update(path=out / "partial-results.jsonl", rows=0, phase="load")
+    PARTIAL["path"].write_text("")
+
     def run_probes(probe_list, subset, label: str = "probes", together: bool = False) -> None:
+        PARTIAL["phase"] = label
         with watch.phase(label.replace(" ", "_")):
             results.extend(score_examples(adapter, scorer, loop, probe_list, subset, jobs if together and parallel else 1, label))
 
@@ -389,8 +412,28 @@ def run(
     )
     (out / "probe-results.json").write_text(json.dumps(payload, indent=1, ensure_ascii=True))
     (out / "summary.md").write_text(report.summary(payload))
+    PARTIAL["path"].unlink(missing_ok=True)  # the complete results replace it
+    PARTIAL["path"] = None
     print(f"falsepass: {report.timing_words(timings)}", file=sys.stderr, flush=True)
     return payload
+
+
+def partial_note(why: str) -> str:
+    """What a stopped run kept: the rows of the examples it finished, and the worst of them."""
+    path, rows = PARTIAL["path"], []
+    if path is not None and path.is_file():
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if not rows:
+        return (f"stopped because {why}, during {PARTIAL['phase'] or 'loading'}, before any task was finished. "
+                "Try fewer tasks (-n), --few 1, no --search, or a longer --time-limit")
+    paid = [r for r in rows if r["expected"] == "zero" and not r["passed"] and r["score"] is not None]
+    worst = max(paid, key=lambda r: r["score"], default=None)
+    return (f"stopped because {why}, during {PARTIAL['phase']}. The rows of every task finished so far are in "
+            f"{path} ({len(rows)} rows, {len({r['example'] for r in rows})} tasks; one JSON object per line, as in "
+            "probe-results.json). "
+            + (f"Highest reward to a known-bad row so far: {worst['score']:g} ({worst['probe']} {worst['name']}/{worst['variant']}). "
+               if worst else "No known-bad row was paid so far. ")
+            + "For a complete run: fewer tasks (-n), --few 1, no --search, or a longer --time-limit")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -412,6 +455,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="skip scoring the P11 replies again in a second process with another PYTHONHASHSEED")
     parser.add_argument("--rescore", help=argparse.SUPPRESS)  # the second process of that check: example keys
     parser.add_argument("--rescore-out", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--time-limit", type=int, default=0, metavar="SECONDS",
+                        help="stop after this long and keep the rows scored so far (partial-results.jsonl, stopped.md)")
     parser.add_argument(
         "--fail-on", action="append", default=[], metavar="NAME>NUMBER",
         help="exit 1 when met; NAME is ceiling, lazy, false_fail or errors (repeatable)",
@@ -423,15 +468,39 @@ def main(argv: list[str] | None = None) -> int:
     if args.rescore is not None:
         rescore(args.audit_dir, args.n, args.seed, set(args.rescore.split(",")), args.rescore_out)
         return 0
+    import signal
+
+    def restore() -> None:
+        signal.alarm(0)
+        for sig, handler in before.items():
+            signal.signal(sig, handler)
+
+    def stop_now(signum, frame):
+        raise Stopped("the time limit (--time-limit) was reached" if signum == signal.SIGALRM else f"it received {signal.Signals(signum).name}")
+
+    before = {sig: signal.signal(sig, stop_now) for sig in (signal.SIGTERM, *([signal.SIGALRM] if args.time_limit > 0 else []))}
+    signal.alarm(max(args.time_limit, 0))
     try:
         payload = run(args.audit_dir, args.n, args.seed, args.few, args.package, args.search, args.search_examples, args.out,
                       max(1, args.jobs), hash_seed=not args.no_hash_seed_check)
+    except (Stopped, KeyboardInterrupt) as stop:
+        why = str(stop) if isinstance(stop, Stopped) else "it was interrupted (Ctrl-C)"
+        note = partial_note(why)
+        restore()
+        print(f"falsepass: {note}", file=sys.stderr)
+        (args.out or args.audit_dir).mkdir(parents=True, exist_ok=True)
+        ((args.out or args.audit_dir) / "stopped.md").write_text(f"# Audit stopped\n\n{date.today()} · falsepass "
+                                                                 f"{falsepass.build_version()}\n\n{note}\n")  # fmt: skip
+        return 1
     except RuntimeError as stop:  # falsepass's own "cannot audit this as it stands" messages: no traceback
+        restore()
         print(f"falsepass: {stop or type(stop).__name__}", file=sys.stderr)
         if args.out is None:  # kept next to any earlier results, so the overview and a reader see why it stopped
             (args.audit_dir / "stopped.md").write_text(f"# Audit stopped\n\n{date.today()} · falsepass "
                                                        f"{falsepass.build_version()}\n\n{stop}\n")  # fmt: skip
         return 1
+    finally:
+        restore()
     if args.out is None:
         (args.audit_dir / "stopped.md").unlink(missing_ok=True)
     print(report.summary(payload))
