@@ -320,7 +320,10 @@ What the skeleton's parts mean:
   the scorer uses (the scorer never reads `answer`). Build `answer` from `raw` here, e.g.
   the JSON object the prompt asks for, filled from the grading record.
 - `render(answer, example)` writes an answer the way the prompt asks for it, and
-  `wrong_answer(example)` returns one that is certainly wrong.
+  `wrong_answer(example)` returns one that is certainly wrong. `alternative_answer(example)`
+  (optional, defaults to `wrong_answer`) is the wrong answer the probes put next to the
+  reference (P5, P15, S3): override it when your wrong answer is a non-answer ("I can't
+  tell"), since a reward that rejects doubt would reject every reply holding it.
 - `equivalent_forms(example)` gives P2 its correct variants as a dict `{name: completion}`
   (a name such as `"uppercase"` to the text). The default is three (whitespace, a sentence
   after, CRLF); override it to add forms the prompt allows, e.g.
@@ -492,7 +495,9 @@ The output is a list of leads. Before an agent reports anything:
    scores that one row, and the reference as a control, on every task (`--tasks N` for a
    sample) and writes the counts and failing task keys to `audits/<env>/reach/`. It covers
    the per-example probes (P1–P9, P13–P19, A1, X1). A count is for the completion the
-   probe wrote, including the wrong value falsepass picked and where it put it: P15 has
+   probe wrote, including the wrong value falsepass picked and where it put it (on
+   open-ended tasks, the one next to the reference in P5, P15 and S3 is the reference with
+   its numbers moved or its names swapped, not the stand-in passage P6 uses): P15 has
    both orders (`false_equation` and `false_equation_reversed`), because a grader that keeps
    one side pays only one. To count a completion of your own, pass it as a template:
    `falsepass reach <env> --template '\boxed{{wrong} \lor {answer}}'` (MCP `templates`)

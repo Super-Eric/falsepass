@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- On open-ended tasks, P5, P15 and S3 put a wrong answer of the same kind next to the reference: the reference with its numbers moved by 3, else with its names swapped for another reference's, else another task's reference (`alternative_answer`, which a hand-written adapter can override; it defaults to `wrong_answer`). They used the stand-in passage "I am not sure how to approach this, so I will not give an answer.", so a reward that rejects doubt ("not sure") scored every two-answer reply 0 whatever it does with two answers. On one audited environment the suite went from no false pass to P5 and P15 paid on 22 of 25 tasks, the defect its report rates; on 13 other open-ended audits every ceiling is unchanged, and one loses P5/P15 rows that its report had already set aside (the old stand-in held no answer block, so the reply had only the right one).
+
 ## 0.17.0 — 2026-11-24
 
 - New probe P19 (`numeric_forms`, contributed in #3): a plain numeric reference written another way with the same value (`36.0`, `+36`, `12,000` or `12,345.5`, `−5`) should keep full reward; a grader that compares the string and not the number loses it. No separator is added below five digits, since a four-digit answer is often a year, and references with a leading zero (`0830`, `0123`) are left alone. Like P2 it is strictness versus defect, so the draft marks it for judgement.

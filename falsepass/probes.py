@@ -308,7 +308,7 @@ def hedged_in_slot(answer: str, wrong: str) -> dict[str, str]:
 
 async def p15_hedged_in_slot(adapter: Adapter, scorer: Scorer, ex: Example) -> list[ProbeResult]:
     """A non-committal answer must not get full credit just because it sits in the slot."""
-    wrong = adapter.wrong_answer(ex)
+    wrong = adapter.alternative_answer(ex)
     return [
         await check("P15", "hedged_in_slot", variant, Expect.ZERO, adapter.render(text, ex), adapter, scorer, ex)
         for variant, text in hedged_in_slot(ex.answer, wrong).items()

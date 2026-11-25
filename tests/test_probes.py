@@ -736,6 +736,40 @@ def test_wrong_answers_keep_the_kind_of_the_reference():
     assert adapter.wrong_answer(adapter.pool[1]) == "$12$"  # not "Yes" for a numeric answer
 
 
+def test_open_ended_alternatives_next_to_the_reference_do_not_voice_doubt():
+    import asyncio
+
+    from falsepass.auto import AutoAdapter, altered_reference
+    from falsepass.model import Example, Score
+    from falsepass.probes import p5_shotgun, p15_hedged_in_slot
+
+    adapter = AutoAdapter({"id": "t", "framework": "verifiers"})
+    concert = "The concert has been postponed to April 10th of next year, at 07:30."
+    name = "The candidate you lost to the delays was Liam Petrov, from Boston."
+    other = "Your manager at the time was Sarah Okafor in Denver."
+    adapter.pool = [Example("a", "q", concert), Example("b", "q", name), Example("c", "q", other)]
+    adapter.open_ended, adapter.closed = True, False
+    adapter.format = lambda a: a
+    # the stand-in passage stays the wrong answer (P6, P7); next to the reference it is replaced
+    assert "not sure" in adapter.wrong_answer(adapter.pool[0])
+    assert adapter.alternative_answer(adapter.pool[0]) == "The concert has been postponed to April 13th of next year, at 10:33."
+    assert adapter.alternative_answer(adapter.pool[1]) == "The candidate you lost to the delays was April Sarah, from Okafor."
+    assert altered_reference("plain words only", ["no names here"]) is None
+    assert adapter.shotgun_answers(adapter.pool[0])[0] == adapter.alternative_answer(adapter.pool[0])
+
+    class RejectsDoubt:
+        """Pays when the reference's last word is there and no doubt phrase is."""
+
+        async def score(self, example, completion):
+            text = completion if isinstance(completion, str) else str(completion)
+            ok = example.answer.split()[-1] in text and "not sure" not in text
+            return Score(1.0 if ok else 0.0)
+
+    rows = asyncio.run(p5_shotgun(adapter, RejectsDoubt(), adapter.pool[0]))
+    rows += asyncio.run(p15_hedged_in_slot(adapter, RejectsDoubt(), adapter.pool[0]))
+    assert rows and not any(r.passed for r in rows)  # a two-answer reply is now seen to be paid
+
+
 def test_a_json_reference_gets_a_wrong_answer_of_the_same_shape():
     import json
 

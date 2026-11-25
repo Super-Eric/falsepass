@@ -748,13 +748,23 @@ class AutoAdapter(Adapter):
             return (alike or others)[0]
         return "none of the above"
 
+    def alternative_answer(self, example: Example) -> str:
+        if not self.open_ended or json_structure(example.answer.strip()) is not None:
+            return self.wrong_answer(example)
+        # The open-ended stand-in says it is "not sure", so a reward that rejects doubt rejects
+        # any reply holding it, and P5/P15 would pass whatever the grader does with two answers.
+        # Next to the reference, use one of the same kind: the reference with its numbers moved,
+        # else with its names swapped for another reference's, else another task's reference.
+        others = [o.answer for o in self.pool if o is not example and o.answer.strip() != example.answer.strip()]
+        return altered_reference(example.answer, others) or self.other_reference(example) or self.wrong_answer(example)
+
     def shotgun_answers(self, example: Example) -> list[str]:
         if self.closed:
             return list(self.labels)
         if is_number(example.answer):
             value = float(example.answer.replace(",", "").replace("$", ""))
             return [f"{value + d:g}" for d in (-3, -2, -1, 1, 2, 3)] + [example.answer]
-        return [self.wrong_answer(example), example.answer]
+        return [self.alternative_answer(example), example.answer]
 
     def equivalent_forms(self, example: Example) -> dict[str, str]:
         a, correct = example.answer, self.format(example.answer)
@@ -794,6 +804,26 @@ class AutoAdapter(Adapter):
         row = dict(raw)
         row["answer"] = reference
         return Example(example.key, example.prompt, reference, row)
+
+
+_NAME = re.compile(r"(?<=[a-z0-9,;:)] )[A-Z][a-z]+(?:[-'][A-Za-z]+)?")
+
+
+def altered_reference(answer: str, others: list[str]) -> str | None:
+    """`answer` made wrong while keeping its kind: every run of digits moved by 3 (width kept),
+    or, without digits, the capitalised words that don't open a sentence swapped for those of
+    another reference. None when neither changes anything."""
+    moved = re.sub(r"\d+", lambda m: str(int(m.group()) + 3).zfill(len(m.group())), answer)
+    if moved != answer:
+        return moved
+    names = list(dict.fromkeys(_NAME.findall(answer)))
+    donors = [n for o in others for n in dict.fromkeys(_NAME.findall(o)) if n.lower() not in answer.lower()]
+    donors = list(dict.fromkeys(donors))
+    if not names or not donors:
+        return None
+    swap = dict(zip(names, donors))
+    out = _NAME.sub(lambda m: swap.get(m.group(), m.group()), answer)
+    return out if out != answer else None
 
 
 async def other_task_reference(adapter: AutoAdapter, scorer: Scorer, ex: Example) -> list:

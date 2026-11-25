@@ -66,9 +66,14 @@ class Adapter:
         """An answer that is definitely not correct for `example`."""
         raise NotImplementedError
 
+    def alternative_answer(self, example: Example) -> str:
+        """A wrong answer of the same kind, for the probes that put it next to the reference
+        (P5, P15, S3); defaults to `wrong_answer`."""
+        return self.wrong_answer(example)
+
     def shotgun_answers(self, example: Example) -> list[str]:
         """Candidate answers to spray (P5); must include the correct one."""
-        return [self.wrong_answer(example), example.answer]
+        return [self.alternative_answer(example), example.answer]
 
     def equivalent_forms(self, example: Example) -> dict[str, Completion]:
         """Semantically identical ways to give the correct answer (P2). By default three
