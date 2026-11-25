@@ -70,6 +70,9 @@ Everything an audit writes lives in `audits/<env>/` (or the folder given with `-
 - `errors`: exceptions or timeouts raised by the reward code on this completion.
 - `completion_id`: key into `completions.json`; empty for completions over 60,000
   characters (generated payloads such as P10's 2 MB reply), which are kept as a preview.
+  A policy's episode that long (one that ran into the turn cap) is kept with its first and
+  last 10 messages and `"shortened": true`; it is not replayed by `repro` and not compared
+  for `same_as_good`.
 - `same_as_good`: a known-bad completion that is identical to a known-good one on the same
   task (for a policy: the same replies). It is marked `passed` and left out of the ceiling;
   the lazy-policy reward still counts it, since a fixed strategy earns it on every task.

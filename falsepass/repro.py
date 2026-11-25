@@ -626,7 +626,7 @@ def select(results: list[dict[str, Any]], completions: dict[str, Any], probes: l
         if isinstance(stored, str) and stored.startswith("Policy("):
             continue  # a policy run from before episodes were kept: only its name is known
         if isinstance(stored, dict) and "script" in stored:  # a policy's episode: replay what it said, turn by turn
-            if not stored["script"]:
+            if not stored["script"] or stored.get("shortened"):  # only its start and end were kept: not replayable
                 continue
             stored = stored["script"]
         wanted = not probes or r["probe"] in probes or f'{r["probe"]}/{r["variant"]}' in probes  # P5 or P5/all_in_one_slot

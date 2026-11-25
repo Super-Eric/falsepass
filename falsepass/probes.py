@@ -89,11 +89,33 @@ def remember_episode(policy: Any, info: dict[str, Any]) -> str:
     episode = {"policy": repr(policy), "script": info.get("script") or [], "transcript": info.get("transcript") or [],
                **{k: info[k] for k in ("stop", "turns", "steps", "episode_return", "last_reward") if info.get(k) is not None}}
     text = json.dumps(episode, ensure_ascii=False, default=str)
-    if len(text) > STORE_LIMIT:
-        return ""
+    if len(text) > STORE_LIMIT:  # a runaway episode (a turn cap hit): keep its start and its end
+        episode = {**episode, **{k: _ends(episode[k]) for k in ("script", "transcript")}, "shortened": True}
+        text = json.dumps(episode, ensure_ascii=False, default=str)
+        if len(text) > STORE_LIMIT:
+            return ""
     key = hashlib.sha1(text.encode("utf-8", "surrogatepass")).hexdigest()[:12]
     STORE[key] = episode
     return key
+
+
+EPISODE_ENDS = 10  # messages kept at each end of an episode too long to store whole
+
+
+def _ends(messages: list[Any]) -> list[Any]:
+    """The first and last messages of a long list, with one entry saying how many were left out;
+    each message's text is cut to 1,000 characters."""
+
+    def cut(m: Any) -> Any:
+        if isinstance(m, dict) and isinstance(m.get("content"), str) and len(m["content"]) > 1000:
+            return {**m, "content": m["content"][:1000] + f" [... {len(m['content']) - 1000} characters left out]"}
+        return m
+
+    if len(messages) <= 2 * EPISODE_ENDS:
+        return [cut(m) for m in messages]
+    left_out = len(messages) - 2 * EPISODE_ENDS
+    return [*map(cut, messages[:EPISODE_ENDS]), {"role": "note", "content": f"[{left_out} messages left out: the episode was too long to keep]"},
+            *map(cut, messages[-EPISODE_ENDS:])]  # fmt: skip
 
 
 # `falsepass reach` scores only the probes it was asked for: "P15" (every variant) or
@@ -164,6 +186,8 @@ def _text(completion: Completion) -> str:
 
 def _said(completion_id: str) -> Any:
     stored = STORE.get(completion_id)
+    if isinstance(stored, dict) and stored.get("shortened"):  # not all of it was kept: compare nothing
+        return None
     return stored["script"] if isinstance(stored, dict) and stored.get("script") else stored
 
 

@@ -125,3 +125,21 @@ def test_templates_are_filled_per_task_and_counted(tmp_path: Path):
     assert probes.TEMPLATES == [] and probes.ONLY == set()
     with pytest.raises(RuntimeError, match="nothing to count"):
         reach.run(folder, [], tasks=1, out=tmp_path / "x")
+
+
+def test_a_runaway_episode_keeps_its_start_and_end():
+    from falsepass import probes, repro
+    from falsepass.model import Policy
+
+    script = [{"role": "assistant", "content": f"step {i} " + "x" * 400} for i in range(400)]  # a turn cap hit
+    key = probes.remember_episode(Policy("loop", None), {"script": script, "transcript": script, "turns": 400})
+    assert key, "an episode too long to store whole is still kept"
+    stored = probes.STORE[key]
+    assert stored["shortened"] and len(stored["script"]) == 2 * probes.EPISODE_ENDS + 1
+    assert stored["script"][0]["content"].startswith("step 0") and stored["script"][-1]["content"].startswith("step 399")
+    assert "380 messages left out" in stored["script"][probes.EPISODE_ENDS]["content"]
+    assert probes._said(key) is None  # never compared with a known-good run
+    row = {"probe": "X1", "name": "policy", "variant": "loop", "example": "t", "expected": "zero", "score": None,
+           "passed": False, "completion_id": key}
+    assert repro.select([row], {key: stored}, None, 2) == []  # not replayable
+
