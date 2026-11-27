@@ -11,3 +11,12 @@ does nothing earns full reward on every task.
 falsepass plays each task as a whole episode through the taskset's own loop (its tool
 server, its stop conditions, its reward), with generic policies that never read the task.
 Expected: a false-pass ceiling of 1 via `says_done_without_any_tool_call`.
+
+The same package holds a second taskset, `falsepass_v1_file_toy`: reverse a word and write it
+to `answer.txt`, under verifiers' default `bash` harness. Its planted defect: the reward grades
+the final reply and never reads the file. Probe T9 writes the reference to `answer.txt` in a
+whole episode and replies that it did; expected: `file_then_note` scores 0 while
+`file_then_reply` (the same file, plus the reference as the reply) scores 1. The fix,
+`reads_the_file`, plugs in through env.toml:
+
+    vf_args = ["--env.taskset.task.rewards", "{\"correct\": {\"fn\": \"falsepass_v1_file_toy:reads_the_file\"}}"]

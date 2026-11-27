@@ -296,6 +296,7 @@ class V1EpisodeScorer:
         self._starting: asyncio.Lock | None = None
         self.weights: dict[str, float] = {}
         self.notes: list[str] = []
+        self._tasks: dict[str, Any] | None = None  # the environment's own tasks by key, when extra options are given
 
     async def start(self) -> None:
         self._starting = self._starting or asyncio.Lock()
@@ -334,7 +335,7 @@ class V1EpisodeScorer:
         name = self.endpoint.add(player)
         try:
             ctx = ModelContext(client=self.config.client, model=name, sampling=self.config.sampling)
-            episode = await self.env.run_episode(example.raw, ctx)
+            episode = await self.env.run_episode(self._own_task(example.raw), ctx)
         except Exception as exc:  # noqa: BLE001
             return Score(None, {}, [f"episode failed: {type(exc).__name__}: {exc}"[:800]], self._info(player, None))
         finally:
@@ -353,6 +354,18 @@ class V1EpisodeScorer:
         if not self.weights:
             self.weights = {k: float(v.weight) for k, v in trace.rewards.items() if v is not None}
         return Score(float(trace.reward), metrics, errors, info)
+
+    def _own_task(self, task: Any) -> Any:
+        """The environment's own copy of `task` (same key), as `vf-eval` would run it. The caller's
+        task was loaded without the extra options: built with the taskset config from before
+        `--env.taskset.task.rewards ...` and the like, it would ignore them."""
+        if not self.args or not hasattr(task, "key"):
+            return task
+        if self._tasks is None:
+            self._tasks = {}
+            with contextlib.suppress(Exception):  # a taskset that cannot list its tasks here: run the caller's
+                self._tasks = {t.key: t for t in self.env.taskset.load()}
+        return self._tasks.get(task.key, task)
 
     @staticmethod
     def _info(player: Player, trace: Any) -> dict[str, Any]:
@@ -375,5 +388,5 @@ class V1EpisodeScorer:
                 await self._stack.aclose()
         if self.endpoint is not None:
             self.endpoint.close()
-        self._stack = self.env = self.endpoint = None
+        self._stack = self.env = self.endpoint = self._tasks = None
 

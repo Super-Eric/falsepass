@@ -8,6 +8,7 @@ with the environment's own reward code, and compares against the expectation.
 from __future__ import annotations
 
 import functools
+import os
 import re
 from typing import Any
 
@@ -872,6 +873,155 @@ async def t8_after_the_end(adapter: Adapter, scorer: Scorer, ex: Example) -> lis
                         score.metrics, score.errors, True, remember_episode(policy, score.info))]  # fmt: skip
 
 
+# --- T9: the output file the prompt names -----------------------------------------------
+
+# "Write the repaired config to `submission.ocio`", "save your answer as answer.txt": a write
+# verb, then within the same sentence a file name with an extension. Quoted or backticked names
+# are taken as they are; a bare one needs a stem and an extension of two characters or more,
+# so "e.g." and "3.5" are not file names.
+_FILE_NAME = r"(?:/?[\w.-]+/)*[\w-][\w.-]*\.[A-Za-z][A-Za-z0-9]{0,9}"
+NAMED_OUTPUT_FILE = re.compile(
+    r"\b(?:write|save|store|put|output|place|dump|export|create|produce)\b[^.\n]{0,80}?"
+    r"\b(?:to|into|in|as|at|named|called)\s+(?:the\s+|a\s+)?(?:file\s+|path\s+)?"
+    rf"(?:[`'\"]({_FILE_NAME})[`'\"]|((?:/?[\w.-]+/)*[\w-][\w-]+\.[A-Za-z][A-Za-z0-9]{{1,9}})\b)",
+    re.I,
+)
+OUTPUT_FILE_LIMIT = 100_000  # bytes: a larger reference is not sent as one tool call
+SHELL_PARAMETERS = ("command", "cmd", "script")
+
+
+def named_output_file(prompt: str) -> str | None:
+    """The file the prompt asks the answer to be written to, or None."""
+    for found in NAMED_OUTPUT_FILE.finditer(prompt or ""):
+        name = found.group(1) or found.group(2)
+        if name and not name.startswith(("http", "www.")):
+            return name
+    return None
+
+
+def write_file_call(tools: list[dict[str, Any]], path: str, data: bytes) -> tuple[dict[str, Any], int] | None:
+    """A tool call that writes `data` to `path` through a shell tool (a string parameter named
+    command, cmd or script) or a Python tool, and prints the file's size; None when no tool
+    offered can do it. The content goes base64-encoded, so no quoting can change a byte."""
+    import base64
+
+    encoded = base64.b64encode(data).decode()
+    for tool in tools:
+        properties = (tool.get("parameters") or {}).get("properties") or {}
+        for key in SHELL_PARAMETERS:
+            if key in properties:
+                quoted = "'" + path + "'"  # the name holds only word characters, dots, dashes and slashes
+                command = (f"mkdir -p \"$(dirname -- {quoted})\" && {{ printf '%s' '{encoded}' | base64 -d > {quoted} 2>/dev/null "
+                           f"|| printf '%s' '{encoded}' | base64 -D > {quoted}; }} && wc -c < {quoted}")  # fmt: skip
+                return {"content": "", "tool_calls": [{"name": tool["name"], "arguments": {key: command}}]}, len(data)
+        if "python" in tool.get("name", "").lower() and "code" in properties:
+            code = (f"import base64, os\np = {path!r}\nos.makedirs(os.path.dirname(p) or '.', exist_ok=True)\n"
+                    f"open(p, 'wb').write(base64.b64decode({encoded!r}))\nprint(os.path.getsize(p))")  # fmt: skip
+            return {"content": "", "tool_calls": [{"name": tool["name"], "arguments": {"code": code}}]}, len(data)
+    return None
+
+
+# The episode scorer T9 plays its episodes with, one per run (the environment comes up once).
+# Tests replace `output_file_scorer` with a fake.
+_FILE_EPISODES: dict[str, Any] = {}
+_PROXY_NAMES = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy", "NO_PROXY", "no_proxy")
+
+
+def output_file_scorer(adapter: Adapter) -> Any:
+    """A whole-episode scorer for a v1 taskset scored reply by reply in this run, built from the
+    adapter's `loader` (`{"kind": "v1", "module": ..., "load_args": ...}`, optional `runtime`,
+    `args`, `network`), or None when there is no such loader."""
+    loader = getattr(adapter, "loader", None) or {}
+    if loader.get("kind") != "v1" or not loader.get("module"):
+        return None
+    if "scorer" not in _FILE_EPISODES:
+        from falsepass.v1_episodes import V1EpisodeScorer
+
+        _FILE_EPISODES["proxies"] = {name: os.environ.get(name) for name in _PROXY_NAMES}
+        _FILE_EPISODES["scorer"] = V1EpisodeScorer(loader.get("taskset") or loader["module"], loader.get("load_args"),
+                                                   loader.get("runtime", "subprocess"), loader.get("args"), loader.get("network", False))  # fmt: skip
+    return _FILE_EPISODES["scorer"]
+
+
+async def close_output_file_scorer() -> None:
+    """Tear down T9's environment and put back the proxy settings its episodes changed."""
+    scorer = _FILE_EPISODES.pop("scorer", None)
+    if scorer is not None:
+        await scorer.close()
+    for name, value in (_FILE_EPISODES.pop("proxies", None) or {}).items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
+
+
+async def t9_named_output_file(adapter: Adapter, scorer: Scorer, ex: Example) -> list[ProbeResult]:
+    """The prompt names a file to write the answer to, and the harness offers a shell: an episode
+    that writes the reference to that file and then says so must keep full reward. A reward that
+    grades only the final reply scores it 0. The control row sends the reference as the reply as
+    well, so the two rows together say whether the file was read at all. Played as whole episodes
+    through the taskset's own harness, for v1 tasksets otherwise scored reply by reply."""
+    path = named_output_file(ex.prompt)
+    if path is None or getattr(scorer, "multi_turn", False) or getattr(adapter, "tool_mode", False) or not isinstance(ex.answer, str):
+        return []
+    rendered = adapter.render(ex.answer, ex)
+    variants = {"file_then_note": f"I wrote it to `{path}`.", "file_then_reply": rendered if isinstance(rendered, str) else ex.answer}
+    if not any(wanted("T9", v) for v in variants):
+        return [ProbeResult("T9", "named_output_file", v, ex.key, Expect.FULL, None, True, SKIPPED) for v in variants]
+    episodes = output_file_scorer(adapter)
+    if episodes is None:
+        return []
+    data = ex.answer.encode("latin-1", "replace") if binary_reference(ex.answer) else ex.answer.encode("utf-8", "replace")
+    if len(data) > OUTPUT_FILE_LIMIT:
+        return []
+    results: list[ProbeResult] = []
+    for variant, final in variants.items():
+        if not wanted("T9", variant):
+            results.append(ProbeResult("T9", "named_output_file", variant, ex.key, Expect.FULL, None, True, SKIPPED))
+            continue
+        seen: dict[str, Any] = {"tool": None, "size": None, "output": None}
+
+        def act(messages: list[dict[str, Any]], tools: list[dict[str, Any]], final: Any = final) -> Any:
+            turn = sum(1 for m in messages if m.get("role") == "assistant")
+            if turn == 0:
+                call = write_file_call(tools, path, data)
+                if call is None:
+                    return "I have no tool to write files with."
+                seen["tool"], seen["size"] = call[0]["tool_calls"][0]["name"], call[1]
+                return call[0]
+            if turn == 1 and seen["tool"]:
+                seen["output"] = next((str(m.get("content") or "") for m in reversed(messages) if m.get("role") == "tool"), "")
+                return final
+            return "Done."
+
+        policy = Policy(f"writes_{variant}", act, wants_tools=True)
+        score = await episodes.score(ex, policy)
+        if seen["tool"] is None:  # no shell or Python tool in this harness: nothing to test
+            if score.errors:
+                results.append(ProbeResult("T9", "named_output_file", variant, ex.key, Expect.FULL, None, True,
+                                           f"not run: the episode failed ({score.errors[0][:300]})", answer_free=False))  # fmt: skip
+            return results
+        written = str(seen["size"]) in (seen["output"] or "").split()
+        if not written:
+            results.append(ProbeResult("T9", "named_output_file", variant, ex.key, Expect.FULL, None, True,
+                                       f"not run: writing `{path}` through {seen['tool']} did not report {seen['size']} bytes "
+                                       f"(tool output: {(seen['output'] or '')[:200]!r})", preview(final),
+                                       score.metrics, score.errors, False, remember_episode(policy, score.info)))  # fmt: skip
+            continue
+        passed = judge(Expect.FULL, score.reward, adapter, ex.key)
+        detail = "" if passed else (
+            f"the prompt names `{path}`: the reference written there through {seen['tool']} ({seen['size']} bytes), "
+            f"then {'a reply that says so' if variant == 'file_then_note' else 'the reference as the reply too'}, "
+            f"scored {score.reward}"
+        )
+        results.append(ProbeResult("T9", "named_output_file", variant, ex.key, Expect.FULL, score.reward, passed, detail,
+                                   preview(final), score.metrics, score.errors, False, remember_episode(policy, score.info)))  # fmt: skip
+    note, control = (next((r for r in results if r.variant == v and r.score is not None), None) for v in variants)
+    if note is not None and control is not None and not note.passed and control.passed:
+        note.detail += "; with the reference also sent as the reply it scores full: the reward grades the reply, not the file"
+    return results
+
+
 # --- T6: tool-use environments, played by policies that know nothing about the task ------
 
 FINISH_TOOL = re.compile(r"submit|finish|final|answer|done|complete|end", re.I)
@@ -1080,3 +1230,6 @@ PER_EXAMPLE = [
 ]  # fmt: skip
 # Slower or input-independent probes run on a handful of examples only.
 FEW_EXAMPLES = [p10_exception_path, p11_determinism, t4_state_reset, t5_turn_limit, t7_tool_call_first, t8_after_the_end]
+# Whole episodes for a taskset otherwise scored reply by reply: its own phase, one example at a
+# time, after the others (its episodes set proxy variables for the process while they run).
+OUTPUT_FILE = [t9_named_output_file]

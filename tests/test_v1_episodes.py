@@ -336,3 +336,41 @@ def test_a_one_turn_taskset_with_its_own_loop_and_no_tools_gets_the_text_probes(
     assert single(host, [Quiz(""), Quiz("")], ["loop"], "subprocess", [], False) is None  # no reference: stays on episodes
     OneTurn.turns = 2  # the reference reply does not end the episode: a game, not a quiz
     assert single(host, [Quiz("-y")], ["loop"], "subprocess", [], False) is None
+
+
+def _file_toy_audit(root: Path, vf_args: list[str] | None = None) -> Path:
+    audit = root / "audits" / "falsepass-v1-file-toy"
+    audit.mkdir(parents=True)
+    lines = ["[env]", 'id = "falsepass-v1-file-toy"', 'package = "falsepass-v1-tool-toy"', 'module = "falsepass_v1_file_toy"']
+    if vf_args:
+        lines.append(f"vf_args = {json.dumps(vf_args)}")
+    (audit / "env.toml").write_text("\n".join(lines) + "\n")
+    return audit
+
+
+def test_t9_writes_the_named_file_and_catches_a_reward_that_reads_only_the_reply(toy_tasks, tmp_path: Path, monkeypatch):
+    from falsepass import repro, runner
+
+    monkeypatch.chdir(tmp_path)
+    audit = _file_toy_audit(tmp_path)
+    runner.run(audit, n=3, seed=0, few=2)
+    payload = json.loads((audit / "probe-results.json").read_text())
+    assert payload["meta"]["loader"]["kind"] == "v1"  # scored reply by reply; T9 alone plays episodes
+    rows = {(r["example"], r["variant"]): r for r in payload["results"] if r["probe"] == "T9"}
+    assert len(rows) == 4
+    notes = [r for (_, v), r in rows.items() if v == "file_then_note"]
+    assert all(r["score"] == 0.0 and not r["passed"] and "the reward grades the reply, not the file" in r["detail"] for r in notes)
+    assert all(r["score"] == 1.0 and r["passed"] for (_, v), r in rows.items() if v == "file_then_reply")
+    assert "`answer.txt`" in (audit / "summary.md").read_text()
+    assert not any(c["probe"] == "T9" for c in repro.select(payload["results"], json.loads((audit / "completions.json").read_text()), None, 5))
+
+
+def test_t9_passes_when_the_reward_reads_the_file_and_vf_args_reach_the_task(toy_tasks, tmp_path: Path, monkeypatch):
+    from falsepass import runner
+
+    monkeypatch.chdir(tmp_path)
+    fix = json.dumps({"correct": {"fn": "falsepass_v1_file_toy:reads_the_file"}})
+    audit = _file_toy_audit(tmp_path, ["--env.taskset.task.rewards", fix])
+    runner.run(audit, n=2, seed=0, few=2)
+    rows = [r for r in json.loads((audit / "probe-results.json").read_text())["results"] if r["probe"] == "T9"]
+    assert len(rows) == 4 and all(r["score"] == 1.0 and r["passed"] for r in rows), rows

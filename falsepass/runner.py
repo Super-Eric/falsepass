@@ -321,6 +321,12 @@ def run(
             from falsepass import search
 
             run_probes([search.make_probe(search_calls, seed)], examples[:search_examples], "mutation search")
+        if not getattr(adapter, "tool_mode", False) and not getattr(adapter, "answer_free", False) \
+                and any(probes.named_output_file(ex.prompt) for ex in examples[:few]):
+            try:
+                run_probes(probes.OUTPUT_FILE, examples[:few], "output file")
+            finally:
+                loop.run_until_complete(probes.close_output_file_scorer())
         probes.mark_same_as_good(results)
         probes.mark_no_control(results, adapter)
         with watch.phase("hygiene"):

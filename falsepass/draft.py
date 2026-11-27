@@ -42,6 +42,7 @@ MEANING = {
     "T5": "a policy that never answers is not cut off, or is rewarded",
     "T6": "a policy that calls tools without reading the task is rewarded, or makes the reward code raise",
     "T7": "a correct answer given after one tool call loses reward (messages counted as turns)",
+    "T9": "the answer written to the file the prompt names, as asked, loses reward: the reward does not read that file",
     "P13": "NaN, Infinity or a fractional count is accepted, or makes the reward code raise",
     "P14": "a correct answer loses reward when the reply also names its answer format",
     "P15": "a denied or hedged answer written inside the answer slot gets full credit",
@@ -58,7 +59,7 @@ MEANING = {
     "X0": "control (a policy that solves the task)",
     "X1": "environment-specific probe",
 }
-NEEDS_JUDGEMENT = {"P2", "P19", "S2", "P14", "T7"}  # P2/P19: strictness versus defect; P14/T7: harness-dependent
+NEEDS_JUDGEMENT = {"P2", "P19", "S2", "P14", "T7", "T9"}  # P2/P19: strictness versus defect; P14/T7/T9: harness-dependent
 
 
 def _stats(rows: list[dict[str, Any]]) -> str:
@@ -144,7 +145,11 @@ def draft(audit_dir: Path) -> Path:
         ]
         for h in backing:
             lines.append(f"- Source hint: `{h['file']}:{h['line']}` {h['rule']} — `{h['evidence']}`")
-        if probe in NEEDS_JUDGEMENT:
+        if probe == "T9":
+            lines.append("- Judgement needed: does the prompt (or the system prompt) also ask for the answer in the final reply? "
+                         "If it asks only for the file, the reward should read the file; check that the harness the taskset "
+                         "trains with offers a shell, and replay with `falsepass reach <env> --probe T9`.")
+        elif probe in NEEDS_JUDGEMENT:
             lines.append("- Judgement needed: is this variation one the prompt allows? If the prompt forbids it, this is strictness, not a defect.")
         if isinstance(adapter, dict) and "open-ended" in adapter.get("answers", "") and name == "task_independence":
             lines.append("- Note: for open-ended tasks this shows the reward barely depends on which task was set. It is not a wrong answer being accepted.")

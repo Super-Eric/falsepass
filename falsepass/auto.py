@@ -438,7 +438,19 @@ class AutoAdapter(Adapter):
                 + "; check that the control (P1) scores full before reading the rows (if it does not on most tasks the run is "
                 "inconclusive: the field holds targets, not the reply, and an adapter with a solver is needed)"
             )
-        self.loader = {"kind": "v1", "module": self.module, "load_args": self.load_args}
+        self.loader = {"kind": "v1", "module": self.module, "load_args": self.load_args,
+                       # how T9 plays its episodes (a prompt that names an output file); repro ignores these
+                       **{key: self.settings[name] for key, name in (("runtime", "runtime"), ("args", "vf_args"), ("network", "network"))
+                          if name in self.settings}}  # fmt: skip
+        from falsepass.probes import named_output_file
+
+        named = next((name for ex in pool if (name := named_output_file(ex.prompt))), None)
+        if named:
+            self.load_notes.append(
+                f"the prompt names an output file (`{named}`): T9 writes the reference there in whole episodes through the "
+                f"taskset's own harness (runtime {self.settings.get('runtime', 'subprocess')}), then replies, to see "
+                "whether the reward reads the file"
+            )
         system = getattr(tasks[0].data, "system_prompt", None) or ""
         return V1TaskScorer(tasks[0]), pool, (f"{system}\n{tasks[0].data.prompt_text}", None)
 

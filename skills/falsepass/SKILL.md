@@ -35,7 +35,10 @@ Q&A environment whose answer format can't be inferred, `--manual` writes a simpl
 A `verifiers.v1` tool or multi-turn taskset needs no adapter to start: automatic mode plays
 generic tool policies (T5, T6) as whole episodes through the taskset's own loop; for a
 solver as the control and task-aware exploits, `--policies` writes a v1 skeleton. T5/T6
-rows on tasks where refusing is right are marked `no_control` and not counted. A package's
+rows on tasks where refusing is right are marked `no_control` and not counted. A v1 taskset
+scored reply by reply whose prompt names an output file gets T9: the reference written to that
+file through the harness's shell, then a reply saying so; 0 there with the control
+(`file_then_reply`) at full means the reward reads the reply, not the file. A package's
 own step-by-step solver plays as the control through `falsepass.policies.sequential`; wrong
 episodes under per-rule partial credit are judged `Expect.BELOW_REFERENCE` against it.
 An OpenEnv tool environment (MCP `CallToolAction`), or one whose reward comes after several

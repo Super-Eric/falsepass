@@ -59,7 +59,7 @@ Everything an audit writes lives in `audits/<env>/` (or the folder given with `-
 - `meta.timings`: where the time went, in seconds: `total_s` (the probe process, after set-up),
   `set_up_s` (resolving and installing the virtualenv, when started through the CLI; `words`
   adds the two), `phases` (`load`, `prepare`,
-  `probes`, `slower_probes`, `hygiene`, `rewardlint`, `close`, `hash_seed`, `static`), `jobs` (tasks scored
+  `probes`, `slower_probes`, `output_file` (T9's episodes, only when a prompt names an output file), `hygiene`, `rewardlint`, `close`, `hash_seed`, `static`), `jobs` (tasks scored
   at once; 1 where the scorer is not safe to run concurrently) and `hub_checked` (the dataset
   library was loaded with nothing telling it to stay offline, so a Hub-hosted dataset was checked
   with the Hub; `--offline` skips that once the data is cached). The summary's **Time** line and

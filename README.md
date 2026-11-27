@@ -280,6 +280,7 @@ the commands with `uv run`; `uv run pytest` runs the kit's own tests.
 | O1 | OpenEnv, a decision field in the action: every value of it in turn, nothing else said (a fixed strategy; its mean is the lazy-policy reward) | pays only the base rate of that label |
 | O2 | OpenEnv, a self-reported field in the action (`confidence`, `score`, `quality`): at its maximum and at its minimum | gives the same reward |
 | T7 | the correct answer after one no-op tool call | gives full reward (a judgement call where the harness offers no tools) |
+| T9 | v1 tasksets scored reply by reply whose prompt names an output file ("Write the repaired config to `submission.ocio`") and whose harness offers a shell: a whole episode that writes the reference to that file, then replies that it did (`file_then_note`); the control also sends the reference as the reply (`file_then_reply`) | gives full reward (a judgement call when the prompt also asks for the answer in the reply) |
 | C0–C2 | container tasks: the key written as the output file (C0), with NaN / Infinity / fractional counts (C1), emptied, truncated or replaced by an input file (C2) | pays C0 in full and no mutation in full |
 | T4 | multi-turn: replay an episode after an unrelated one | gives the same reward and transcript |
 | T5 | multi-turn: a policy that never answers | is cut off and not rewarded |

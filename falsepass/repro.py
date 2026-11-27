@@ -14,7 +14,8 @@ hand-written adapter that declares how its data is loaded:
 with example keys that end in the row's index (`train-17`). `kind` is `v0`, `v0-rollout`
 `v1` or `v1-episode` (a whole episode through the taskset's own loop; optional `taskset`,
 `runtime` and `args`, the extra `vf-eval` options). An adapter that samples or filters its data in some other way keeps a
-hand-written repro.
+hand-written repro. T9 rows (episodes of a taskset otherwise scored reply by reply) are left out:
+`falsepass reach <env> --probe T9` plays them again.
 """
 
 from __future__ import annotations
@@ -625,6 +626,8 @@ def select(results: list[dict[str, Any]], completions: dict[str, Any], probes: l
         stored = completions.get(r["completion_id"])
         if isinstance(stored, str) and stored.startswith("Policy("):
             continue  # a policy run from before episodes were kept: only its name is known
+        if r["probe"] == "T9":
+            continue  # episodes of a taskset otherwise scored reply by reply: `falsepass reach <env> --probe T9` replays them
         if isinstance(stored, dict) and "script" in stored:  # a policy's episode: replay what it said, turn by turn
             if not stored["script"] or stored.get("shortened"):  # only its start and end were kept: not replayable
                 continue

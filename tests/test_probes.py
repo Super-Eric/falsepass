@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+import sys
 
 import pytest
 
@@ -243,6 +244,7 @@ def test_search_clears_a_strict_verifier_on_false_pass():
 
 LEAKY_SOURCE = '''
 import re
+import sys
 import verifiers as vf
 
 def parse(completion):
@@ -917,3 +919,116 @@ def test_requirements_named_by_url_are_passed_to_the_installer():
     metadata = ("Requires-Dist: verifiers>=0.4\nRequires-Dist: openfda-tools @ git+https://example.org/x/tools.git@v1 ; "
                 "python_version >= '3.11'\nRequires-Dist: numpy\n")
     assert hub.url_requirements(metadata) == ["openfda-tools @ git+https://example.org/x/tools.git@v1"]
+
+
+# --- T9: the output file the prompt names ---------------------------------------------
+
+
+@pytest.mark.parametrize("prompt, name", [
+    ("Read `symptom.txt` for what the artist noticed. Write the repaired config to `submission.ocio`.", "submission.ocio"),
+    ("Save your answer as answer.txt when you are done.", "answer.txt"),
+    ("Write the final table into the file /app/out/result.json", "/app/out/result.json"),
+    ("Put the patch in 'fix.diff'.", "fix.diff"),
+    ("Read `input.csv` and summarise it.", None),
+    ("Write your answer in LaTeX.", None),
+    ("Write the number, e.g. 3.5, in the box.", None),
+    ("Put your final answer in \\boxed{}.", None),
+])  # fmt: skip
+def test_named_output_file(prompt, name):
+    assert probes.named_output_file(prompt) == name
+
+
+@pytest.mark.parametrize("data", [b"plain", "it's \"quoted\" $HOME `x`\n\nline\\n é\n".encode(), bytes(range(256))])
+def test_the_write_call_writes_the_exact_bytes(tmp_path, data):
+    import subprocess
+
+    bash = [{"name": "bash", "parameters": {"type": "object", "properties": {"command": {"type": "string"}}}}]
+    call, size = probes.write_file_call(bash, "out/answer.bin", data)
+    command = call["tool_calls"][0]["arguments"]["command"]
+    printed = subprocess.run(["bash", "-c", command], cwd=tmp_path, capture_output=True, text=True, check=True).stdout
+    assert (tmp_path / "out" / "answer.bin").read_bytes() == data and printed.split() == [str(size)] and size == len(data)
+    python = [{"name": "python", "parameters": {"properties": {"code": {"type": "string"}}}}]
+    code = probes.write_file_call(python, "py/answer.bin", data)[0]["tool_calls"][0]["arguments"]["code"]
+    subprocess.run([sys.executable, "-c", code], cwd=tmp_path, check=True, capture_output=True)
+    assert (tmp_path / "py" / "answer.bin").read_bytes() == data
+    assert probes.write_file_call([{"name": "lookup", "parameters": {"properties": {"order_id": {}}}}], "a.txt", data) is None
+
+
+class FileEpisodes:
+    """Plays a policy with one bash tool that really runs in `root`; the reward reads the
+    reply (`reads_file=False`, the planted defect) or the file the prompt names."""
+
+    multi_turn = True
+    TOOLS = [{"name": "bash", "parameters": {"type": "object", "properties": {"command": {"type": "string"}}}}]
+
+    def __init__(self, root, reads_file, tools=TOOLS):
+        self.root, self.reads_file, self.tools, self.closed = root, reads_file, tools, False
+
+    async def score(self, example, policy):
+        import subprocess
+
+        messages = [{"role": "user", "content": example.prompt}]
+        for _ in range(4):
+            reply = policy.act(messages, self.tools)
+            reply = {"content": reply} if isinstance(reply, str) else reply
+            messages.append({"role": "assistant", **reply})
+            if not reply.get("tool_calls"):
+                break
+            command = reply["tool_calls"][0]["arguments"]["command"]
+            out = subprocess.run(["bash", "-c", command], cwd=self.root, capture_output=True, text=True).stdout
+            messages.append({"role": "tool", "content": out})
+        path = self.root / probes.named_output_file(example.prompt)
+        graded = (path.read_text() if path.exists() else "") if self.reads_file else messages[-1]["content"]
+        return Score(float(graded.strip() == example.answer), info={"script": messages[1:], "transcript": messages})
+
+    async def close(self):
+        self.closed = True
+
+
+class Plain(Toy):
+    loader = {"kind": "v1", "module": "unused"}
+
+    def render(self, answer, example):
+        return answer
+
+
+FILE_EX = Example("ex-0", "Reverse `abc`. Write the result to `answer.txt`.", "cba")
+
+
+def run_t9(monkeypatch, episodes, ex=FILE_EX):
+    monkeypatch.setattr(probes, "output_file_scorer", lambda adapter: episodes)
+    return {r.variant: r for r in asyncio.run(probes.t9_named_output_file(Plain(), FakeScorer(strict), ex))}
+
+
+def test_t9_flags_a_reward_that_ignores_the_file(tmp_path, monkeypatch):
+    rows = run_t9(monkeypatch, FileEpisodes(tmp_path, reads_file=False))
+    assert rows["file_then_note"].score == 0.0 and not rows["file_then_note"].passed
+    assert "the reward grades the reply, not the file" in rows["file_then_note"].detail
+    assert rows["file_then_reply"].passed and (tmp_path / "answer.txt").read_text() == "cba"
+    assert probes.STORE[rows["file_then_note"].completion_id]["script"][0]["tool_calls"][0]["name"] == "bash"
+
+
+def test_t9_passes_a_reward_that_reads_the_file(tmp_path, monkeypatch):
+    rows = run_t9(monkeypatch, FileEpisodes(tmp_path, reads_file=True))
+    assert all(r.passed and r.score == 1.0 for r in rows.values())
+
+
+def test_t9_needs_a_named_file_a_shell_and_a_v1_loader(tmp_path, monkeypatch):
+    assert run_t9(monkeypatch, FileEpisodes(tmp_path, False), Example("ex-0", "Reverse `abc`.", "cba")) == {}
+    assert run_t9(monkeypatch, FileEpisodes(tmp_path, False, tools=[{"name": "lookup", "parameters": {}}])) == {}
+    assert asyncio.run(probes.t9_named_output_file(Toy(), FakeScorer(strict), FILE_EX)) == []  # no v1 loader: nothing to play
+
+
+def test_t9_puts_the_proxy_settings_back(monkeypatch):
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.example:3128")
+    monkeypatch.delenv("HTTP_PROXY", raising=False)
+    adapter = Plain()
+    adapter.loader = {"kind": "v1", "module": "falsepass_no_such_module"}
+    scorer = probes.output_file_scorer(adapter)
+    assert scorer is probes.output_file_scorer(adapter)  # one environment per run
+    import os
+
+    os.environ["HTTP_PROXY"] = os.environ["HTTPS_PROXY"] = "http://127.0.0.1:9"  # what the episodes' network block sets
+    asyncio.run(probes.close_output_file_scorer())
+    assert os.environ["HTTPS_PROXY"] == "http://proxy.example:3128" and "HTTP_PROXY" not in os.environ
+    assert probes._FILE_EPISODES == {}

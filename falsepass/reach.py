@@ -10,7 +10,7 @@ scores only what it was asked for, plus the reference (P1) as a control, and wri
 `{answer_in_format}` and `{wrong_in_format}` by the same written in the answer format the audit
 uses (`\\boxed{42}`, `#### 42`, ...). Every other brace stays as written.
 
-Per-example probes only (P1-P9, P13-P19, A1, X1; in tool mode T5, T6 and the adapter's own
+Per-example probes only (P1-P9, P13-P19, A1, X1, T9; in tool mode T5, T6 and the adapter's own
 policy probes): the slower probes that repeat or replay an episode (P10, P11, T4, T7, T8) are
 not counted this way.
 """
@@ -49,7 +49,7 @@ def _probe_list(adapter: Any) -> list:
         return list(probes.TOOL_MODE) + list(getattr(adapter, "episode_probes", []))
     if getattr(adapter, "answer_free", False):
         return list(probes.ANSWER_FREE)
-    return probes.PER_EXAMPLE + list(getattr(adapter, "per_example_probes", []))
+    return probes.PER_EXAMPLE + list(getattr(adapter, "per_example_probes", [])) + probes.OUTPUT_FILE
 
 
 def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int = 0, jobs: int = DEFAULT_JOBS,
@@ -106,6 +106,7 @@ def run(audit_dir: Path, wanted: list[str], tasks: int | None = None, seed: int 
     finally:
         probes.ONLY, probes.TEMPLATES, probes.TEMPLATE_EXPECT = set(), [], Expect.ZERO
         with watch.phase("close"):
+            loop.run_until_complete(probes.close_output_file_scorer())
             loop.run_until_complete(scorer.close())
         loop.close()
     watch.hub_checked = "datasets" in sys.modules and os.environ.get("HF_HUB_OFFLINE", "0").lower() not in ("1", "true", "yes", "on")
